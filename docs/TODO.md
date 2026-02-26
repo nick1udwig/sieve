@@ -31,7 +31,7 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 ## Claimed
 
 - [ ] `B` Rust Tool Contracts + Schema Emission
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
+: Owner: `codex` | Branch: `master` | PR: `f2b9305` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
 
 ## Done
 
