@@ -37,10 +37,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 - [ ] `B` Rust Tool Contracts + Schema Emission
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
 
-- [ ] `E` Command Summary Expansion
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
-
 ## Done
+
+- [x] `E` Command Summary Expansion
+: Owner: `codex` | Branch: `master` | PR: `e5ca790` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
 
 - [x] `F` Runtime Value-State Engine
 : Owner: `codex` | Branch: `master` | PR: `7aafd7d` | Plan: [Chunk F](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-f-runtime-value-state-engine)
