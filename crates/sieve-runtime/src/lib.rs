@@ -11,7 +11,7 @@ use sieve_types::{
     ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
     CommandKnowledge, CommandSegment, CommandSummary, ControlContext, DeclassifyRequest,
     DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity, PlannerToolCall,
-    PlannerTurnInput, PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput,
+    PlannerTurnInput, PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput,
     QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent,
     RuntimePolicyContext, SinkKey, SinkPermissionContext, ToolContractValidationReport,
     UncertainMode, UnknownMode, ValueLabel, ValueRef,
@@ -619,14 +619,19 @@ impl RuntimeOrchestrator {
             ],
             operator_before: None,
         };
-        self.approve_tool_call(
-            run_id,
-            segment,
-            "endorse_requires_approval",
-            "endorse requires approval",
-        )
-        .await
-        .map(|resolution| resolution.action)
+        let Some(resolution) = self
+            .approve_explicit_tool_call(
+                run_id,
+                segment,
+                "endorse_requires_approval",
+                "endorse requires approval",
+            )
+            .await?
+        else {
+            return Ok(ApprovalAction::Deny);
+        };
+
+        Ok(resolution.action)
     }
 
     /// Runs `endorse` approval and applies state transition when approved once.
@@ -643,14 +648,17 @@ impl RuntimeOrchestrator {
             ],
             operator_before: None,
         };
-        let resolution = self
-            .approve_tool_call(
+        let Some(resolution) = self
+            .approve_explicit_tool_call(
                 run_id,
                 segment,
                 "endorse_requires_approval",
                 "endorse requires approval",
             )
-            .await?;
+            .await?
+        else {
+            return Ok(None);
+        };
 
         if resolution.action == ApprovalAction::Deny {
             return Ok(None);
@@ -683,14 +691,19 @@ impl RuntimeOrchestrator {
             ],
             operator_before: None,
         };
-        self.approve_tool_call(
-            run_id,
-            segment,
-            "declassify_requires_approval",
-            "declassify requires approval",
-        )
-        .await
-        .map(|resolution| resolution.action)
+        let Some(resolution) = self
+            .approve_explicit_tool_call(
+                run_id,
+                segment,
+                "declassify_requires_approval",
+                "declassify requires approval",
+            )
+            .await?
+        else {
+            return Ok(ApprovalAction::Deny);
+        };
+
+        Ok(resolution.action)
     }
 
     /// Runs `declassify` approval and applies state transition when approved once.
@@ -707,14 +720,17 @@ impl RuntimeOrchestrator {
             ],
             operator_before: None,
         };
-        let resolution = self
-            .approve_tool_call(
+        let Some(resolution) = self
+            .approve_explicit_tool_call(
                 run_id,
                 segment,
                 "declassify_requires_approval",
                 "declassify requires approval",
             )
-            .await?;
+            .await?
+        else {
+            return Ok(None);
+        };
 
         if resolution.action == ApprovalAction::Deny {
             return Ok(None);
@@ -902,6 +918,63 @@ impl RuntimeOrchestrator {
             reason.to_string(),
         )
         .await
+    }
+
+    async fn approve_explicit_tool_call(
+        &self,
+        run_id: RunId,
+        segment: CommandSegment,
+        fallback_blocked_rule_id: &str,
+        fallback_reason: &str,
+    ) -> Result<Option<ApprovalResolution>, RuntimeError> {
+        let decision = self.evaluate_explicit_tool_policy(&run_id, &segment)?;
+        match decision.kind {
+            PolicyDecisionKind::Deny => Ok(None),
+            PolicyDecisionKind::Allow => {
+                let resolution = self
+                    .approve_tool_call(run_id, segment, fallback_blocked_rule_id, fallback_reason)
+                    .await?;
+                Ok(Some(resolution))
+            }
+            PolicyDecisionKind::DenyWithApproval => {
+                let blocked_rule_id = decision
+                    .blocked_rule_id
+                    .unwrap_or_else(|| fallback_blocked_rule_id.to_string());
+                let resolution = self
+                    .request_approval(
+                        run_id,
+                        vec![segment],
+                        Vec::new(),
+                        blocked_rule_id,
+                        decision.reason,
+                    )
+                    .await?;
+                Ok(Some(resolution))
+            }
+        }
+    }
+
+    fn evaluate_explicit_tool_policy(
+        &self,
+        run_id: &RunId,
+        segment: &CommandSegment,
+    ) -> Result<PolicyDecision, RuntimeError> {
+        let runtime_context = self.runtime_policy_context_for_control(BTreeSet::new(), None)?;
+        let input = PrecheckInput {
+            run_id: run_id.clone(),
+            cwd: ".".to_string(),
+            command_segments: vec![segment.clone()],
+            knowledge: CommandKnowledge::Known,
+            summary: Some(CommandSummary {
+                required_capabilities: Vec::new(),
+                sink_checks: Vec::new(),
+                unsupported_flags: Vec::new(),
+            }),
+            runtime_context,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        };
+        Ok(self.policy.evaluate_precheck(&input))
     }
 
     async fn resolve_approval(
@@ -2136,6 +2209,150 @@ require_trusted_control_for_mutating = true
             .expect("read value label")
             .expect("value label present");
         assert!(label.allowed_sinks.contains(&SinkKey(sink.to_string())));
+    }
+
+    #[tokio::test]
+    async fn endorse_value_once_policy_deny_skips_approval_and_transition() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Deny,
+        );
+        runtime
+            .upsert_value_label(
+                ValueRef("v123".to_string()),
+                label_with_sinks(Integrity::Untrusted, &[]),
+            )
+            .expect("seed value state");
+
+        let transition = runtime
+            .endorse_value_once(
+                RunId("run-1".to_string()),
+                EndorseRequest {
+                    value_ref: ValueRef("v123".to_string()),
+                    target_integrity: Integrity::Trusted,
+                    reason: None,
+                },
+            )
+            .await
+            .expect("runtime ok");
+
+        assert!(transition.is_none());
+        assert!(approval_bus
+            .published_events()
+            .expect("published events")
+            .is_empty());
+        let label = runtime
+            .value_label(&ValueRef("v123".to_string()))
+            .expect("read value label")
+            .expect("value label present");
+        assert_eq!(label.integrity, Integrity::Untrusted);
+    }
+
+    #[tokio::test]
+    async fn endorse_value_once_policy_deny_with_approval_uses_policy_metadata() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::DenyWithApproval,
+        );
+        runtime
+            .upsert_value_label(
+                ValueRef("v123".to_string()),
+                label_with_sinks(Integrity::Untrusted, &[]),
+            )
+            .expect("seed value state");
+
+        let runtime_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .endorse_value_once(
+                        RunId("run-1".to_string()),
+                        EndorseRequest {
+                            value_ref: ValueRef("v123".to_string()),
+                            target_integrity: Integrity::Trusted,
+                            reason: None,
+                        },
+                    )
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        assert_eq!(requested.blocked_rule_id, "rule-1");
+        assert_eq!(requested.reason, "policy verdict");
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id.clone(),
+                run_id: requested.run_id.clone(),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 2000,
+            })
+            .expect("resolve approval");
+
+        let transition = runtime_task
+            .await
+            .expect("task join")
+            .expect("runtime ok")
+            .expect("approved transition");
+        assert_eq!(transition.value_ref, ValueRef("v123".to_string()));
+        assert_eq!(transition.approved_by, Some(requested.request_id));
+    }
+
+    #[tokio::test]
+    async fn declassify_value_once_policy_deny_skips_approval_and_transition() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Deny,
+        );
+        let sink = SinkKey("https://api.example.com/v1/upload".to_string());
+        runtime
+            .upsert_value_label(
+                ValueRef("v456".to_string()),
+                label_with_sinks(Integrity::Trusted, &[]),
+            )
+            .expect("seed value state");
+
+        let transition = runtime
+            .declassify_value_once(
+                RunId("run-1".to_string()),
+                DeclassifyRequest {
+                    value_ref: ValueRef("v456".to_string()),
+                    sink: sink.clone(),
+                    reason: None,
+                },
+            )
+            .await
+            .expect("runtime ok");
+
+        assert!(transition.is_none());
+        assert!(approval_bus
+            .published_events()
+            .expect("published events")
+            .is_empty());
+        let label = runtime
+            .value_label(&ValueRef("v456".to_string()))
+            .expect("read value label")
+            .expect("value label present");
+        assert!(!label.allowed_sinks.contains(&sink));
     }
 
     #[test]

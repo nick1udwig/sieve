@@ -16,9 +16,6 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
-- [ ] `M` Policy Gate for `endorse` and `declassify`
-: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: add explicit policy evaluation for `endorse`/`declassify` before approval and state mutation. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-policy/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs). Done when: flow is `policy -> approval -> transition`, with deny paths covered.
-
 - [ ] `N` Mainline Command Execution Path
 : Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: implement actual execution for approved/allowed mainline Bash commands (current path returns disposition only). Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: `ExecuteMainline` runs command segments and reports outcome.
 
@@ -32,6 +29,9 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 : Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: add integration tests that lock behavior for `L` through `P` (runtime allowlist gate, explicit-tool policy gate, mainline execution, unknown/uncertain policy events, integrated entrypoint wiring). Files: [e2e_security_policy_flows.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_policy_flows.rs), [e2e_security_quarantine_modes.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs), plus new tests as needed.
 
 ## Claimed
+
+- [ ] `M` Policy Gate for `endorse` and `declassify`
+: Owner: `codex` | Branch: `master` | PR: `-` | Scope: add explicit policy evaluation for `endorse`/`declassify` before approval and state mutation. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-policy/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs). Done when: flow is `policy -> approval -> transition`, with deny paths covered.
 
 ## Done
 
