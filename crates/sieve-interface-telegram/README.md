@@ -1,0 +1,27 @@
+# sieve-interface-telegram
+
+Telegram adapter for Sieve runtime events and approval resolution.
+
+## Manual Smoke
+
+Requirements:
+- `curl` on `PATH`
+- `TELEGRAM_BOT_TOKEN` env var
+- `TELEGRAM_CHAT_ID` env var (numeric chat id)
+
+Run:
+
+```bash
+cargo run -p sieve-interface-telegram --example manual-smoke
+```
+
+Behavior:
+- Sends one sample `approval_requested` message to configured chat.
+- Waits on long-poll updates.
+- Map commands to approval result:
+  - `/approve_once apr_manual_smoke` (or `/approve`)
+  - `/deny apr_manual_smoke`
+
+Config knobs:
+- `TelegramAdapterConfig.chat_id`
+- `TelegramAdapterConfig.poll_timeout_secs`
