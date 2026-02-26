@@ -361,6 +361,15 @@ pub struct QuarantineExtractOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+
+    fn assert_matches_schema(schema_json: &str, instance: &Value) {
+        let schema: Value = serde_json::from_str(schema_json).expect("parse schema");
+        let validator = jsonschema::validator_for(&schema).expect("compile schema");
+        validator
+            .validate(instance)
+            .expect("instance should satisfy schema");
+    }
 
     #[test]
     fn approval_requested_event_json_round_trip() {
@@ -406,6 +415,44 @@ mod tests {
         let encoded = serde_json::to_string(&event).expect("serialize");
         let decoded: ApprovalResolvedEvent = serde_json::from_str(&encoded).expect("deserialize");
         assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn approval_requested_event_matches_schema() {
+        let event = ApprovalRequestedEvent {
+            schema_version: 1,
+            request_id: ApprovalRequestId("apr_schema_1".into()),
+            run_id: RunId("run_schema_1".into()),
+            command_segments: vec![CommandSegment {
+                argv: vec!["rm".into(), "-rf".into(), "/tmp/demo".into()],
+                operator_before: None,
+            }],
+            inferred_capabilities: vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "/tmp/demo".into(),
+            }],
+            blocked_rule_id: "rule.command.rm_rf".into(),
+            reason: "requires approval".into(),
+            created_at_ms: 1_717_171_800_000,
+        };
+        let instance = serde_json::to_value(event).expect("serialize event");
+        let schema = include_str!("../../../schemas/approval-requested-event.schema.json");
+        assert_matches_schema(schema, &instance);
+    }
+
+    #[test]
+    fn approval_resolved_event_matches_schema() {
+        let event = ApprovalResolvedEvent {
+            schema_version: 1,
+            request_id: ApprovalRequestId("apr_schema_2".into()),
+            run_id: RunId("run_schema_2".into()),
+            action: ApprovalAction::ApproveOnce,
+            created_at_ms: 1_717_171_801_000,
+        };
+        let instance = serde_json::to_value(event).expect("serialize event");
+        let schema = include_str!("../../../schemas/approval-resolved-event.schema.json");
+        assert_matches_schema(schema, &instance);
     }
 
     #[test]

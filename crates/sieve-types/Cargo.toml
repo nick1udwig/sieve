@@ -1,0 +1,12 @@
+[package]
+name = "sieve-types"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+jsonschema = "0.42"
