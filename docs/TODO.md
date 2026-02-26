@@ -40,13 +40,13 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `D` Shell Parser Security-Equivalent Parity
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
-
 - [ ] `F` Runtime Value-State Engine
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk F](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-f-runtime-value-state-engine)
 
 ## Done
+
+- [x] `D` Shell Parser Security-Equivalent Parity
+: Owner: `codex` | Branch: `master` | PR: `033a8aa, 028c11d` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
 
 - [x] `H` Quarantine Connect Coverage + Mandatory Report
 : Owner: `codex` | Branch: `master` | PR: `d50ef93, 9d2e6b1` | Plan: [Chunk H](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-h-quarantine-connect-coverage--mandatory-report)
