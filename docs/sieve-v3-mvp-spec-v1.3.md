@@ -49,6 +49,7 @@ Not in MVP:
 34. Logs are append-only and retained forever by default in MVP.
 35. Retention/redaction are future work.
 36. `endorse` and `declassify` are explicit tools.
+37. Q-LLM typed extraction is deferred from integrated runtime turns in MVP.
 
 ## 3. Data model
 
@@ -229,6 +230,7 @@ Unknown/accepted path:
 - execute in quarantine (`bwrap`, no-net, scratch write, `strace -ff`).
 - save trace artifacts under `~/.sieve/logs/traces/<run_id>/`.
 - notify user with location.
+- do not feed typed Q-LLM extraction outputs back into planner/runtime loop in MVP.
 - no policy-learning side effects in MVP.
 
 Audit events (JSONL) under `~/.sieve/logs/events/` include:
