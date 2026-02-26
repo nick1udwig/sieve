@@ -319,6 +319,12 @@ pub enum RuntimeError {
     ToolContract {
         report: ToolContractValidationReport,
     },
+    #[error("planner emitted disallowed tool `{tool_name}` at index {tool_call_index}")]
+    DisallowedTool {
+        tool_call_index: usize,
+        tool_name: String,
+        allowed_tools: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -466,6 +472,7 @@ impl RuntimeOrchestrator {
 
         let mut tool_results = Vec::with_capacity(planner_output.tool_calls.len());
         for (idx, tool_call) in planner_output.tool_calls.into_iter().enumerate() {
+            Self::ensure_tool_allowed(idx, &tool_call.tool_name, &request.allowed_tools)?;
             let typed_call = self.validate_planner_tool_call(idx, &tool_call)?;
             match typed_call {
                 TypedCall::Bash(args) => {
@@ -786,6 +793,22 @@ impl RuntimeOrchestrator {
                 Err(RuntimeError::ToolContract { report })
             }
         }
+    }
+
+    fn ensure_tool_allowed(
+        tool_call_index: usize,
+        tool_name: &str,
+        allowed_tools: &[String],
+    ) -> Result<(), RuntimeError> {
+        if allowed_tools.iter().any(|allowed| allowed == tool_name) {
+            return Ok(());
+        }
+
+        Err(RuntimeError::DisallowedTool {
+            tool_call_index,
+            tool_name: tool_name.to_string(),
+            allowed_tools: allowed_tools.to_vec(),
+        })
     }
 
     fn log_tool_contract_failure(report: &ToolContractValidationReport) {
@@ -1717,6 +1740,65 @@ mod tests {
             }
             other => panic!("expected tool contract error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn orchestrate_planner_turn_rejects_disallowed_tool_before_dispatch() {
+        let mut args = BTreeMap::new();
+        args.insert("cmd".to_string(), json!("echo ok"));
+        let planner_output = PlannerTurnOutput {
+            thoughts: None,
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "bash".to_string(),
+                args,
+            }],
+        };
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string(), "ok".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, planner, approval_bus, _event_log) = mk_runtime_with_capturing_planner(
+            planner_output,
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+
+        let err = runtime
+            .orchestrate_planner_turn(PlannerRunRequest {
+                run_id: RunId("run-1".to_string()),
+                cwd: "/tmp".to_string(),
+                user_message: "run echo".to_string(),
+                allowed_tools: vec!["endorse".to_string()],
+                previous_events: Vec::new(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect_err("disallowed tool should fail");
+
+        match err {
+            RuntimeError::DisallowedTool {
+                tool_call_index,
+                tool_name,
+                allowed_tools,
+            } => {
+                assert_eq!(tool_call_index, 0);
+                assert_eq!(tool_name, "bash");
+                assert_eq!(allowed_tools, vec!["endorse".to_string()]);
+            }
+            other => panic!("expected disallowed tool error, got {other:?}"),
+        }
+
+        assert!(approval_bus
+            .published_events()
+            .expect("published events")
+            .is_empty());
+        let planner_input = planner.captured_input();
+        assert_eq!(planner_input.allowed_tools, vec!["endorse".to_string()]);
     }
 
     #[tokio::test]

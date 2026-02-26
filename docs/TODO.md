@@ -16,9 +16,25 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
+- [ ] `M` Policy Gate for `endorse` and `declassify`
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: add explicit policy evaluation for `endorse`/`declassify` before approval and state mutation. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-policy/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs). Done when: flow is `policy -> approval -> transition`, with deny paths covered.
 
+- [ ] `N` Mainline Command Execution Path
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: implement actual execution for approved/allowed mainline Bash commands (current path returns disposition only). Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: `ExecuteMainline` runs command segments and reports outcome.
+
+- [ ] `O` Policy Audit Event Parity for Unknown/Uncertain
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: emit `PolicyEvaluated` events for unknown/uncertain `deny|ask|accept` paths, not only known-command precheck path. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: all decision paths produce policy audit entries.
+
+- [ ] `P` Runnable App Entrypoint (Runtime + OpenAI + Telegram)
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: add a production binary entrypoint wiring runtime loop with OpenAI planner/quarantine, approval bus, event log, Telegram adapter, and command execution path. Files: [Cargo.toml](/root/git/sieve-v3/Cargo.toml), [manual-smoke.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/examples/manual-smoke.rs), [openai_live.rs](/root/git/sieve-v3/crates/sieve-llm/examples/openai_live.rs), plus new app files. Done when: one command starts the full integrated system.
+
+- [ ] `Q` End-to-End Tests for Remaining MVP Blockers
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: add integration tests that lock behavior for `L` through `P` (runtime allowlist gate, explicit-tool policy gate, mainline execution, unknown/uncertain policy events, integrated entrypoint wiring). Files: [e2e_security_policy_flows.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_policy_flows.rs), [e2e_security_quarantine_modes.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs), plus new tests as needed.
 
 ## Claimed
+
+- [ ] `L` Runtime Allowed-Tools Enforcement Boundary
+: Owner: `codex` | Branch: `master` | PR: `-` | Scope: enforce `PlannerRunRequest.allowed_tools` in runtime dispatch so disallowed `tool_name` values are rejected before execution. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: runtime rejects disallowed tools even if planner backend omits allowlist checks.
 
 ## Done
 
