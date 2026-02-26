@@ -35,6 +35,34 @@ fn summarize_argv(argv: &[String]) -> SummaryOutcome {
         return outcome;
     }
 
+    if let Some(outcome) = summarize_cp(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = summarize_mv(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = summarize_mkdir(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = summarize_touch(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = summarize_chmod(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = summarize_chown(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = summarize_tee(argv) {
+        return outcome;
+    }
+
     if let Some(outcome) = summarize_curl(argv) {
         return outcome;
     }
@@ -119,6 +147,365 @@ fn summarize_rm(argv: &[String]) -> Option<SummaryOutcome> {
     }))
 }
 
+fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "cp") {
+        return None;
+    }
+
+    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
+        inner,
+        &['a', 'f', 'i', 'n', 'p', 'R', 'r', 'u', 'v'],
+        &[
+            "--archive",
+            "--force",
+            "--interactive",
+            "--no-clobber",
+            "--recursive",
+            "--update",
+            "--verbose",
+            "--preserve",
+        ],
+        &["--preserve="],
+    );
+    if !unsupported_flags.is_empty() {
+        return Some(unknown_with_flags(
+            "unsupported cp flags",
+            unsupported_flags,
+        ));
+    }
+    if positionals.len() < 2 {
+        return Some(unknown_outcome("cp missing destination"));
+    }
+
+    let destination = positionals.last().cloned().expect("checked above");
+    Some(known_fs_outcome(vec![destination], Action::Write))
+}
+
+fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "mv") {
+        return None;
+    }
+
+    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
+        inner,
+        &['f', 'i', 'n', 'u', 'v', 'T'],
+        &[
+            "--force",
+            "--interactive",
+            "--no-clobber",
+            "--update",
+            "--verbose",
+            "--no-target-directory",
+        ],
+        &[],
+    );
+    if !unsupported_flags.is_empty() {
+        return Some(unknown_with_flags(
+            "unsupported mv flags",
+            unsupported_flags,
+        ));
+    }
+    if positionals.len() < 2 {
+        return Some(unknown_outcome("mv missing destination"));
+    }
+
+    let mut scopes = positionals[..positionals.len() - 1].to_vec();
+    scopes.push(positionals.last().cloned().expect("checked above"));
+    Some(known_fs_outcome(scopes, Action::Write))
+}
+
+fn summarize_mkdir(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "mkdir") {
+        return None;
+    }
+
+    let mut targets = Vec::new();
+    let mut unsupported_flags = Vec::new();
+    let mut saw_end_of_flags = false;
+    let mut i = 1usize;
+
+    while i < inner.len() {
+        let arg = &inner[i];
+        if saw_end_of_flags {
+            targets.push(arg.clone());
+            i += 1;
+            continue;
+        }
+        if arg == "--" {
+            saw_end_of_flags = true;
+            i += 1;
+            continue;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            targets.push(arg.clone());
+            i += 1;
+            continue;
+        }
+
+        if arg == "-m" || arg == "--mode" {
+            if i + 1 >= inner.len() {
+                return Some(unknown_outcome("mkdir mode flag missing value"));
+            }
+            i += 2;
+            continue;
+        }
+        if arg.starts_with("-m") && arg.len() > 2 {
+            i += 1;
+            continue;
+        }
+        if arg.starts_with("--mode=") {
+            if arg == "--mode=" {
+                return Some(unknown_outcome("mkdir mode flag missing value"));
+            }
+            i += 1;
+            continue;
+        }
+        if arg.starts_with("--") {
+            if matches!(arg.as_str(), "--parents" | "--verbose") {
+                i += 1;
+                continue;
+            }
+            unsupported_flags.push(arg.clone());
+            i += 1;
+            continue;
+        }
+        if is_short_flag_cluster(arg, &['p', 'v']) {
+            i += 1;
+            continue;
+        }
+        unsupported_flags.push(arg.clone());
+        i += 1;
+    }
+
+    if !unsupported_flags.is_empty() {
+        return Some(unknown_with_flags(
+            "unsupported mkdir flags",
+            unsupported_flags,
+        ));
+    }
+    if targets.is_empty() {
+        return Some(unknown_outcome("mkdir missing path"));
+    }
+    Some(known_fs_outcome(targets, Action::Write))
+}
+
+fn summarize_touch(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "touch") {
+        return None;
+    }
+
+    let mut targets = Vec::new();
+    let mut unsupported_flags = Vec::new();
+    let mut saw_end_of_flags = false;
+    let mut i = 1usize;
+
+    while i < inner.len() {
+        let arg = &inner[i];
+        if saw_end_of_flags {
+            targets.push(arg.clone());
+            i += 1;
+            continue;
+        }
+        if arg == "--" {
+            saw_end_of_flags = true;
+            i += 1;
+            continue;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            targets.push(arg.clone());
+            i += 1;
+            continue;
+        }
+
+        if matches!(
+            arg.as_str(),
+            "-d" | "-r" | "-t" | "--date" | "--reference" | "--time"
+        ) {
+            if i + 1 >= inner.len() {
+                return Some(unknown_outcome("touch time/reference flag missing value"));
+            }
+            i += 2;
+            continue;
+        }
+        if matches!(arg.as_str(), "--date=" | "--reference=" | "--time=") {
+            return Some(unknown_outcome("touch time/reference flag missing value"));
+        }
+        if arg.starts_with("--date=")
+            || arg.starts_with("--reference=")
+            || arg.starts_with("--time=")
+        {
+            i += 1;
+            continue;
+        }
+        if (arg.starts_with("-d") || arg.starts_with("-r") || arg.starts_with("-t"))
+            && arg.len() > 2
+        {
+            i += 1;
+            continue;
+        }
+        if arg.starts_with("--") {
+            if matches!(
+                arg.as_str(),
+                "--no-create" | "--no-dereference" | "--access" | "--modification"
+            ) {
+                i += 1;
+                continue;
+            }
+            unsupported_flags.push(arg.clone());
+            i += 1;
+            continue;
+        }
+        if is_short_flag_cluster(arg, &['a', 'c', 'h', 'm']) {
+            i += 1;
+            continue;
+        }
+        unsupported_flags.push(arg.clone());
+        i += 1;
+    }
+
+    if !unsupported_flags.is_empty() {
+        return Some(unknown_with_flags(
+            "unsupported touch flags",
+            unsupported_flags,
+        ));
+    }
+    if targets.is_empty() {
+        return Some(unknown_outcome("touch missing file operand"));
+    }
+    Some(known_fs_outcome(targets, Action::Write))
+}
+
+fn summarize_chmod(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "chmod") {
+        return None;
+    }
+
+    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
+        inner,
+        &['R', 'v', 'c', 'f'],
+        &[
+            "--recursive",
+            "--verbose",
+            "--changes",
+            "--silent",
+            "--quiet",
+        ],
+        &[],
+    );
+    if !unsupported_flags.is_empty() {
+        return Some(unknown_with_flags(
+            "unsupported chmod flags",
+            unsupported_flags,
+        ));
+    }
+    if positionals.len() < 2 {
+        return Some(unknown_outcome("chmod missing operand"));
+    }
+    Some(known_fs_outcome(positionals[1..].to_vec(), Action::Write))
+}
+
+fn summarize_chown(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "chown") {
+        return None;
+    }
+
+    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
+        inner,
+        &['R', 'h', 'v', 'f', 'c', 'H', 'L', 'P'],
+        &[
+            "--recursive",
+            "--no-dereference",
+            "--verbose",
+            "--silent",
+            "--quiet",
+            "--changes",
+        ],
+        &[],
+    );
+    if !unsupported_flags.is_empty() {
+        return Some(unknown_with_flags(
+            "unsupported chown flags",
+            unsupported_flags,
+        ));
+    }
+    if positionals.len() < 2 {
+        return Some(unknown_outcome("chown missing operand"));
+    }
+    Some(known_fs_outcome(positionals[1..].to_vec(), Action::Write))
+}
+
+fn summarize_tee(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "tee") {
+        return None;
+    }
+
+    let mut append = false;
+    let mut targets = Vec::new();
+    let mut unsupported_flags = Vec::new();
+    let mut saw_end_of_flags = false;
+
+    for arg in inner.iter().skip(1) {
+        if saw_end_of_flags {
+            targets.push(arg.clone());
+            continue;
+        }
+        if arg == "--" {
+            saw_end_of_flags = true;
+            continue;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            targets.push(arg.clone());
+            continue;
+        }
+
+        if arg.starts_with("--") {
+            match arg.as_str() {
+                "--append" => append = true,
+                "--ignore-interrupts" => {}
+                _ => unsupported_flags.push(arg.clone()),
+            }
+            continue;
+        }
+
+        if is_short_flag_cluster(arg, &['a', 'i']) {
+            if arg[1..].contains('a') {
+                append = true;
+            }
+            continue;
+        }
+
+        unsupported_flags.push(arg.clone());
+    }
+
+    if !unsupported_flags.is_empty() {
+        return Some(unknown_with_flags(
+            "unsupported tee flags",
+            unsupported_flags,
+        ));
+    }
+    if targets.is_empty() {
+        return Some(known_outcome(CommandSummary {
+            required_capabilities: Vec::new(),
+            sink_checks: Vec::new(),
+            unsupported_flags: Vec::new(),
+        }));
+    }
+
+    let action = if append {
+        Action::Append
+    } else {
+        Action::Write
+    };
+    Some(known_fs_outcome(targets, action))
+}
+
 fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     if !is_curl_command(argv) {
         return None;
@@ -131,7 +518,7 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     }
 
     let mut method: Option<String> = None;
-    let mut url_index: Option<usize> = None;
+    let mut url_raw: Option<String> = None;
     let mut payloads: Vec<PayloadArg> = Vec::new();
     let mut unsupported_flags: Vec<String> = Vec::new();
     let mut i = 1usize;
@@ -156,7 +543,28 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             }
 
             if let Some(raw) = arg.strip_prefix("--request=") {
+                if raw.is_empty() {
+                    return Some(unknown_outcome("curl method flag missing value"));
+                }
                 method = Some(raw.to_ascii_uppercase());
+                i += 1;
+                continue;
+            }
+
+            if arg == "--url" {
+                if i + 1 >= argv.len() {
+                    return Some(unknown_outcome("curl url flag missing value"));
+                }
+                url_raw = Some(argv[i + 1].clone());
+                i += 2;
+                continue;
+            }
+
+            if let Some(raw) = arg.strip_prefix("--url=") {
+                if raw.is_empty() {
+                    return Some(unknown_outcome("curl url flag missing value"));
+                }
+                url_raw = Some(raw.to_string());
                 i += 1;
                 continue;
             }
@@ -177,6 +585,15 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                     value_index: i + 1,
                 });
                 i += 2;
+                continue;
+            }
+
+            if arg.starts_with("-d") && arg.len() > 2 {
+                payloads.push(PayloadArg {
+                    flag: "-d".to_string(),
+                    value_index: i,
+                });
+                i += 1;
                 continue;
             }
 
@@ -201,14 +618,30 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
 
             if matches!(
                 arg.as_str(),
-                "-s" | "-S" | "-L" | "-k" | "--silent" | "--show-error"
-            ) || arg.starts_with("--header=")
-                || arg == "-H"
-            {
-                if arg == "-H" && i + 1 < argv.len() {
-                    i += 2;
-                    continue;
+                "-s" | "-S"
+                    | "-L"
+                    | "-k"
+                    | "-f"
+                    | "--silent"
+                    | "--show-error"
+                    | "--location"
+                    | "--insecure"
+                    | "--fail"
+                    | "--fail-with-body"
+            ) {
+                i += 1;
+                continue;
+            }
+
+            if arg == "-H" || arg == "--header" {
+                if i + 1 >= argv.len() {
+                    return Some(unknown_outcome("curl header flag missing value"));
                 }
+                i += 2;
+                continue;
+            }
+
+            if arg.starts_with("--header=") {
                 i += 1;
                 continue;
             }
@@ -218,8 +651,8 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             continue;
         }
 
-        if url_index.is_none() {
-            url_index = Some(i);
+        if url_raw.is_none() {
+            url_raw = Some(arg.clone());
         }
         i += 1;
     }
@@ -231,16 +664,24 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         ));
     }
 
-    let method = method.unwrap_or_else(|| "GET".to_string());
-    if method != "POST" {
+    let method = method.unwrap_or_else(|| {
+        if payloads.is_empty() {
+            "GET".to_string()
+        } else {
+            "POST".to_string()
+        }
+    });
+    if !matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
         return None;
     }
 
-    let Some(url_idx) = url_index else {
-        return Some(unknown_outcome("curl POST missing URL"));
+    let Some(url) = url_raw else {
+        return Some(unknown_outcome("curl mutating request missing URL"));
     };
-    let Some(sink) = canonicalize_url_sink(&argv[url_idx]) else {
-        return Some(unknown_outcome("curl POST has invalid URL sink"));
+    let Some(sink) = canonicalize_url_sink(&url) else {
+        return Some(unknown_outcome(
+            "curl mutating request has invalid URL sink",
+        ));
     };
 
     let sink_checks = payloads
@@ -268,12 +709,83 @@ fn split_flag_value(flag: &str) -> Option<(&str, &str)> {
     Some((&flag[..eq], &flag[eq + 1..]))
 }
 
+fn collect_positionals_with_no_value_flags(
+    argv: &[String],
+    allowed_short_flags: &[char],
+    allowed_long_flags: &[&str],
+    allowed_long_prefixes: &[&str],
+) -> (Vec<String>, Vec<String>) {
+    let mut positionals = Vec::new();
+    let mut unsupported_flags = Vec::new();
+    let mut saw_end_of_flags = false;
+
+    for arg in argv.iter().skip(1) {
+        if saw_end_of_flags {
+            positionals.push(arg.clone());
+            continue;
+        }
+        if arg == "--" {
+            saw_end_of_flags = true;
+            continue;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            positionals.push(arg.clone());
+            continue;
+        }
+
+        if arg.starts_with("--") {
+            if allowed_long_flags.contains(&arg.as_str())
+                || allowed_long_prefixes
+                    .iter()
+                    .any(|prefix| arg.starts_with(prefix))
+            {
+                continue;
+            }
+            unsupported_flags.push(arg.clone());
+            continue;
+        }
+
+        if is_short_flag_cluster(arg, allowed_short_flags) {
+            continue;
+        }
+        unsupported_flags.push(arg.clone());
+    }
+
+    (positionals, unsupported_flags)
+}
+
+fn known_fs_outcome(scopes: Vec<String>, action: Action) -> SummaryOutcome {
+    known_outcome(CommandSummary {
+        required_capabilities: scopes
+            .into_iter()
+            .map(|scope| Capability {
+                resource: Resource::Fs,
+                action,
+                scope,
+            })
+            .collect(),
+        sink_checks: Vec::new(),
+        unsupported_flags: Vec::new(),
+    })
+}
+
+fn is_short_flag_cluster(arg: &str, allowed_flags: &[char]) -> bool {
+    arg.len() > 1
+        && arg.starts_with('-')
+        && !arg.starts_with("--")
+        && arg[1..].chars().all(|ch| allowed_flags.contains(&ch))
+}
+
 fn is_rm_command(argv: &[String]) -> bool {
-    basename(argv.first()).is_some_and(|cmd| cmd == "rm")
+    is_named_command(argv, "rm")
 }
 
 fn is_curl_command(argv: &[String]) -> bool {
-    basename(argv.first()).is_some_and(|cmd| cmd == "curl")
+    is_named_command(argv, "curl")
+}
+
+fn is_named_command(argv: &[String], command: &str) -> bool {
+    basename(argv.first()).is_some_and(|cmd| cmd == command)
 }
 
 fn strip_sudo(argv: &[String]) -> &[String] {
@@ -460,6 +972,133 @@ mod tests {
     }
 
     #[test]
+    fn cp_maps_destination_to_fs_write_capability() {
+        let out = summarize_argv(&argv(&["cp", "a.txt", "b.txt"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "b.txt".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn mv_maps_source_and_destination_to_fs_write_capability() {
+        let out = summarize_argv(&argv(&["mv", "a.txt", "b.txt"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![
+                Capability {
+                    resource: Resource::Fs,
+                    action: Action::Write,
+                    scope: "a.txt".to_string(),
+                },
+                Capability {
+                    resource: Resource::Fs,
+                    action: Action::Write,
+                    scope: "b.txt".to_string(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn mkdir_mode_and_parents_flags_are_supported() {
+        let out = summarize_argv(&argv(&["mkdir", "-p", "-m", "755", "tmp/work"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "tmp/work".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn touch_with_time_flag_maps_to_fs_write() {
+        let out = summarize_argv(&argv(&["touch", "-d", "2026-01-01", "file.txt"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "file.txt".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn chmod_maps_targets_to_fs_write() {
+        let out = summarize_argv(&argv(&["chmod", "-R", "755", "bin", "out"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![
+                Capability {
+                    resource: Resource::Fs,
+                    action: Action::Write,
+                    scope: "bin".to_string(),
+                },
+                Capability {
+                    resource: Resource::Fs,
+                    action: Action::Write,
+                    scope: "out".to_string(),
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn chown_unsupported_flag_routes_to_unknown() {
+        let out = summarize_argv(&argv(&[
+            "chown",
+            "--from=user:group",
+            "root:root",
+            "file.txt",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.unsupported_flags,
+            vec!["--from=user:group".to_string()]
+        );
+    }
+
+    #[test]
+    fn tee_append_maps_to_fs_append_capability() {
+        let out = summarize_argv(&argv(&["tee", "-a", "audit.log"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Append,
+                scope: "audit.log".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn curl_post_url_requires_net_write_no_payload_sink_checks() {
         let out = summarize_argv(&argv(&["curl", "-X", "POST", "https://api.example.com/v1"]));
 
@@ -498,6 +1137,64 @@ mod tests {
         assert_eq!(
             summary.sink_checks[0].value_refs,
             vec![ValueRef("argv:5".to_string())]
+        );
+    }
+
+    #[test]
+    fn curl_payload_without_explicit_method_defaults_to_post() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "https://api.example.com/v1/upload",
+            "--data",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.required_capabilities.len(), 1);
+        assert_eq!(
+            summary.required_capabilities[0].scope,
+            "https://api.example.com/v1/upload".to_string()
+        );
+        assert_eq!(summary.sink_checks[0].argument_name, "--data");
+    }
+
+    #[test]
+    fn curl_put_with_payload_extracts_sink_check() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "--request",
+            "put",
+            "--url",
+            "https://api.example.com/v1/upload",
+            "--data-binary",
+            "blob",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.sink_checks.len(), 1);
+        assert_eq!(summary.sink_checks[0].argument_name, "--data-binary");
+        assert_eq!(
+            summary.sink_checks[0].sink,
+            SinkKey("https://api.example.com/v1/upload".to_string())
+        );
+    }
+
+    #[test]
+    fn curl_header_flag_missing_value_routes_to_unknown() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "https://api.example.com/v1/upload",
+            "-H",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+        assert_eq!(
+            out.reason.as_deref(),
+            Some("curl header flag missing value")
         );
     }
 
