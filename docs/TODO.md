@@ -16,14 +16,8 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
-- [ ] `B` Rust Tool Contracts + Schema Emission
-: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
-
 - [ ] `C` Planner Regeneration Pass
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk C](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-c-planner-regeneration-pass)
-
-- [ ] `E` Command Summary Expansion
-: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
 
 - [ ] `G` Policy Uses Runtime Context
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk G](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-g-policy-uses-runtime-context)
@@ -40,10 +34,16 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `F` Runtime Value-State Engine
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk F](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-f-runtime-value-state-engine)
+- [ ] `B` Rust Tool Contracts + Schema Emission
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
+
+- [ ] `E` Command Summary Expansion
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
 
 ## Done
+
+- [x] `F` Runtime Value-State Engine
+: Owner: `codex` | Branch: `master` | PR: `7aafd7d` | Plan: [Chunk F](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-f-runtime-value-state-engine)
 
 - [x] `D` Shell Parser Security-Equivalent Parity
 : Owner: `codex` | Branch: `master` | PR: `033a8aa, 028c11d` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
