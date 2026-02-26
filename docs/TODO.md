@@ -27,10 +27,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `C` Planner Regeneration Pass
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk C](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-c-planner-regeneration-pass)
-
 ## Done
+
+- [x] `C` Planner Regeneration Pass
+: Owner: `codex` | Branch: `master` | PR: `672eed6` | Plan: [Chunk C](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-c-planner-regeneration-pass)
 
 - [x] `B` Rust Tool Contracts + Schema Emission
 : Owner: `codex` | Branch: `master` | PR: `f2b9305, f5c6e9a` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
