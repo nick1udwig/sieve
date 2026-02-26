@@ -16,10 +16,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
-- [ ] `Q` End-to-End Tests for Remaining MVP Blockers
-: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: add integration tests that lock behavior for `L` through `P` (runtime allowlist gate, explicit-tool policy gate, mainline execution, unknown/uncertain policy events, integrated entrypoint wiring). Files: [e2e_security_policy_flows.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_policy_flows.rs), [e2e_security_quarantine_modes.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs), plus new tests as needed.
-
 ## Claimed
+
+- [ ] `Q` End-to-End Tests for Remaining MVP Blockers
+: Owner: `codex` | Branch: `master` | PR: `-` | Scope: add integration tests that lock behavior for `L` through `P` (runtime allowlist gate, explicit-tool policy gate, mainline execution, unknown/uncertain policy events, integrated entrypoint wiring). Files: [e2e_security_policy_flows.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_policy_flows.rs), [e2e_security_quarantine_modes.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs), plus new tests as needed.
 
 ## Done
 

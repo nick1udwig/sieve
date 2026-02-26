@@ -326,3 +326,86 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = telegram_thread.join();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sieve_runtime::ApprovalBus;
+    use sieve_types::{
+        ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CommandSegment, PolicyDecision,
+        PolicyDecisionKind, PolicyEvaluatedEvent, Resource,
+    };
+
+    #[tokio::test]
+    async fn runtime_bridge_submit_approval_resolves_pending_request() {
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let bridge = RuntimeBridge::new(approval_bus.clone());
+        let request_id = ApprovalRequestId("approval-test".to_string());
+        approval_bus
+            .publish_requested(ApprovalRequestedEvent {
+                schema_version: 1,
+                request_id: request_id.clone(),
+                run_id: RunId("run-test".to_string()),
+                command_segments: vec![CommandSegment {
+                    argv: vec!["rm".to_string(), "-rf".to_string(), "/tmp/x".to_string()],
+                    operator_before: None,
+                }],
+                inferred_capabilities: vec![sieve_types::Capability {
+                    resource: Resource::Fs,
+                    action: sieve_types::Action::Write,
+                    scope: "/tmp/x".to_string(),
+                }],
+                blocked_rule_id: "rule".to_string(),
+                reason: "reason".to_string(),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("publish approval request");
+
+        bridge.submit_approval(ApprovalResolvedEvent {
+            schema_version: 1,
+            request_id: request_id.clone(),
+            run_id: RunId("run-test".to_string()),
+            action: ApprovalAction::ApproveOnce,
+            created_at_ms: 2,
+        });
+
+        let resolved = approval_bus
+            .wait_resolved(&request_id)
+            .await
+            .expect("wait resolved");
+        assert_eq!(resolved.action, ApprovalAction::ApproveOnce);
+    }
+
+    #[tokio::test]
+    async fn fanout_runtime_event_log_records_and_forwards_events() {
+        let (tx, rx) = mpsc::channel();
+        let path =
+            std::env::temp_dir().join(format!("sieve-app-event-log-{}.jsonl", std::process::id()));
+        let _ = fs::remove_file(&path);
+        let log = FanoutRuntimeEventLog::new(path.clone(), tx).expect("create fanout log");
+        let event = RuntimeEvent::PolicyEvaluated(PolicyEvaluatedEvent {
+            schema_version: 1,
+            run_id: RunId("run-log".to_string()),
+            decision: PolicyDecision {
+                kind: PolicyDecisionKind::Allow,
+                reason: "allow".to_string(),
+                blocked_rule_id: None,
+            },
+            inferred_capabilities: Vec::new(),
+            trace_path: None,
+            created_at_ms: 3,
+        });
+
+        log.append(event.clone()).await.expect("append event");
+        assert_eq!(log.snapshot(), vec![event.clone()]);
+        assert_eq!(
+            rx.recv_timeout(Duration::from_millis(50))
+                .expect("forwarded event"),
+            event
+        );
+        let body = fs::read_to_string(&path).expect("read jsonl log");
+        assert!(body.contains("policy_evaluated"));
+        let _ = fs::remove_file(path);
+    }
+}
