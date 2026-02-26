@@ -1,0 +1,10 @@
+[package]
+name = "sieve-quarantine"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+sieve-types = { path = "../sieve-types" }
+thiserror.workspace = true
