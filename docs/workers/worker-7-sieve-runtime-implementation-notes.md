@@ -32,6 +32,14 @@ You are reading implementation notes for Worker 7 (`crates/sieve-runtime`).
   - one-shot transition helpers:
     - `endorse_value_once`
     - `declassify_value_once`
+- Runtime end-to-end planner loop implemented (Chunk I):
+  - `orchestrate_planner_turn` added to run one planner turn from runtime.
+  - Runtime re-validates each planner tool call via `sieve-tool-contracts` (`validate_at_index`).
+  - Dispatch supports strict typed calls for:
+    - `bash` -> `orchestrate_shell` (policy/quarantine/approval path)
+    - `endorse` -> `endorse_value_once`
+    - `declassify` -> `declassify_value_once`
+  - Contract failures return `RuntimeError::ToolContract { report }` and are internal-only logged.
 - Deterministic event timing support via injectable `Clock`.
 
 ## Tests Added
@@ -52,6 +60,11 @@ You are reading implementation notes for Worker 7 (`crates/sieve-runtime`).
   - parallel pending requests, out-of-order resolves, no cross-delivery.
 - Runtime JSONL event log ordering test.
 - Approval request/resolution event schema-shape stability tests.
+- Planner loop tests:
+  - planner `bash` tool call executes through policy + approval (`deny_with_approval`).
+  - planner `bash` unknown + `accept` mode executes quarantine.
+  - planner invalid args return structured tool-contract report.
+  - planner `endorse` tool call runs approval and applies state transition.
 
 ## Surprises / Gotchas
 
@@ -77,3 +90,4 @@ You are reading implementation notes for Worker 7 (`crates/sieve-runtime`).
 
 - `cargo test -p sieve-runtime`: passing.
 - In-process approval roundtrip: passing.
+- Planner loop in runtime (Chunk I): passing with end-to-end tests.

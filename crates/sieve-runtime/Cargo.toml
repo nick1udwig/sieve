@@ -11,6 +11,7 @@ sieve-llm = { path = "../sieve-llm" }
 sieve-policy = { path = "../sieve-policy" }
 sieve-quarantine = { path = "../sieve-quarantine" }
 sieve-shell = { path = "../sieve-shell" }
+sieve-tool-contracts = { path = "../sieve-tool-contracts" }
 sieve-types = { path = "../sieve-types" }
 serde_json.workspace = true
 thiserror.workspace = true

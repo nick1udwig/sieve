@@ -2,17 +2,19 @@
 
 use async_trait::async_trait;
 use sieve_command_summaries::{CommandSummarizer, SummaryOutcome};
-use sieve_llm::PlannerModel;
+use sieve_llm::{LlmError, PlannerModel};
 use sieve_policy::PolicyEngine;
 use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
+use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
     ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
     CommandKnowledge, CommandSegment, CommandSummary, ControlContext, DeclassifyRequest,
-    DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity,
-    PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent,
-    QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent, RuntimePolicyContext, SinkKey,
-    SinkPermissionContext, UncertainMode, UnknownMode, ValueLabel, ValueRef,
+    DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity, PlannerToolCall,
+    PlannerTurnInput, PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput,
+    QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent,
+    RuntimePolicyContext, SinkKey, SinkPermissionContext, ToolContractValidationReport,
+    UncertainMode, UnknownMode, ValueLabel, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{create_dir_all, OpenOptions};
@@ -301,6 +303,8 @@ impl Clock for SystemClock {
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error("planner model failed: {0}")]
+    Planner(#[from] LlmError),
     #[error("shell analysis failed: {0}")]
     Shell(#[from] ShellAnalysisError),
     #[error("runtime event log failed: {0}")]
@@ -311,6 +315,10 @@ pub enum RuntimeError {
     Quarantine(#[from] QuarantineRunError),
     #[error("value state failed: {0}")]
     ValueState(#[from] ValueStateError),
+    #[error("planner tool call contract validation failed")]
+    ToolContract {
+        report: ToolContractValidationReport,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -324,6 +332,19 @@ pub struct ShellRunRequest {
     pub uncertain_mode: UncertainMode,
 }
 
+#[derive(Debug, Clone)]
+pub struct PlannerRunRequest {
+    pub run_id: RunId,
+    pub cwd: String,
+    pub user_message: String,
+    pub allowed_tools: Vec<String>,
+    pub previous_events: Vec<RuntimeEvent>,
+    pub control_value_refs: BTreeSet<ValueRef>,
+    pub control_endorsed_by: Option<ApprovalRequestId>,
+    pub unknown_mode: UnknownMode,
+    pub uncertain_mode: UncertainMode,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeDisposition {
     ExecuteMainline,
@@ -331,12 +352,34 @@ pub enum RuntimeDisposition {
     Denied { reason: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannerToolResult {
+    Bash {
+        command: String,
+        disposition: RuntimeDisposition,
+    },
+    Endorse {
+        request: EndorseRequest,
+        transition: Option<EndorseStateTransition>,
+    },
+    Declassify {
+        request: DeclassifyRequest,
+        transition: Option<DeclassifyStateTransition>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannerRunResult {
+    pub thoughts: Option<String>,
+    pub tool_results: Vec<PlannerToolResult>,
+}
+
 pub struct RuntimeOrchestrator {
     shell: Arc<dyn ShellAnalyzer>,
     summaries: Arc<dyn CommandSummarizer>,
     policy: Arc<dyn PolicyEngine>,
     quarantine: Arc<dyn QuarantineRunner>,
-    _planner: Arc<dyn PlannerModel>,
+    planner: Arc<dyn PlannerModel>,
     approval_bus: Arc<dyn ApprovalBus>,
     event_log: Arc<dyn RuntimeEventLog>,
     clock: Arc<dyn Clock>,
@@ -364,7 +407,7 @@ impl RuntimeOrchestrator {
             summaries: deps.summaries,
             policy: deps.policy,
             quarantine: deps.quarantine,
-            _planner: deps.planner,
+            planner: deps.planner,
             approval_bus: deps.approval_bus,
             event_log: deps.event_log,
             clock: deps.clock,
@@ -404,6 +447,69 @@ impl RuntimeOrchestrator {
             .lock()
             .map_err(|_| ValueStateError::LockPoisoned)?;
         Ok(state.runtime_policy_context_for_control(control_value_refs, endorsed_by))
+    }
+
+    /// Runs a full planner turn and dispatches each validated tool call through runtime gates.
+    pub async fn orchestrate_planner_turn(
+        &self,
+        request: PlannerRunRequest,
+    ) -> Result<PlannerRunResult, RuntimeError> {
+        let planner_output = self
+            .planner
+            .plan_turn(PlannerTurnInput {
+                run_id: request.run_id.clone(),
+                user_message: request.user_message.clone(),
+                allowed_tools: request.allowed_tools.clone(),
+                previous_events: request.previous_events.clone(),
+            })
+            .await?;
+
+        let mut tool_results = Vec::with_capacity(planner_output.tool_calls.len());
+        for (idx, tool_call) in planner_output.tool_calls.into_iter().enumerate() {
+            let typed_call = self.validate_planner_tool_call(idx, &tool_call)?;
+            match typed_call {
+                TypedCall::Bash(args) => {
+                    let disposition = self
+                        .orchestrate_shell(ShellRunRequest {
+                            run_id: request.run_id.clone(),
+                            cwd: request.cwd.clone(),
+                            script: args.cmd.clone(),
+                            control_value_refs: request.control_value_refs.clone(),
+                            control_endorsed_by: request.control_endorsed_by.clone(),
+                            unknown_mode: request.unknown_mode,
+                            uncertain_mode: request.uncertain_mode,
+                        })
+                        .await?;
+                    tool_results.push(PlannerToolResult::Bash {
+                        command: args.cmd,
+                        disposition,
+                    });
+                }
+                TypedCall::Endorse(endorse_request) => {
+                    let transition = self
+                        .endorse_value_once(request.run_id.clone(), endorse_request.clone())
+                        .await?;
+                    tool_results.push(PlannerToolResult::Endorse {
+                        request: endorse_request,
+                        transition,
+                    });
+                }
+                TypedCall::Declassify(declassify_request) => {
+                    let transition = self
+                        .declassify_value_once(request.run_id.clone(), declassify_request.clone())
+                        .await?;
+                    tool_results.push(PlannerToolResult::Declassify {
+                        request: declassify_request,
+                        transition,
+                    });
+                }
+            }
+        }
+
+        Ok(PlannerRunResult {
+            thoughts: planner_output.thoughts,
+            tool_results,
+        })
     }
 
     /// Orchestrates shell execution precheck flow.
@@ -657,6 +763,39 @@ impl RuntimeOrchestrator {
         (CommandKnowledge::Known, Some(merged))
     }
 
+    fn validate_planner_tool_call(
+        &self,
+        tool_call_index: usize,
+        tool_call: &PlannerToolCall,
+    ) -> Result<TypedCall, RuntimeError> {
+        let args_json = serde_json::Value::Object(
+            tool_call
+                .args
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        );
+        match validate_at_index(tool_call_index, &tool_call.tool_name, &args_json) {
+            Ok(typed) => Ok(typed),
+            Err(error) => {
+                let report = ToolContractValidationReport {
+                    contract_version: TOOL_CONTRACTS_VERSION,
+                    errors: vec![error.as_validation_error()],
+                };
+                Self::log_tool_contract_failure(&report);
+                Err(RuntimeError::ToolContract { report })
+            }
+        }
+    }
+
+    fn log_tool_contract_failure(report: &ToolContractValidationReport) {
+        if let Ok(encoded) = serde_json::to_string(report) {
+            eprintln!("sieve-runtime contract validation failure: {encoded}");
+        } else {
+            eprintln!("sieve-runtime contract validation failure");
+        }
+    }
+
     async fn handle_unknown_or_uncertain(
         &self,
         request: &ShellRunRequest,
@@ -878,16 +1017,17 @@ impl From<UncertainMode> for Mode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use sieve_command_summaries::DefaultCommandSummarizer;
     use sieve_llm::LlmError;
     use sieve_policy::TomlPolicyEngine;
     use sieve_shell::{BasicShellAnalyzer, ShellAnalysis};
+    use sieve_tool_contracts::TOOL_CONTRACTS_VERSION;
     use sieve_types::{
         Action, Capability, CommandKnowledge, CommandSummary, Integrity, LlmModelConfig,
-        LlmProvider, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, QuarantineExtractInput,
-        QuarantineExtractOutput, Resource, SinkCheck, SinkKey, Source, TypedValue, ValueLabel,
-        ValueRef,
+        LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision,
+        QuarantineExtractInput, QuarantineExtractOutput, Resource, SinkCheck, SinkKey, Source,
+        TypedValue, ValueLabel, ValueRef,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env::temp_dir;
@@ -986,6 +1126,46 @@ mod tests {
                 thoughts: None,
                 tool_calls: Vec::new(),
             })
+        }
+    }
+
+    struct CapturingPlanner {
+        config: LlmModelConfig,
+        output: PlannerTurnOutput,
+        last_input: StdMutex<Option<PlannerTurnInput>>,
+    }
+
+    impl CapturingPlanner {
+        fn new(output: PlannerTurnOutput) -> Self {
+            Self {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "gpt-test".to_string(),
+                    api_base: None,
+                },
+                output,
+                last_input: StdMutex::new(None),
+            }
+        }
+
+        fn captured_input(&self) -> PlannerTurnInput {
+            self.last_input
+                .lock()
+                .expect("planner lock")
+                .clone()
+                .expect("captured planner input")
+        }
+    }
+
+    #[async_trait]
+    impl PlannerModel for CapturingPlanner {
+        fn config(&self) -> &LlmModelConfig {
+            &self.config
+        }
+
+        async fn plan_turn(&self, input: PlannerTurnInput) -> Result<PlannerTurnOutput, LlmError> {
+            *self.last_input.lock().expect("planner lock") = Some(input);
+            Ok(self.output.clone())
         }
     }
 
@@ -1160,6 +1340,65 @@ mod tests {
         (runtime, approval_bus, event_log)
     }
 
+    fn mk_runtime_with_capturing_planner(
+        planner_output: PlannerTurnOutput,
+        shell_knowledge: CommandKnowledge,
+        segments: Vec<CommandSegment>,
+        summary_knowledge: CommandKnowledge,
+        policy_kind: PolicyDecisionKind,
+    ) -> (
+        Arc<RuntimeOrchestrator>,
+        Arc<CapturingPlanner>,
+        Arc<InProcessApprovalBus>,
+        Arc<VecEventLog>,
+    ) {
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(VecEventLog::default());
+        let planner = Arc::new(CapturingPlanner::new(planner_output));
+        let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+            shell: Arc::new(StubShell {
+                analysis: ShellAnalysis {
+                    knowledge: shell_knowledge,
+                    segments,
+                    unsupported_constructs: Vec::new(),
+                },
+            }),
+            summaries: Arc::new(StubSummaries {
+                outcome: SummaryOutcome {
+                    knowledge: summary_knowledge,
+                    summary: if summary_knowledge == CommandKnowledge::Known {
+                        Some(stub_summary())
+                    } else {
+                        None
+                    },
+                    reason: None,
+                },
+            }),
+            policy: Arc::new(StubPolicy {
+                decision: PolicyDecision {
+                    kind: policy_kind,
+                    reason: "policy verdict".to_string(),
+                    blocked_rule_id: Some("rule-1".to_string()),
+                },
+            }),
+            quarantine: Arc::new(StubQuarantine {
+                report: QuarantineReport {
+                    run_id: RunId("run-1".to_string()),
+                    trace_path: "/tmp/sieve/trace".to_string(),
+                    stdout_path: None,
+                    stderr_path: None,
+                    attempted_capabilities: Vec::new(),
+                    exit_code: Some(0),
+                },
+            }),
+            planner: planner.clone(),
+            approval_bus: approval_bus.clone(),
+            event_log: event_log.clone(),
+            clock: Arc::new(DeterministicClock::new(1000)),
+        }));
+        (runtime, planner, approval_bus, event_log)
+    }
+
     async fn wait_for_approval(bus: &InProcessApprovalBus) -> ApprovalRequestedEvent {
         for _ in 0..20 {
             let published = bus.published_events().expect("published events");
@@ -1287,6 +1526,283 @@ mod tests {
             .get(&ValueRef("v_payload".to_string()))
             .expect("payload sink permissions");
         assert!(sinks.contains(&SinkKey("https://example.com/path".to_string())));
+    }
+
+    #[tokio::test]
+    async fn orchestrate_planner_turn_executes_bash_through_policy_and_approval() {
+        let mut args = BTreeMap::new();
+        args.insert("cmd".to_string(), json!("rm -rf tmp"));
+        let planner_output = PlannerTurnOutput {
+            thoughts: Some("run approved command".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "bash".to_string(),
+                args,
+            }],
+        };
+        let segments = vec![CommandSegment {
+            argv: vec!["rm".to_string(), "-rf".to_string(), "tmp".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, planner, approval_bus, _event_log) = mk_runtime_with_capturing_planner(
+            planner_output,
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::DenyWithApproval,
+        );
+
+        let previous_events = vec![RuntimeEvent::ApprovalResolved(ApprovalResolvedEvent {
+            schema_version: 1,
+            request_id: ApprovalRequestId("approval-prev".to_string()),
+            run_id: RunId("run-prev".to_string()),
+            action: ApprovalAction::Deny,
+            created_at_ms: 900,
+        })];
+
+        let runtime_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_planner_turn(PlannerRunRequest {
+                        run_id: RunId("run-1".to_string()),
+                        cwd: "/tmp".to_string(),
+                        user_message: "delete tmp".to_string(),
+                        allowed_tools: vec!["bash".to_string()],
+                        previous_events,
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Deny,
+                    })
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        assert_eq!(requested.blocked_rule_id, "rule-1");
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id.clone(),
+                run_id: requested.run_id.clone(),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 1001,
+            })
+            .expect("resolve approval");
+
+        let output = runtime_task
+            .await
+            .expect("task join")
+            .expect("runtime planner turn");
+
+        assert_eq!(output.thoughts, Some("run approved command".to_string()));
+        assert_eq!(output.tool_results.len(), 1);
+        match &output.tool_results[0] {
+            PlannerToolResult::Bash {
+                command,
+                disposition,
+            } => {
+                assert_eq!(command, "rm -rf tmp");
+                assert_eq!(*disposition, RuntimeDisposition::ExecuteMainline);
+            }
+            other => panic!("expected bash result, got {other:?}"),
+        }
+
+        let planner_input = planner.captured_input();
+        assert_eq!(planner_input.run_id, RunId("run-1".to_string()));
+        assert_eq!(planner_input.user_message, "delete tmp");
+        assert_eq!(planner_input.allowed_tools, vec!["bash".to_string()]);
+        assert_eq!(planner_input.previous_events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn orchestrate_planner_turn_runs_unknown_bash_in_quarantine_when_accepted() {
+        let mut args = BTreeMap::new();
+        args.insert("cmd".to_string(), json!("custom-cmd --flag"));
+        let planner_output = PlannerTurnOutput {
+            thoughts: None,
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "bash".to_string(),
+                args,
+            }],
+        };
+        let segments = vec![CommandSegment {
+            argv: vec!["custom-cmd".to_string(), "--flag".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, _planner, approval_bus, _event_log) = mk_runtime_with_capturing_planner(
+            planner_output,
+            CommandKnowledge::Unknown,
+            segments,
+            CommandKnowledge::Unknown,
+            PolicyDecisionKind::Allow,
+        );
+
+        let output = runtime
+            .orchestrate_planner_turn(PlannerRunRequest {
+                run_id: RunId("run-1".to_string()),
+                cwd: "/tmp".to_string(),
+                user_message: "run custom command".to_string(),
+                allowed_tools: vec!["bash".to_string()],
+                previous_events: Vec::new(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Accept,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime planner turn");
+
+        assert_eq!(output.tool_results.len(), 1);
+        match &output.tool_results[0] {
+            PlannerToolResult::Bash { disposition, .. } => {
+                assert!(matches!(
+                    disposition,
+                    RuntimeDisposition::ExecuteQuarantine(_)
+                ));
+            }
+            other => panic!("expected bash result, got {other:?}"),
+        }
+        assert!(approval_bus
+            .published_events()
+            .expect("published events")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn orchestrate_planner_turn_rejects_invalid_tool_args_with_contract_report() {
+        let mut args = BTreeMap::new();
+        args.insert("cmd".to_string(), json!(""));
+        let planner_output = PlannerTurnOutput {
+            thoughts: None,
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "bash".to_string(),
+                args,
+            }],
+        };
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string(), "ok".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, _planner, _approval_bus, _event_log) = mk_runtime_with_capturing_planner(
+            planner_output,
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+
+        let err = runtime
+            .orchestrate_planner_turn(PlannerRunRequest {
+                run_id: RunId("run-1".to_string()),
+                cwd: "/tmp".to_string(),
+                user_message: "run".to_string(),
+                allowed_tools: vec!["bash".to_string()],
+                previous_events: Vec::new(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect_err("invalid tool args should fail");
+
+        match err {
+            RuntimeError::ToolContract { report } => {
+                assert_eq!(report.contract_version, TOOL_CONTRACTS_VERSION);
+                assert_eq!(report.errors.len(), 1);
+                let validation = &report.errors[0];
+                assert_eq!(validation.tool_call_index, 0);
+                assert_eq!(validation.tool_name, "bash");
+                assert_eq!(validation.argument_path, "/cmd");
+            }
+            other => panic!("expected tool contract error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn orchestrate_planner_turn_executes_endorse_with_approval() {
+        let mut args = BTreeMap::new();
+        args.insert("value_ref".to_string(), json!("v_control"));
+        args.insert("target_integrity".to_string(), json!("trusted"));
+        let planner_output = PlannerTurnOutput {
+            thoughts: None,
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "endorse".to_string(),
+                args,
+            }],
+        };
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string(), "ok".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, _planner, approval_bus, _event_log) = mk_runtime_with_capturing_planner(
+            planner_output,
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+        runtime
+            .upsert_value_label(
+                ValueRef("v_control".to_string()),
+                label_with_sinks(Integrity::Untrusted, &[]),
+            )
+            .expect("seed value state");
+
+        let runtime_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_planner_turn(PlannerRunRequest {
+                        run_id: RunId("run-1".to_string()),
+                        cwd: "/tmp".to_string(),
+                        user_message: "endorse control".to_string(),
+                        allowed_tools: vec!["endorse".to_string()],
+                        previous_events: Vec::new(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Deny,
+                    })
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        assert_eq!(requested.command_segments[0].argv[0], "endorse");
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id.clone(),
+                run_id: requested.run_id.clone(),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 1001,
+            })
+            .expect("resolve approval");
+
+        let output = runtime_task
+            .await
+            .expect("task join")
+            .expect("runtime planner turn");
+        assert_eq!(output.tool_results.len(), 1);
+        match &output.tool_results[0] {
+            PlannerToolResult::Endorse {
+                request,
+                transition: Some(transition),
+            } => {
+                assert_eq!(request.value_ref, ValueRef("v_control".to_string()));
+                assert_eq!(transition.to_integrity, Integrity::Trusted);
+                assert_eq!(transition.approved_by, Some(requested.request_id));
+            }
+            other => panic!("expected endorse transition, got {other:?}"),
+        }
+
+        let label = runtime
+            .value_label(&ValueRef("v_control".to_string()))
+            .expect("read value label")
+            .expect("value label present");
+        assert_eq!(label.integrity, Integrity::Trusted);
     }
 
     #[tokio::test]
