@@ -7,13 +7,14 @@ use sieve_llm::{LlmError, PlannerModel};
 use sieve_policy::TomlPolicyEngine;
 use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_runtime::{
-    Clock, EventLogError, InProcessApprovalBus, RuntimeDeps, RuntimeEventLog, RuntimeOrchestrator,
+    Clock, EventLogError, InProcessApprovalBus, MainlineRunError, MainlineRunReport,
+    MainlineRunRequest, MainlineRunner, RuntimeDeps, RuntimeEventLog, RuntimeOrchestrator,
 };
 use sieve_shell::{ShellAnalysis, ShellAnalysisError, ShellAnalyzer};
 use sieve_types::{
-    ApprovalRequestedEvent, CapacityType, Integrity, LlmModelConfig, LlmProvider,
-    PlannerTurnInput, PlannerTurnOutput, QuarantineReport, QuarantineRunRequest, RuntimeEvent,
-    SinkKey, Source, ValueLabel,
+    ApprovalRequestedEvent, CapacityType, Integrity, LlmModelConfig, LlmProvider, PlannerTurnInput,
+    PlannerTurnOutput, QuarantineReport, QuarantineRunRequest, RuntimeEvent, SinkKey, Source,
+    ValueLabel,
 };
 use std::collections::BTreeSet;
 use std::fs;
@@ -134,6 +135,21 @@ impl RecordingQuarantine {
     }
 }
 
+struct NoopMainline;
+
+#[async_trait]
+impl MainlineRunner for NoopMainline {
+    async fn run(
+        &self,
+        request: MainlineRunRequest,
+    ) -> Result<MainlineRunReport, MainlineRunError> {
+        Ok(MainlineRunReport {
+            run_id: request.run_id,
+            exit_code: Some(0),
+        })
+    }
+}
+
 pub fn mk_runtime(
     shell: Arc<dyn ShellAnalyzer>,
     summaries: Arc<dyn CommandSummarizer>,
@@ -159,6 +175,7 @@ pub fn mk_runtime(
         summaries,
         policy,
         quarantine,
+        mainline: Arc::new(NoopMainline),
         planner,
         approval_bus: approval_bus.clone(),
         event_log: event_log.clone(),

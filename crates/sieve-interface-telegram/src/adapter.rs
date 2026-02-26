@@ -147,7 +147,8 @@ mod tests {
     use sieve_policy::TomlPolicyEngine;
     use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
     use sieve_runtime::{
-        EventLogError, InProcessApprovalBus, PlannerRunRequest, RuntimeDeps, RuntimeDisposition,
+        EventLogError, InProcessApprovalBus, MainlineRunError, MainlineRunReport,
+        MainlineRunRequest, MainlineRunner, PlannerRunRequest, RuntimeDeps, RuntimeDisposition,
         RuntimeError, RuntimeEventLog, RuntimeOrchestrator, ShellRunRequest,
         SystemClock as RuntimeSystemClock,
     };
@@ -634,6 +635,21 @@ mod tests {
         }
     }
 
+    struct NoopMainlineRunner;
+
+    #[async_trait]
+    impl MainlineRunner for NoopMainlineRunner {
+        async fn run(
+            &self,
+            request: MainlineRunRequest,
+        ) -> Result<MainlineRunReport, MainlineRunError> {
+            Ok(MainlineRunReport {
+                run_id: request.run_id,
+                exit_code: Some(0),
+            })
+        }
+    }
+
     struct StaticPlanner {
         config: LlmModelConfig,
         output: PlannerTurnOutput,
@@ -687,6 +703,7 @@ reason = "rm -rf requires approval"
             summaries: Arc::new(DefaultCommandSummarizer),
             policy: Arc::new(policy),
             quarantine: Arc::new(NoopQuarantineRunner),
+            mainline: Arc::new(NoopMainlineRunner),
             planner: Arc::new(StaticPlanner::new(planner_output)),
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),
@@ -763,7 +780,13 @@ reason = "rm -rf requires approval"
             .expect("runtime task timed out")
             .expect("runtime task join failed")
             .expect("runtime orchestration failed");
-        assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+        match disposition {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                assert_eq!(report.run_id, RunId("run_runtime_telegram".to_string()));
+                assert_eq!(report.exit_code, Some(0));
+            }
+            other => panic!("expected mainline execution, got {other:?}"),
+        }
 
         let final_events = event_log.snapshot();
         for event in final_events.iter().skip(forwarded).cloned() {

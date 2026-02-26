@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -301,6 +302,53 @@ impl Clock for SystemClock {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainlineRunRequest {
+    pub run_id: RunId,
+    pub cwd: String,
+    pub script: String,
+    pub command_segments: Vec<CommandSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainlineRunReport {
+    pub run_id: RunId,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Error)]
+pub enum MainlineRunError {
+    #[error("mainline command execution failed: {0}")]
+    Exec(String),
+}
+
+#[async_trait]
+pub trait MainlineRunner: Send + Sync {
+    async fn run(&self, request: MainlineRunRequest)
+        -> Result<MainlineRunReport, MainlineRunError>;
+}
+
+pub struct BashMainlineRunner;
+
+#[async_trait]
+impl MainlineRunner for BashMainlineRunner {
+    async fn run(
+        &self,
+        request: MainlineRunRequest,
+    ) -> Result<MainlineRunReport, MainlineRunError> {
+        let status = StdCommand::new("bash")
+            .arg("-lc")
+            .arg(&request.script)
+            .current_dir(&request.cwd)
+            .status()
+            .map_err(|err| MainlineRunError::Exec(err.to_string()))?;
+        Ok(MainlineRunReport {
+            run_id: request.run_id,
+            exit_code: status.code(),
+        })
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("planner model failed: {0}")]
@@ -313,6 +361,8 @@ pub enum RuntimeError {
     Approval(#[from] ApprovalBusError),
     #[error("quarantine run failed: {0}")]
     Quarantine(#[from] QuarantineRunError),
+    #[error("mainline run failed: {0}")]
+    Mainline(#[from] MainlineRunError),
     #[error("value state failed: {0}")]
     ValueState(#[from] ValueStateError),
     #[error("planner tool call contract validation failed")]
@@ -353,7 +403,7 @@ pub struct PlannerRunRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeDisposition {
-    ExecuteMainline,
+    ExecuteMainline(MainlineRunReport),
     ExecuteQuarantine(QuarantineReport),
     Denied { reason: String },
 }
@@ -385,6 +435,7 @@ pub struct RuntimeOrchestrator {
     summaries: Arc<dyn CommandSummarizer>,
     policy: Arc<dyn PolicyEngine>,
     quarantine: Arc<dyn QuarantineRunner>,
+    mainline: Arc<dyn MainlineRunner>,
     planner: Arc<dyn PlannerModel>,
     approval_bus: Arc<dyn ApprovalBus>,
     event_log: Arc<dyn RuntimeEventLog>,
@@ -398,6 +449,7 @@ pub struct RuntimeDeps {
     pub summaries: Arc<dyn CommandSummarizer>,
     pub policy: Arc<dyn PolicyEngine>,
     pub quarantine: Arc<dyn QuarantineRunner>,
+    pub mainline: Arc<dyn MainlineRunner>,
     pub planner: Arc<dyn PlannerModel>,
     pub approval_bus: Arc<dyn ApprovalBus>,
     pub event_log: Arc<dyn RuntimeEventLog>,
@@ -413,6 +465,7 @@ impl RuntimeOrchestrator {
             summaries: deps.summaries,
             policy: deps.policy,
             quarantine: deps.quarantine,
+            mainline: deps.mainline,
             planner: deps.planner,
             approval_bus: deps.approval_bus,
             event_log: deps.event_log,
@@ -582,8 +635,17 @@ impl RuntimeOrchestrator {
         self.append_event(RuntimeEvent::PolicyEvaluated(policy_event))
             .await?;
 
+        let command_segments = precheck.command_segments;
         match decision.kind {
-            PolicyDecisionKind::Allow => Ok(RuntimeDisposition::ExecuteMainline),
+            PolicyDecisionKind::Allow => {
+                self.execute_mainline(
+                    request.run_id.clone(),
+                    request.cwd.clone(),
+                    request.script.clone(),
+                    command_segments,
+                )
+                .await
+            }
             PolicyDecisionKind::Deny => Ok(RuntimeDisposition::Denied {
                 reason: decision.reason,
             }),
@@ -591,15 +653,30 @@ impl RuntimeOrchestrator {
                 let blocked_rule_id = decision
                     .blocked_rule_id
                     .unwrap_or_else(|| "deny_with_approval".to_string());
-                self.resolve_approval(
-                    request.run_id,
-                    precheck.command_segments,
-                    inferred_capabilities,
-                    blocked_rule_id,
-                    decision.reason,
-                    RuntimeDisposition::ExecuteMainline,
-                )
-                .await
+                match self
+                    .request_approval(
+                        request.run_id.clone(),
+                        command_segments.clone(),
+                        inferred_capabilities,
+                        blocked_rule_id,
+                        decision.reason,
+                    )
+                    .await?
+                    .action
+                {
+                    ApprovalAction::ApproveOnce => {
+                        self.execute_mainline(
+                            request.run_id,
+                            request.cwd,
+                            request.script,
+                            command_segments,
+                        )
+                        .await
+                    }
+                    ApprovalAction::Deny => Ok(RuntimeDisposition::Denied {
+                        reason: "approval denied".to_string(),
+                    }),
+                }
             }
         }
     }
@@ -903,6 +980,25 @@ impl RuntimeOrchestrator {
         Ok(report)
     }
 
+    async fn execute_mainline(
+        &self,
+        run_id: RunId,
+        cwd: String,
+        script: String,
+        command_segments: Vec<CommandSegment>,
+    ) -> Result<RuntimeDisposition, RuntimeError> {
+        let report = self
+            .mainline
+            .run(MainlineRunRequest {
+                run_id,
+                cwd,
+                script,
+                command_segments,
+            })
+            .await?;
+        Ok(RuntimeDisposition::ExecuteMainline(report))
+    }
+
     async fn approve_tool_call(
         &self,
         run_id: RunId,
@@ -975,33 +1071,6 @@ impl RuntimeOrchestrator {
             uncertain_mode: UncertainMode::Deny,
         };
         Ok(self.policy.evaluate_precheck(&input))
-    }
-
-    async fn resolve_approval(
-        &self,
-        run_id: RunId,
-        command_segments: Vec<CommandSegment>,
-        inferred_capabilities: Vec<sieve_types::Capability>,
-        blocked_rule_id: String,
-        reason: String,
-        approved: RuntimeDisposition,
-    ) -> Result<RuntimeDisposition, RuntimeError> {
-        match self
-            .request_approval(
-                run_id,
-                command_segments,
-                inferred_capabilities,
-                blocked_rule_id,
-                reason,
-            )
-            .await?
-            .action
-        {
-            ApprovalAction::ApproveOnce => Ok(approved),
-            ApprovalAction::Deny => Ok(RuntimeDisposition::Denied {
-                reason: "approval denied".to_string(),
-            }),
-        }
     }
 
     async fn request_approval(
@@ -1206,6 +1275,56 @@ mod tests {
         }
     }
 
+    struct StubMainline;
+
+    #[async_trait]
+    impl MainlineRunner for StubMainline {
+        async fn run(
+            &self,
+            request: MainlineRunRequest,
+        ) -> Result<MainlineRunReport, MainlineRunError> {
+            Ok(MainlineRunReport {
+                run_id: request.run_id,
+                exit_code: Some(0),
+            })
+        }
+    }
+
+    struct CapturingMainline {
+        exit_code: Option<i32>,
+        requests: StdMutex<Vec<MainlineRunRequest>>,
+    }
+
+    impl CapturingMainline {
+        fn new(exit_code: Option<i32>) -> Self {
+            Self {
+                exit_code,
+                requests: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<MainlineRunRequest> {
+            self.requests.lock().expect("mainline lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl MainlineRunner for CapturingMainline {
+        async fn run(
+            &self,
+            request: MainlineRunRequest,
+        ) -> Result<MainlineRunReport, MainlineRunError> {
+            self.requests
+                .lock()
+                .map_err(|_| MainlineRunError::Exec("mainline lock poisoned".to_string()))?
+                .push(request.clone());
+            Ok(MainlineRunReport {
+                run_id: request.run_id,
+                exit_code: self.exit_code,
+            })
+        }
+    }
+
     struct StubPlanner {
         config: LlmModelConfig,
     }
@@ -1383,6 +1502,7 @@ mod tests {
                     exit_code: Some(0),
                 },
             }),
+            mainline: Arc::new(StubMainline),
             planner: Arc::new(StubPlanner {
                 config: LlmModelConfig {
                     provider: LlmProvider::OpenAi,
@@ -1421,6 +1541,7 @@ mod tests {
                     exit_code: Some(0),
                 },
             }),
+            mainline: Arc::new(StubMainline),
             planner: Arc::new(StubPlanner {
                 config: LlmModelConfig {
                     provider: LlmProvider::OpenAi,
@@ -1486,12 +1607,79 @@ mod tests {
                     exit_code: Some(0),
                 },
             }),
+            mainline: Arc::new(StubMainline),
             planner: planner.clone(),
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),
             clock: Arc::new(DeterministicClock::new(1000)),
         }));
         (runtime, planner, approval_bus, event_log)
+    }
+
+    fn mk_runtime_with_capturing_mainline(
+        shell_knowledge: CommandKnowledge,
+        segments: Vec<CommandSegment>,
+        summary_knowledge: CommandKnowledge,
+        policy_kind: PolicyDecisionKind,
+        exit_code: Option<i32>,
+    ) -> (
+        Arc<RuntimeOrchestrator>,
+        Arc<CapturingMainline>,
+        Arc<InProcessApprovalBus>,
+        Arc<VecEventLog>,
+    ) {
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(VecEventLog::default());
+        let mainline = Arc::new(CapturingMainline::new(exit_code));
+        let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+            shell: Arc::new(StubShell {
+                analysis: ShellAnalysis {
+                    knowledge: shell_knowledge,
+                    segments,
+                    unsupported_constructs: Vec::new(),
+                },
+            }),
+            summaries: Arc::new(StubSummaries {
+                outcome: SummaryOutcome {
+                    knowledge: summary_knowledge,
+                    summary: if summary_knowledge == CommandKnowledge::Known {
+                        Some(stub_summary())
+                    } else {
+                        None
+                    },
+                    reason: None,
+                },
+            }),
+            policy: Arc::new(StubPolicy {
+                decision: PolicyDecision {
+                    kind: policy_kind,
+                    reason: "policy verdict".to_string(),
+                    blocked_rule_id: Some("rule-1".to_string()),
+                },
+            }),
+            quarantine: Arc::new(StubQuarantine {
+                report: QuarantineReport {
+                    run_id: RunId("run-1".to_string()),
+                    trace_path: "/tmp/sieve/trace".to_string(),
+                    stdout_path: None,
+                    stderr_path: None,
+                    attempted_capabilities: Vec::new(),
+                    exit_code: Some(0),
+                },
+            }),
+            mainline: mainline.clone(),
+            planner: Arc::new(StubPlanner {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "gpt-test".to_string(),
+                    api_base: None,
+                },
+            }),
+            approval_bus: approval_bus.clone(),
+            event_log: event_log.clone(),
+            clock: Arc::new(DeterministicClock::new(1000)),
+        }));
+        (runtime, mainline, approval_bus, event_log)
     }
 
     async fn wait_for_approval(bus: &InProcessApprovalBus) -> ApprovalRequestedEvent {
@@ -1559,6 +1747,7 @@ mod tests {
                     exit_code: Some(0),
                 },
             }),
+            mainline: Arc::new(StubMainline),
             planner: Arc::new(StubPlanner {
                 config: LlmModelConfig {
                     provider: LlmProvider::OpenAi,
@@ -1598,7 +1787,13 @@ mod tests {
             })
             .await
             .expect("runtime ok");
-        assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+        match disposition {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                assert_eq!(report.run_id, RunId("run-1".to_string()));
+                assert_eq!(report.exit_code, Some(0));
+            }
+            other => panic!("expected mainline execution, got {other:?}"),
+        }
 
         let captured = policy.captured_input();
         assert_eq!(
@@ -1621,6 +1816,50 @@ mod tests {
             .get(&ValueRef("v_payload".to_string()))
             .expect("payload sink permissions");
         assert!(sinks.contains(&SinkKey("https://example.com/path".to_string())));
+    }
+
+    #[tokio::test]
+    async fn orchestrate_shell_executes_mainline_with_segment_report() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string(), "ok".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, mainline, _approval_bus, _event_log) = mk_runtime_with_capturing_mainline(
+            CommandKnowledge::Known,
+            segments.clone(),
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+            Some(7),
+        );
+
+        let disposition = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-mainline".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "echo ok".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime ok");
+
+        match disposition {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                assert_eq!(report.run_id, RunId("run-mainline".to_string()));
+                assert_eq!(report.exit_code, Some(7));
+            }
+            other => panic!("expected mainline execution, got {other:?}"),
+        }
+
+        let requests = mainline.requests();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        assert_eq!(request.run_id, RunId("run-mainline".to_string()));
+        assert_eq!(request.cwd, "/tmp");
+        assert_eq!(request.script, "echo ok");
+        assert_eq!(request.command_segments, segments);
     }
 
     #[tokio::test]
@@ -1698,7 +1937,13 @@ mod tests {
                 disposition,
             } => {
                 assert_eq!(command, "rm -rf tmp");
-                assert_eq!(*disposition, RuntimeDisposition::ExecuteMainline);
+                match disposition {
+                    RuntimeDisposition::ExecuteMainline(report) => {
+                        assert_eq!(report.run_id, RunId("run-1".to_string()));
+                        assert_eq!(report.exit_code, Some(0));
+                    }
+                    other => panic!("expected mainline execution, got {other:?}"),
+                }
             }
             other => panic!("expected bash result, got {other:?}"),
         }
@@ -2021,7 +2266,13 @@ require_trusted_control_for_mutating = true
             .await
             .expect("runtime ok");
 
-        assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+        match disposition {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                assert_eq!(report.run_id, RunId("run-2".to_string()));
+                assert_eq!(report.exit_code, Some(0));
+            }
+            other => panic!("expected mainline execution, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -2460,7 +2711,13 @@ require_trusted_control_for_mutating = true
             .expect("resolve approval");
 
         let disposition = runtime_task.await.expect("task join").expect("runtime ok");
-        assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+        match disposition {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                assert_eq!(report.run_id, RunId("run-1".to_string()));
+                assert_eq!(report.exit_code, Some(0));
+            }
+            other => panic!("expected mainline execution, got {other:?}"),
+        }
 
         let events = event_log.snapshot();
         assert!(matches!(events[0], RuntimeEvent::PolicyEvaluated(_)));
@@ -2549,8 +2806,20 @@ require_trusted_control_for_mutating = true
 
         let out_1 = task_1.await.expect("join 1").expect("runtime 1");
         let out_2 = task_2.await.expect("join 2").expect("runtime 2");
-        assert_eq!(out_1, RuntimeDisposition::ExecuteMainline);
-        assert_eq!(out_2, RuntimeDisposition::ExecuteMainline);
+        match out_1 {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                assert_eq!(report.run_id, RunId("run-1".to_string()));
+                assert_eq!(report.exit_code, Some(0));
+            }
+            other => panic!("expected mainline execution, got {other:?}"),
+        }
+        match out_2 {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                assert_eq!(report.run_id, RunId("run-2".to_string()));
+                assert_eq!(report.exit_code, Some(0));
+            }
+            other => panic!("expected mainline execution, got {other:?}"),
+        }
     }
 
     #[tokio::test]

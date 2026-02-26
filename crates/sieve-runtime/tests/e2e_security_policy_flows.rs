@@ -2,7 +2,9 @@
 
 mod common;
 
-use common::{label_with_sinks, mk_runtime, wait_for_approval, wait_for_approval_count, RecordingQuarantine};
+use common::{
+    label_with_sinks, mk_runtime, wait_for_approval, wait_for_approval_count, RecordingQuarantine,
+};
 use sieve_command_summaries::DefaultCommandSummarizer;
 use sieve_runtime::{RuntimeDisposition, ShellRunRequest};
 use sieve_shell::BasicShellAnalyzer;
@@ -69,7 +71,13 @@ require_trusted_control_for_mutating = true
         .expect("resolve approval");
 
     let disposition = runtime_task.await.expect("task join").expect("runtime ok");
-    assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+    match disposition {
+        RuntimeDisposition::ExecuteMainline(report) => {
+            assert_eq!(report.run_id, RunId("run-rm".to_string()));
+            assert_eq!(report.exit_code, Some(0));
+        }
+        other => panic!("expected mainline execution, got {other:?}"),
+    }
 
     let events = event_log.snapshot();
     assert!(matches!(events[0], RuntimeEvent::PolicyEvaluated(_)));
@@ -167,7 +175,13 @@ require_trusted_control_for_mutating = true
         })
         .await
         .expect("runtime ok");
-    assert_eq!(second, RuntimeDisposition::ExecuteMainline);
+    match second {
+        RuntimeDisposition::ExecuteMainline(report) => {
+            assert_eq!(report.run_id, RunId("run-curl-2".to_string()));
+            assert_eq!(report.exit_code, Some(0));
+        }
+        other => panic!("expected mainline execution, got {other:?}"),
+    }
 
     let second_task = {
         let runtime = runtime.clone();
@@ -195,10 +209,7 @@ require_trusted_control_for_mutating = true
             created_at_ms: 1201,
         })
         .expect("resolve second declassify approval");
-    let second_transition = second_task
-        .await
-        .expect("task join")
-        .expect("runtime ok");
+    let second_transition = second_task.await.expect("task join").expect("runtime ok");
     assert!(second_transition.is_none());
 }
 
@@ -281,9 +292,6 @@ require_trusted_control_for_mutating = true
             created_at_ms: 1401,
         })
         .expect("resolve second endorse");
-    let second_transition = second_task
-        .await
-        .expect("task join")
-        .expect("runtime ok");
+    let second_transition = second_task.await.expect("task join").expect("runtime ok");
     assert!(second_transition.is_none());
 }
