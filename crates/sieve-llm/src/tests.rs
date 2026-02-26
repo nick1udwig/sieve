@@ -1,6 +1,7 @@
 use crate::config::{load_model_config_from_env, load_openai_api_key_from_env};
 use crate::wire::{
-    decode_planner_output, decode_quarantine_output, serialize_planner_input, PlannerDecodeOutcome,
+    decode_planner_output, decode_quarantine_output, extract_openai_planner_output_json,
+    serialize_planner_input, PlannerDecodeOutcome,
 };
 use crate::{LlmError, OpenAiPlannerModel, OpenAiQuarantineModel, PlannerModel, QuarantineModel};
 use serde_json::json;
@@ -207,6 +208,64 @@ fn decode_planner_output_accepts_legacy_parameters_command_shape() {
                 out.tool_calls[0].args["cmd"],
                 json!("mkdir -p /tmp/sieve-r-live-smoke")
             );
+        }
+        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
+    }
+}
+
+#[test]
+fn extract_openai_planner_output_json_parses_native_tool_calls() {
+    let response = json!({
+        "choices": [
+            {
+                "message": {
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "bash",
+                                "arguments": "{\"cmd\":\"ls -la\"}"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    });
+
+    let normalized = extract_openai_planner_output_json(&response).unwrap();
+    let out = decode_planner_output(normalized).unwrap();
+    match out {
+        PlannerDecodeOutcome::Valid(out) => {
+            assert_eq!(out.tool_calls.len(), 1);
+            assert_eq!(out.tool_calls[0].tool_name, "bash");
+            assert_eq!(out.tool_calls[0].args["cmd"], json!("ls -la"));
+        }
+        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
+    }
+}
+
+#[test]
+fn extract_openai_planner_output_json_falls_back_to_content_payload() {
+    let response = json!({
+        "choices": [
+            {
+                "message": {
+                    "content": "{\"thoughts\":null,\"tool_calls\":[{\"tool_name\":\"bash\",\"args\":{\"cmd\":\"pwd\"}}]}"
+                }
+            }
+        ]
+    });
+
+    let normalized = extract_openai_planner_output_json(&response).unwrap();
+    let out = decode_planner_output(normalized).unwrap();
+    match out {
+        PlannerDecodeOutcome::Valid(out) => {
+            assert_eq!(out.tool_calls.len(), 1);
+            assert_eq!(out.tool_calls[0].tool_name, "bash");
+            assert_eq!(out.tool_calls[0].args["cmd"], json!("pwd"));
         }
         PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
     }

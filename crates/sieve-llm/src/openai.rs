@@ -3,13 +3,15 @@ use crate::config::{
 };
 use crate::wire::{
     decode_planner_output, decode_quarantine_output, extract_openai_message_content_json,
-    planner_regeneration_diagnostic_prompt, quarantine_output_schema, serialize_planner_input,
-    PlannerDecodeOutcome, PLANNER_SYSTEM_PROMPT, QUARANTINE_SYSTEM_PROMPT,
+    extract_openai_planner_output_json, planner_regeneration_diagnostic_prompt,
+    quarantine_output_schema, serialize_planner_input, PlannerDecodeOutcome, PLANNER_SYSTEM_PROMPT,
+    QUARANTINE_SYSTEM_PROMPT,
 };
 use crate::{LlmError, PlannerModel, QuarantineModel};
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
+use sieve_tool_contracts::tool_args_schema;
 use sieve_types::{
     LlmModelConfig, PlannerTurnInput, PlannerTurnOutput, QuarantineExtractInput,
     QuarantineExtractOutput, ToolContractValidationReport,
@@ -224,11 +226,11 @@ where
     let mut regenerated = false;
 
     loop {
-        let request = planner_chat_completion_request(model, messages.clone());
+        let request = planner_chat_completion_request(model, messages.clone(), allowed_tools)?;
         let response = send_request(request).await?;
-        let content_json = extract_openai_message_content_json(&response)?;
+        let output_json = extract_openai_planner_output_json(&response)?;
 
-        match decode_planner_output(content_json)? {
+        match decode_planner_output(output_json)? {
             PlannerDecodeOutcome::Valid(output) => {
                 ensure_allowed_tools(allowed_tools, &output)?;
                 return Ok(output);
@@ -245,15 +247,45 @@ where
     }
 }
 
-fn planner_chat_completion_request(model: &str, messages: Vec<Value>) -> Value {
-    json!({
+fn planner_chat_completion_request(
+    model: &str,
+    messages: Vec<Value>,
+    allowed_tools: &[String],
+) -> Result<Value, LlmError> {
+    let tools = planner_tool_definitions(allowed_tools)?;
+    Ok(json!({
         "model": model,
         "temperature": 0,
         "messages": messages,
-        // Keep planner output in JSON mode and enforce strict contracts in decode.
-        // OpenAI chat-completions json_schema subset rejects contract schema unions.
-        "response_format": {"type":"json_object"}
-    })
+        "tools": tools,
+        "tool_choice": "required"
+    }))
+}
+
+fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmError> {
+    if allowed_tools.is_empty() {
+        return Err(LlmError::Boundary(
+            "allowed_tools must include at least one tool".to_string(),
+        ));
+    }
+
+    let mut tools = Vec::with_capacity(allowed_tools.len());
+    for tool_name in allowed_tools {
+        let schema = tool_args_schema(tool_name).ok_or_else(|| {
+            LlmError::Boundary(format!(
+                "allowed tool `{tool_name}` is missing a contract schema"
+            ))
+        })?;
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "parameters": schema
+            }
+        }));
+    }
+
+    Ok(tools)
 }
 
 fn ensure_allowed_tools(
@@ -324,6 +356,97 @@ mod tests {
                 }
             ]
         })
+    }
+
+    fn planner_native_tool_response(tool_calls: Value) -> Value {
+        json!({
+            "choices": [
+                {
+                    "message": {
+                        "content": null,
+                        "tool_calls": tool_calls
+                    }
+                }
+            ]
+        })
+    }
+
+    #[tokio::test]
+    async fn planner_request_includes_openai_native_tools_payload() {
+        let responses = Arc::new(Mutex::new(VecDeque::from(vec![planner_response(json!({
+            "thoughts": null,
+            "tool_calls": [{"tool_name":"bash","args":{"cmd":"ls -la"}}]
+        }))])));
+        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+
+        let _ = run_planner_with_one_regeneration(
+            "gpt-test",
+            vec![
+                json!({"role":"system","content":"sys"}),
+                json!({"role":"user","content":"input"}),
+            ],
+            &["bash".to_string()],
+            {
+                let responses = responses.clone();
+                let requests = requests.clone();
+                move |request| {
+                    requests.lock().expect("request lock").push(request);
+                    let response = responses
+                        .lock()
+                        .expect("response lock")
+                        .pop_front()
+                        .expect("mock response");
+                    async move { Ok(response) }
+                }
+            },
+        )
+        .await
+        .expect("planner request should succeed");
+
+        let requests = requests.lock().expect("request lock");
+        assert!(requests[0].pointer("/tools").is_some());
+    }
+
+    #[tokio::test]
+    async fn planner_accepts_openai_native_tool_call_response_shape() {
+        let responses = Arc::new(Mutex::new(VecDeque::from(vec![
+            planner_native_tool_response(json!([
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": "{\"cmd\":\"ls -la\"}"
+                    }
+                }
+            ])),
+        ])));
+
+        let output = run_planner_with_one_regeneration(
+            "gpt-test",
+            vec![
+                json!({"role":"system","content":"sys"}),
+                json!({"role":"user","content":"input"}),
+            ],
+            &["bash".to_string()],
+            {
+                let responses = responses.clone();
+                move |_request| {
+                    let response = responses
+                        .lock()
+                        .expect("response lock")
+                        .pop_front()
+                        .expect("mock response");
+                    async move { Ok(response) }
+                }
+            },
+        )
+        .await
+        .expect("native tool-calls should decode");
+
+        assert_eq!(output.tool_calls.len(), 1);
+        assert_eq!(output.tool_calls[0].tool_name, "bash");
+        assert_eq!(output.tool_calls[0].args.get("cmd"), Some(&json!("ls -la")));
     }
 
     #[tokio::test]
