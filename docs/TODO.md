@@ -16,6 +16,15 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
+- [ ] `R` Live End-to-End Smoke (Real OpenAI + Telegram + Execution)
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: run one full live flow with real credentials and policy via `sieve-app` (planner call, approval over Telegram, and real mainline command execution). Files: [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [README.md](/root/git/sieve-v3/README.md), [`.env.example`](/root/git/sieve-v3/.env.example). Done when: run evidence is recorded (input command, approval action, resulting command exit/report, and event log path).
+
+- [ ] `S` Baseline Policy File + Wiring
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: add a checked-in baseline policy TOML and wire docs/env defaults to that path so `SIEVE_POLICY_PATH` has an in-repo default target. Files: [`.env.example`](/root/git/sieve-v3/.env.example), [README.md](/root/git/sieve-v3/README.md), plus new policy file under `docs/` or repo root. Done when: fresh setup can point to a committed policy file without out-of-band file creation.
+
+- [ ] `T` Q-LLM Runtime Decision and Integration (If Required)
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: explicitly decide whether quarantine LLM extraction must be in the integrated runtime loop for MVP. If yes, wire `OpenAiQuarantineModel` into app/runtime flow and add integration tests; if no, document deferral in MVP docs/TODO. Files: [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [openai.rs](/root/git/sieve-v3/crates/sieve-llm/src/openai.rs), [sieve-v3-mvp-spec-v1.3.md](/root/git/sieve-v3/docs/sieve-v3-mvp-spec-v1.3.md), [docs/TODO.md](/root/git/sieve-v3/docs/TODO.md). Done when: decision is explicit and corresponding code/tests/docs are aligned.
+
 ## Claimed
 
 ## Done
