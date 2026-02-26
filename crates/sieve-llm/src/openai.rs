@@ -346,18 +346,6 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
-    fn planner_response(content: Value) -> Value {
-        json!({
-            "choices": [
-                {
-                    "message": {
-                        "content": content.to_string()
-                    }
-                }
-            ]
-        })
-    }
-
     fn planner_native_tool_response(tool_calls: Value) -> Value {
         json!({
             "choices": [
@@ -373,10 +361,18 @@ mod tests {
 
     #[tokio::test]
     async fn planner_request_includes_openai_native_tools_payload() {
-        let responses = Arc::new(Mutex::new(VecDeque::from(vec![planner_response(json!({
-            "thoughts": null,
-            "tool_calls": [{"tool_name":"bash","args":{"cmd":"ls -la"}}]
-        }))])));
+        let responses = Arc::new(Mutex::new(VecDeque::from(vec![
+            planner_native_tool_response(json!([
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": "{\"cmd\":\"ls -la\"}"
+                    }
+                }
+            ])),
+        ])));
         let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
 
         let _ = run_planner_with_one_regeneration(
@@ -452,18 +448,26 @@ mod tests {
     #[tokio::test]
     async fn planner_regenerates_once_then_succeeds() {
         let responses = Arc::new(Mutex::new(VecDeque::from(vec![
-            planner_response(json!({
-                "thoughts": null,
-                "tool_calls": [
-                    {"tool_name":"bash","args":{"cmd":123}}
-                ]
-            })),
-            planner_response(json!({
-                "thoughts": null,
-                "tool_calls": [
-                    {"tool_name":"bash","args":{"cmd":"ls -la"}}
-                ]
-            })),
+            planner_native_tool_response(json!([
+                {
+                    "id": "call_invalid",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": "{\"cmd\":123}"
+                    }
+                }
+            ])),
+            planner_native_tool_response(json!([
+                {
+                    "id": "call_valid",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": "{\"cmd\":\"ls -la\"}"
+                    }
+                }
+            ])),
         ])));
         let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
 
@@ -508,18 +512,26 @@ mod tests {
     #[tokio::test]
     async fn planner_fails_after_one_regeneration_pass() {
         let responses = Arc::new(Mutex::new(VecDeque::from(vec![
-            planner_response(json!({
-                "thoughts": null,
-                "tool_calls": [
-                    {"tool_name":"bash","args":{"cmd":123}}
-                ]
-            })),
-            planner_response(json!({
-                "thoughts": null,
-                "tool_calls": [
-                    {"tool_name":"bash","args":{"cmd":456}}
-                ]
-            })),
+            planner_native_tool_response(json!([
+                {
+                    "id": "call_invalid_1",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": "{\"cmd\":123}"
+                    }
+                }
+            ])),
+            planner_native_tool_response(json!([
+                {
+                    "id": "call_invalid_2",
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "arguments": "{\"cmd\":456}"
+                    }
+                }
+            ])),
         ])));
 
         let err = run_planner_with_one_regeneration(

@@ -128,60 +128,60 @@ pub(crate) fn extract_openai_message_content_json(response: &Value) -> Result<Va
 pub(crate) fn extract_openai_planner_output_json(response: &Value) -> Result<Value, LlmError> {
     ensure_not_refusal(response)?;
 
-    if let Some(tool_calls) = response
+    let tool_calls = response
         .pointer("/choices/0/message/tool_calls")
         .and_then(Value::as_array)
-    {
-        let mut normalized_tool_calls = Vec::with_capacity(tool_calls.len());
-        for (idx, call) in tool_calls.iter().enumerate() {
-            let tool_name = call
-                .pointer("/function/name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .ok_or_else(|| {
-                    LlmError::Decode(format!(
-                        "missing choices[0].message.tool_calls[{idx}].function.name string"
-                    ))
-                })?;
+        .ok_or_else(|| {
+            LlmError::Decode("missing choices[0].message.tool_calls array".to_string())
+        })?;
 
-            let arguments_raw = call
-                .pointer("/function/arguments")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    LlmError::Decode(format!(
-                        "missing choices[0].message.tool_calls[{idx}].function.arguments string"
-                    ))
-                })?;
-
-            let arguments_json = serde_json::from_str::<Value>(arguments_raw).map_err(|err| {
-                LlmError::Decode(format!(
-                    "invalid JSON in choices[0].message.tool_calls[{idx}].function.arguments: {err}"
-                ))
-            })?;
-            let arguments = arguments_json.as_object().cloned().ok_or_else(|| {
-                LlmError::Decode(format!(
-                    "tool call arguments at index {idx} must decode to an object"
-                ))
-            })?;
-
-            normalized_tool_calls.push(json!({
-                "tool_name": tool_name,
-                "args": Value::Object(arguments),
-            }));
-        }
-
-        let thoughts = response
-            .pointer("/choices/0/message/content")
+    let mut normalized_tool_calls = Vec::with_capacity(tool_calls.len());
+    for (idx, call) in tool_calls.iter().enumerate() {
+        let tool_name = call
+            .pointer("/function/name")
             .and_then(Value::as_str)
-            .map(ToString::to_string);
-        return Ok(json!({
-            "thoughts": thoughts,
-            "tool_calls": normalized_tool_calls,
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                LlmError::Decode(format!(
+                    "missing choices[0].message.tool_calls[{idx}].function.name string"
+                ))
+            })?;
+
+        let arguments_raw = call
+            .pointer("/function/arguments")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                LlmError::Decode(format!(
+                    "missing choices[0].message.tool_calls[{idx}].function.arguments string"
+                ))
+            })?;
+
+        let arguments_json = serde_json::from_str::<Value>(arguments_raw).map_err(|err| {
+            LlmError::Decode(format!(
+                "invalid JSON in choices[0].message.tool_calls[{idx}].function.arguments: {err}"
+            ))
+        })?;
+        let arguments = arguments_json.as_object().cloned().ok_or_else(|| {
+            LlmError::Decode(format!(
+                "tool call arguments at index {idx} must decode to an object"
+            ))
+        })?;
+
+        normalized_tool_calls.push(json!({
+            "tool_name": tool_name,
+            "args": Value::Object(arguments),
         }));
     }
 
-    extract_openai_message_content_json(response)
+    let thoughts = response
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    Ok(json!({
+        "thoughts": thoughts,
+        "tool_calls": normalized_tool_calls,
+    }))
 }
 
 fn ensure_not_refusal(response: &Value) -> Result<(), LlmError> {
@@ -225,15 +225,13 @@ struct PlannerToolCallWire {
 }
 
 pub(crate) fn decode_planner_output(content_json: Value) -> Result<PlannerDecodeOutcome, LlmError> {
-    let decoded: PlannerTurnOutputWire = match serde_json::from_value(content_json.clone()) {
-        Ok(decoded) => decoded,
-        Err(primary_err) => decode_legacy_single_tool_shape(&content_json).ok_or_else(|| {
+    let decoded: PlannerTurnOutputWire =
+        serde_json::from_value(content_json.clone()).map_err(|primary_err| {
             let preview = truncate_json_for_error(&content_json, 240);
             LlmError::Decode(format!(
                 "invalid planner output payload: {primary_err}; payload={preview}"
             ))
-        })?,
-    };
+        })?;
 
     let mut tool_calls = Vec::with_capacity(decoded.tool_calls.len());
     let mut errors = Vec::new();
@@ -278,51 +276,6 @@ fn truncate_json_for_error(value: &Value, max_chars: usize) -> String {
     } else {
         format!("{}...[truncated]", &raw[..max_chars])
     }
-}
-
-fn decode_legacy_single_tool_shape(content_json: &Value) -> Option<PlannerTurnOutputWire> {
-    // Compatibility for older/real-model shape:
-    // {"tool":"bash","command":"ls -la","thoughts":"..."}
-    // {"tool":"bash","parameters":{"command":"ls -la"}}
-    let tool_name = content_json.get("tool")?.as_str()?.trim();
-    let command = extract_legacy_command(content_json)?.trim();
-    if tool_name.is_empty() || command.is_empty() {
-        return None;
-    }
-
-    let mut args = Map::new();
-    args.insert("cmd".to_string(), Value::String(command.to_string()));
-
-    Some(PlannerTurnOutputWire {
-        thoughts: content_json
-            .get("thoughts")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        tool_calls: vec![PlannerToolCallWire {
-            tool_name: tool_name.to_string(),
-            args,
-        }],
-    })
-}
-
-fn extract_legacy_command(content_json: &Value) -> Option<&str> {
-    content_json
-        .get("command")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            content_json
-                .get("args")
-                .and_then(Value::as_object)
-                .and_then(|args| args.get("cmd"))
-                .and_then(Value::as_str)
-        })
-        .or_else(|| {
-            content_json
-                .get("parameters")
-                .and_then(Value::as_object)
-                .and_then(|params| params.get("command").or_else(|| params.get("cmd")))
-                .and_then(Value::as_str)
-        })
 }
 
 fn recover_contract_span(

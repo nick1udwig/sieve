@@ -172,48 +172,6 @@ fn decode_planner_output_returns_diagnostics_for_contract_failure() {
 }
 
 #[test]
-fn decode_planner_output_accepts_legacy_single_tool_shape() {
-    let raw = json!({
-        "tool": "bash",
-        "command": "mkdir -p /tmp/sieve-r-live-smoke"
-    });
-
-    let out = decode_planner_output(raw).unwrap();
-    match out {
-        PlannerDecodeOutcome::Valid(out) => {
-            assert_eq!(out.tool_calls.len(), 1);
-            assert_eq!(out.tool_calls[0].tool_name, "bash");
-            assert_eq!(
-                out.tool_calls[0].args["cmd"],
-                json!("mkdir -p /tmp/sieve-r-live-smoke")
-            );
-        }
-        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
-    }
-}
-
-#[test]
-fn decode_planner_output_accepts_legacy_parameters_command_shape() {
-    let raw = json!({
-        "tool": "bash",
-        "parameters": {"command": "mkdir -p /tmp/sieve-r-live-smoke"}
-    });
-
-    let out = decode_planner_output(raw).unwrap();
-    match out {
-        PlannerDecodeOutcome::Valid(out) => {
-            assert_eq!(out.tool_calls.len(), 1);
-            assert_eq!(out.tool_calls[0].tool_name, "bash");
-            assert_eq!(
-                out.tool_calls[0].args["cmd"],
-                json!("mkdir -p /tmp/sieve-r-live-smoke")
-            );
-        }
-        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
-    }
-}
-
-#[test]
 fn extract_openai_planner_output_json_parses_native_tool_calls() {
     let response = json!({
         "choices": [
@@ -248,7 +206,7 @@ fn extract_openai_planner_output_json_parses_native_tool_calls() {
 }
 
 #[test]
-fn extract_openai_planner_output_json_falls_back_to_content_payload() {
+fn extract_openai_planner_output_json_requires_native_tool_calls() {
     let response = json!({
         "choices": [
             {
@@ -259,16 +217,8 @@ fn extract_openai_planner_output_json_falls_back_to_content_payload() {
         ]
     });
 
-    let normalized = extract_openai_planner_output_json(&response).unwrap();
-    let out = decode_planner_output(normalized).unwrap();
-    match out {
-        PlannerDecodeOutcome::Valid(out) => {
-            assert_eq!(out.tool_calls.len(), 1);
-            assert_eq!(out.tool_calls[0].tool_name, "bash");
-            assert_eq!(out.tool_calls[0].args["cmd"], json!("pwd"));
-        }
-        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
-    }
+    let err = extract_openai_planner_output_json(&response).expect_err("must require tool_calls");
+    assert!(matches!(err, LlmError::Decode(_)));
 }
 
 #[tokio::test]
