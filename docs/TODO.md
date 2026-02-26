@@ -21,10 +21,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `P` Runnable App Entrypoint (Runtime + OpenAI + Telegram)
-: Owner: `codex` | Branch: `master` | PR: `-` | Scope: add a production binary entrypoint wiring runtime loop with OpenAI planner/quarantine, approval bus, event log, Telegram adapter, and command execution path. Files: [Cargo.toml](/root/git/sieve-v3/Cargo.toml), [manual-smoke.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/examples/manual-smoke.rs), [openai_live.rs](/root/git/sieve-v3/crates/sieve-llm/examples/openai_live.rs), plus new app files. Done when: one command starts the full integrated system.
-
 ## Done
+
+- [x] `P` Runnable App Entrypoint (Runtime + OpenAI + Telegram)
+: Owner: `codex` | Branch: `master` | PR: `35b1359` | Scope: add a production binary entrypoint wiring runtime loop with OpenAI planner/quarantine, approval bus, event log, Telegram adapter, and command execution path. Files: [Cargo.toml](/root/git/sieve-v3/Cargo.toml), [manual-smoke.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/examples/manual-smoke.rs), [openai_live.rs](/root/git/sieve-v3/crates/sieve-llm/examples/openai_live.rs), plus new app files. Done when: one command starts the full integrated system.
 
 - [x] `O` Policy Audit Event Parity for Unknown/Uncertain
 : Owner: `codex` | Branch: `master` | PR: `5281759` | Scope: emit `PolicyEvaluated` events for unknown/uncertain `deny|ask|accept` paths, not only known-command precheck path. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: all decision paths produce policy audit entries.
