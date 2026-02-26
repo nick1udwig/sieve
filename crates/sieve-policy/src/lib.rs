@@ -2,8 +2,8 @@
 
 use serde::Deserialize;
 use sieve_types::{
-    Action, Capability, CommandKnowledge, PolicyDecision, PolicyDecisionKind, PrecheckInput,
-    SinkKey, UncertainMode, UnknownMode, ValueRef,
+    Action, Capability, CommandKnowledge, Integrity, PolicyDecision, PolicyDecisionKind,
+    PrecheckInput, RuntimePolicyContext, SinkKey, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -166,7 +166,7 @@ impl PolicyEngine for TomlPolicyEngine {
         }
 
         if self.config.options.require_trusted_control_for_mutating
-            && !self.config.options.trusted_control
+            && !self.control_is_trusted(input)
             && has_consequential_capability(&summary.required_capabilities)
         {
             return PolicyDecision {
@@ -189,7 +189,7 @@ impl PolicyEngine for TomlPolicyEngine {
             let sink_canonical =
                 canonicalize_sink_key(&check.sink.0).unwrap_or_else(|_| check.sink.0.clone());
             for value_ref in &check.value_refs {
-                if !self.value_allows_sink(value_ref, &sink_canonical) {
+                if !self.value_allows_sink(value_ref, &sink_canonical, &input.runtime_context) {
                     return self.policy_violation_decision(
                         format!(
                             "value {} cannot flow to sink {} for arg {}",
@@ -294,7 +294,41 @@ impl TomlPolicyEngine {
         })
     }
 
-    fn value_allows_sink(&self, value_ref: &ValueRef, sink: &str) -> bool {
+    fn control_is_trusted(&self, input: &PrecheckInput) -> bool {
+        self.config.options.trusted_control
+            && input.runtime_context.control.integrity == Integrity::Trusted
+    }
+
+    fn value_allows_sink(
+        &self,
+        value_ref: &ValueRef,
+        sink: &str,
+        runtime_context: &RuntimePolicyContext,
+    ) -> bool {
+        self.runtime_value_allows_sink(value_ref, sink, runtime_context)
+            || self.config_value_allows_sink(value_ref, sink)
+    }
+
+    fn runtime_value_allows_sink(
+        &self,
+        value_ref: &ValueRef,
+        sink: &str,
+        runtime_context: &RuntimePolicyContext,
+    ) -> bool {
+        runtime_context
+            .sink_permissions
+            .allowed_sinks_by_value
+            .get(value_ref)
+            .is_some_and(|sinks| {
+                sinks.iter().any(|allowed_sink| {
+                    canonicalize_sink_key(&allowed_sink.0)
+                        .unwrap_or_else(|_| allowed_sink.0.clone())
+                        == sink
+                })
+            })
+    }
+
+    fn config_value_allows_sink(&self, value_ref: &ValueRef, sink: &str) -> bool {
         self.config
             .value_sinks
             .get(&value_ref.0)
@@ -556,6 +590,148 @@ require_trusted_control_for_mutating = true
             decision.blocked_rule_id.as_deref(),
             Some("sink-flow-denied")
         );
+    }
+
+    #[test]
+    fn denies_mutating_action_when_runtime_control_untrusted() {
+        let engine = TomlPolicyEngine::from_toml_str(
+            r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        )
+        .expect("policy parse");
+
+        let mut input = base_input();
+        input.command_segments[0].argv = vec![
+            "curl".to_string(),
+            "-X".to_string(),
+            "POST".to_string(),
+            "https://api.example.com/v1/upload".to_string(),
+        ];
+        input.summary = Some(CommandSummary {
+            required_capabilities: vec![Capability {
+                resource: Resource::Net,
+                action: Action::Write,
+                scope: "https://api.example.com/v1/upload".to_string(),
+            }],
+            sink_checks: vec![],
+            unsupported_flags: vec![],
+        });
+        input.runtime_context.control.integrity = Integrity::Untrusted;
+
+        let decision = engine.evaluate_precheck(&input);
+        assert_eq!(decision.kind, PolicyDecisionKind::DenyWithApproval);
+        assert_eq!(
+            decision.blocked_rule_id.as_deref(),
+            Some("integrity-untrusted-control")
+        );
+    }
+
+    #[test]
+    fn allows_sink_when_runtime_context_permits_value_flow() {
+        let engine = TomlPolicyEngine::from_toml_str(
+            r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        )
+        .expect("policy parse");
+
+        let mut input = base_input();
+        input.command_segments[0].argv = vec![
+            "curl".to_string(),
+            "-X".to_string(),
+            "POST".to_string(),
+            "https://api.example.com/v1/upload".to_string(),
+            "-d".to_string(),
+            "{}".to_string(),
+        ];
+        input.summary = Some(CommandSummary {
+            required_capabilities: vec![Capability {
+                resource: Resource::Net,
+                action: Action::Write,
+                scope: "https://api.example.com/v1/upload".to_string(),
+            }],
+            sink_checks: vec![SinkCheck {
+                argument_name: "body".to_string(),
+                sink: SinkKey("https://api.example.com/v1/upload?token=abc".to_string()),
+                value_refs: vec![ValueRef("body_ref".to_string())],
+            }],
+            unsupported_flags: vec![],
+        });
+        input
+            .runtime_context
+            .sink_permissions
+            .allowed_sinks_by_value
+            .insert(
+                ValueRef("body_ref".to_string()),
+                BTreeSet::from([SinkKey("https://api.example.com/v1/upload".to_string())]),
+            );
+
+        let decision = engine.evaluate_precheck(&input);
+        assert_eq!(decision.kind, PolicyDecisionKind::Allow);
+    }
+
+    #[test]
+    fn allows_sink_when_toml_value_sinks_permits_value_flow() {
+        let engine = TomlPolicyEngine::from_toml_str(
+            r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[value_sinks]
+body_ref = ["https://api.example.com/v1/upload"]
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        )
+        .expect("policy parse");
+
+        let mut input = base_input();
+        input.command_segments[0].argv = vec![
+            "curl".to_string(),
+            "-X".to_string(),
+            "POST".to_string(),
+            "https://api.example.com/v1/upload".to_string(),
+            "-d".to_string(),
+            "{}".to_string(),
+        ];
+        input.summary = Some(CommandSummary {
+            required_capabilities: vec![Capability {
+                resource: Resource::Net,
+                action: Action::Write,
+                scope: "https://api.example.com/v1/upload".to_string(),
+            }],
+            sink_checks: vec![SinkCheck {
+                argument_name: "body".to_string(),
+                sink: SinkKey("https://api.example.com/v1/upload?token=abc".to_string()),
+                value_refs: vec![ValueRef("body_ref".to_string())],
+            }],
+            unsupported_flags: vec![],
+        });
+
+        let decision = engine.evaluate_precheck(&input);
+        assert_eq!(decision.kind, PolicyDecisionKind::Allow);
     }
 
     #[test]

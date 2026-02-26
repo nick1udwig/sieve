@@ -19,10 +19,6 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 - [ ] `C` Planner Regeneration Pass
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk C](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-c-planner-regeneration-pass)
 
-- [ ] `G` Policy Uses Runtime Context
-: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk G](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-g-policy-uses-runtime-context)
-
-
 - [ ] `I` Runtime End-to-End Planner Loop
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk I](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-i-runtime-end-to-end-planner-loop)
 
@@ -36,6 +32,9 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 - [ ] `B` Rust Tool Contracts + Schema Emission
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
+
+- [ ] `G` Policy Uses Runtime Context
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk G](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-g-policy-uses-runtime-context)
 
 ## Done
 

@@ -25,6 +25,9 @@
 - `rm -rf` blocked (`deny_with_approval`).
 - POST missing capability denied.
 - Payload sink violation denied.
+- Mutating command denied when runtime control integrity is untrusted.
+- Sink flow allowed when runtime sink permissions allow the value->sink pair.
+- Sink flow still allowed from TOML `[value_sinks]` (compatibility fallback).
 - Unknown/uncertain mode behavior matrix.
 - URL canonicalization vectors.
 - Composed-command all-or-nothing behavior.
@@ -36,8 +39,15 @@
 - Isolated workspace verification (`sieve-types` + `sieve-policy`) passed cleanly.
 - `url` produced lowercase hex in escapes; explicit normalization added to match spec language.
 
+## Runtime Context Follow-Up (Chunk G)
+
+- Consequential-action integrity gate now consumes `PrecheckInput.runtime_context.control.integrity`.
+- Sink confidentiality checks now consume `PrecheckInput.runtime_context.sink_permissions`.
+- TOML semantics preserved:
+  - `[value_sinks]` still honored,
+  - `options.trusted_control` remains a static top-level gate (runtime trust must also pass).
+
 ## Remaining TODOs
 
-- Runtime integration TODO (outside Worker 4 crate): feed real trusted/untrusted control signal instead of static config `trusted_control`.
 - Optional: add broader canonicalization vector corpus from spec once shared fixture location exists.
-- Optional: add integration tests once `sieve-runtime` wiring lands.
+- Optional: add integration tests once full runtime loop chunk lands.

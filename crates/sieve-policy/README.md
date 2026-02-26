@@ -22,10 +22,12 @@ body_ref = ["https://api.example.com/v1/upload"]
 [options]
 violation_mode = "deny" # deny | ask
 require_trusted_control_for_mutating = true
-trusted_control = true
+trusted_control = true # optional static gate; runtime control context must also be trusted
 ```
 
 Notes:
 - Net scopes and sink URLs canonicalized with `url = 2.5.8` behavior.
 - Query/fragment ignored for sink keys.
 - Unknown/uncertain handling is from `PrecheckInput` modes (`ask|accept|deny`).
+- Consequential-action integrity checks read `PrecheckInput.runtime_context.control.integrity`.
+- Sink flow checks read `PrecheckInput.runtime_context.sink_permissions` and also honor TOML `[value_sinks]`.
