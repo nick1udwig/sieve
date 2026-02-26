@@ -18,10 +18,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `Q` End-to-End Tests for Remaining MVP Blockers
-: Owner: `codex` | Branch: `master` | PR: `-` | Scope: add integration tests that lock behavior for `L` through `P` (runtime allowlist gate, explicit-tool policy gate, mainline execution, unknown/uncertain policy events, integrated entrypoint wiring). Files: [e2e_security_policy_flows.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_policy_flows.rs), [e2e_security_quarantine_modes.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs), plus new tests as needed.
-
 ## Done
+
+- [x] `Q` End-to-End Tests for Remaining MVP Blockers
+: Owner: `codex` | Branch: `master` | PR: `29967ba` | Scope: add integration tests that lock behavior for `L` through `P` (runtime allowlist gate, explicit-tool policy gate, mainline execution, unknown/uncertain policy events, integrated entrypoint wiring). Files: [e2e_security_policy_flows.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_policy_flows.rs), [e2e_security_quarantine_modes.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs), plus new tests as needed.
 
 - [x] `P` Runnable App Entrypoint (Runtime + OpenAI + Telegram)
 : Owner: `codex` | Branch: `master` | PR: `35b1359` | Scope: add a production binary entrypoint wiring runtime loop with OpenAI planner/quarantine, approval bus, event log, Telegram adapter, and command execution path. Files: [Cargo.toml](/root/git/sieve-v3/Cargo.toml), [manual-smoke.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/examples/manual-smoke.rs), [openai_live.rs](/root/git/sieve-v3/crates/sieve-llm/examples/openai_live.rs), plus new app files. Done when: one command starts the full integrated system.
