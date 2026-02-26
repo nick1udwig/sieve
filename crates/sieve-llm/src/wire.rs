@@ -6,7 +6,8 @@ use sieve_tool_contracts::{
 };
 use sieve_types::{
     PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, QuarantineExtractOutput, RuntimeEvent,
-    SourceSpan, ToolContractValidationReport, TypedValue, TOOL_CONTRACTS_VERSION_V1,
+    SourceSpan, ToolContractValidationError, ToolContractValidationReport, TypedValue,
+    TOOL_CONTRACTS_VERSION_V1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -177,6 +178,9 @@ pub(crate) fn decode_planner_output(content_json: Value) -> Result<PlannerDecode
         let args_value = Value::Object(tool.args.clone());
         if let Err(err) = validate_at_index(idx, &tool.tool_name, &args_value) {
             let mut diagnostic = err.as_validation_error();
+            if diagnostic.hint.is_none() {
+                diagnostic.hint = Some(default_contract_hint(&diagnostic));
+            }
             diagnostic.span = recover_contract_span(&content_json, idx, &diagnostic.argument_path);
             errors.push(diagnostic);
         }
@@ -273,6 +277,19 @@ fn locate_argument_value_range(
     let value_start = offset + key_source.len() + 1;
     let value_end = value_start + value_source.len();
     Some((value_start, value_end))
+}
+
+fn default_contract_hint(diagnostic: &ToolContractValidationError) -> String {
+    if let Some(expected) = &diagnostic.expected {
+        return format!(
+            "set tool_calls[{}].args{} to {}",
+            diagnostic.tool_call_index, diagnostic.argument_path, expected
+        );
+    }
+    format!(
+        "fix tool_calls[{}].args{} to satisfy contract",
+        diagnostic.tool_call_index, diagnostic.argument_path
+    )
 }
 
 pub(crate) fn decode_quarantine_output(
