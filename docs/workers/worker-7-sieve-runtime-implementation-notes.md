@@ -72,8 +72,11 @@ You are reading implementation notes for Worker 7 (`crates/sieve-runtime`).
   - uncertain mode matrix: `deny`, `accept`, `ask`.
   - explicit tool one-shot approval behavior: repeated `endorse` still re-prompts.
   - quarantine report artifact generation path (`report.json`) via runtime using fake `bwrap`.
-  - File: `crates/sieve-runtime/tests/e2e_security_harness.rs`.
-  - Command: `cargo test -p sieve-runtime --test e2e_security_harness`.
+  - Files:
+    - `crates/sieve-runtime/tests/e2e_security_policy_flows.rs`
+    - `crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs`
+    - `crates/sieve-runtime/tests/common/mod.rs`
+  - Command: `cargo test -p sieve-runtime --test e2e_security_policy_flows --test e2e_security_quarantine_modes`.
 
 ## Surprises / Gotchas
 
