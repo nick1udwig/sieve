@@ -20,11 +20,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use tokio::process::Command as TokioCommand;
 use tokio::sync::oneshot;
 
 #[derive(Debug, Error)]
@@ -336,11 +336,12 @@ impl MainlineRunner for BashMainlineRunner {
         &self,
         request: MainlineRunRequest,
     ) -> Result<MainlineRunReport, MainlineRunError> {
-        let status = StdCommand::new("bash")
+        let status = TokioCommand::new("bash")
             .arg("-lc")
             .arg(&request.script)
             .current_dir(&request.cwd)
             .status()
+            .await
             .map_err(|err| MainlineRunError::Exec(err.to_string()))?;
         Ok(MainlineRunReport {
             run_id: request.run_id,
