@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod contract_freeze_v1;
+
+pub use contract_freeze_v1::*;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

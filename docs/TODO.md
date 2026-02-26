@@ -16,17 +16,11 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
-- [ ] `A` Contract Freeze v1
-: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk A](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-a-contract-freeze-v1)
-
 - [ ] `B` Rust Tool Contracts + Schema Emission
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
 
 - [ ] `C` Planner Regeneration Pass
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk C](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-c-planner-regeneration-pass)
-
-- [ ] `D` Shell Parser Security-Equivalent Parity
-: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
 
 - [ ] `E` Command Summary Expansion
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
@@ -49,8 +43,14 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
+- [ ] `A` Contract Freeze v1
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk A](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-a-contract-freeze-v1)
+
 - [ ] `H` Quarantine Connect Coverage + Mandatory Report
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk H](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-h-quarantine-connect-coverage--mandatory-report)
+
+- [ ] `D` Shell Parser Security-Equivalent Parity
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
 
 ## Done
 

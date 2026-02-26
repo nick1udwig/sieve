@@ -34,3 +34,22 @@ Worker 1 scope: crate `crates/sieve-types` only.
 
 - Optional hardening: add schema tests for additional event payloads if more schemas are introduced.
 - Optional CI guard: require schema-validation tests in the Worker 1 gate for any approval-event contract change.
+
+## Contract Freeze v1 (Chunk A additions)
+
+- Added additive shared contracts in `crates/sieve-types/src/contract_freeze_v1.rs` and re-exported via `sieve-types`:
+  - Tool contract diagnostics:
+    - `ToolContractErrorCode`
+    - `SourceSpan`
+    - `ToolContractValidationError`
+    - `ToolContractValidationReport` (+ `TOOL_CONTRACTS_VERSION_V1`)
+  - Runtime policy context contracts:
+    - `ControlContext`
+    - `SinkPermissionContext`
+    - `RuntimePolicyContext`
+  - Explicit tool transition contracts:
+    - `EndorseStateTransition`
+    - `DeclassifyStateTransition`
+    - `ExplicitToolStateTransition`
+- Added serde round-trip tests for each contract group.
+- Change is additive and does not alter existing runtime/policy behavior.
