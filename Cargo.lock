@@ -2490,6 +2490,7 @@ version = "0.1.0"
 dependencies = [
  "codex-shell-command",
  "sieve-types",
+ "url",
 ]
 
 [[package]]

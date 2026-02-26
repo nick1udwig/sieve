@@ -4,6 +4,7 @@ use codex_shell_command::command_safety::is_dangerous_command::command_might_be_
 use codex_shell_command::command_safety::is_safe_command::is_known_safe_command;
 use sieve_types::{Action, Capability, Resource, SinkCheck, SinkKey, ValueRef};
 use sieve_types::{CommandKnowledge, CommandSummary};
+use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryOutcome {
@@ -238,7 +239,9 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     let Some(url_idx) = url_index else {
         return Some(unknown_outcome("curl POST missing URL"));
     };
-    let sink = SinkKey(argv[url_idx].clone());
+    let Some(sink) = canonicalize_url_sink(&argv[url_idx]) else {
+        return Some(unknown_outcome("curl POST has invalid URL sink"));
+    };
 
     let sink_checks = payloads
         .into_iter()
@@ -253,7 +256,7 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         required_capabilities: vec![Capability {
             resource: Resource::Net,
             action: Action::Write,
-            scope: sink.0,
+            scope: sink.0.clone(),
         }],
         sink_checks,
         unsupported_flags: Vec::new(),
@@ -286,6 +289,109 @@ fn basename(s: Option<&String>) -> Option<&str> {
     std::path::Path::new(s)
         .file_name()
         .and_then(|part| part.to_str())
+}
+
+fn canonicalize_url_sink(raw: &str) -> Option<SinkKey> {
+    let url = Url::parse(raw).ok()?;
+    let scheme = url.scheme().to_ascii_lowercase();
+    let host = url.host_str()?.to_ascii_lowercase();
+    let port = url
+        .port()
+        .filter(|p| Some(*p) != default_port_for_scheme(&scheme));
+    let path = normalize_path(url.path());
+
+    let mut out = format!("{scheme}://{host}");
+    if let Some(port) = port {
+        out.push(':');
+        out.push_str(&port.to_string());
+    }
+    out.push_str(&path);
+    Some(SinkKey(out))
+}
+
+fn default_port_for_scheme(scheme: &str) -> Option<u16> {
+    match scheme {
+        "http" => Some(80),
+        "https" => Some(443),
+        _ => None,
+    }
+}
+
+fn normalize_path(path: &str) -> String {
+    let has_trailing_slash = path.ends_with('/') && path != "/";
+    let mut stack: Vec<String> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                stack.pop();
+            }
+            _ => stack.push(normalize_percent_encoding(segment)),
+        }
+    }
+
+    if stack.is_empty() {
+        return "/".to_string();
+    }
+
+    let mut out = format!("/{}", stack.join("/"));
+    if has_trailing_slash {
+        out.push('/');
+    }
+    out
+}
+
+fn normalize_percent_encoding(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Some(decoded) = decode_hex_pair(bytes[i + 1], bytes[i + 2]) {
+                if is_unreserved(decoded) {
+                    out.push(decoded as char);
+                } else {
+                    out.push('%');
+                    out.push(to_upper_hex(decoded >> 4));
+                    out.push(to_upper_hex(decoded & 0x0f));
+                }
+                i += 3;
+                continue;
+            }
+        }
+
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+fn decode_hex_pair(high: u8, low: u8) -> Option<u8> {
+    Some((from_hex(high)? << 4) | from_hex(low)?)
+}
+
+fn from_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn to_upper_hex(value: u8) -> char {
+    match value {
+        0..=9 => (b'0' + value) as char,
+        10..=15 => (b'A' + (value - 10)) as char,
+        _ => unreachable!("nibble out of range"),
+    }
+}
+
+fn is_unreserved(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
+    )
 }
 
 fn known_outcome(summary: CommandSummary) -> SummaryOutcome {
@@ -420,5 +526,69 @@ mod tests {
         assert_eq!(out.knowledge, CommandKnowledge::Unknown);
         let summary = out.summary.expect("expected summary");
         assert_eq!(summary.unsupported_flags, vec!["--upload-file".to_string()]);
+    }
+
+    #[test]
+    fn curl_post_url_sink_is_canonicalized() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "HTTPS://API.Example.COM:443/a/../b/./c%7e?x=1#frag",
+            "-d",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        let expected = "https://api.example.com/b/c~".to_string();
+        assert_eq!(summary.required_capabilities[0].scope, expected);
+        assert_eq!(summary.sink_checks[0].sink, SinkKey(expected));
+    }
+
+    #[test]
+    fn curl_post_non_default_port_is_preserved() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "--request=POST",
+            "https://api.example.com:8443/v1/upload",
+            "-d",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities[0].scope,
+            "https://api.example.com:8443/v1/upload".to_string()
+        );
+    }
+
+    #[test]
+    fn codex_safe_bash_lc_class_is_known() {
+        let out = summarize_argv(&argv(&["bash", "-lc", "ls && cat Cargo.toml"]));
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert!(summary.required_capabilities.is_empty());
+    }
+
+    #[test]
+    fn codex_dangerous_bash_lc_class_routes_to_unknown() {
+        let out = summarize_argv(&argv(&["bash", "-lc", "rm -rf /tmp/demo"]));
+        assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+        assert_eq!(
+            out.reason.as_deref(),
+            Some("dangerous command class lacks explicit summary")
+        );
+    }
+
+    #[test]
+    fn rm_f_routes_to_dangerous_unknown() {
+        let out = summarize_argv(&argv(&["rm", "-f", "/tmp/demo"]));
+        assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+        assert_eq!(
+            out.reason.as_deref(),
+            Some("dangerous command class lacks explicit summary")
+        );
     }
 }
