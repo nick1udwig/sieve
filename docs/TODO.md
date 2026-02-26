@@ -24,10 +24,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `O` Policy Audit Event Parity for Unknown/Uncertain
-: Owner: `codex` | Branch: `master` | PR: `-` | Scope: emit `PolicyEvaluated` events for unknown/uncertain `deny|ask|accept` paths, not only known-command precheck path. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: all decision paths produce policy audit entries.
-
 ## Done
+
+- [x] `O` Policy Audit Event Parity for Unknown/Uncertain
+: Owner: `codex` | Branch: `master` | PR: `5281759` | Scope: emit `PolicyEvaluated` events for unknown/uncertain `deny|ask|accept` paths, not only known-command precheck path. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: all decision paths produce policy audit entries.
 
 - [x] `N` Mainline Command Execution Path
 : Owner: `codex` | Branch: `master` | PR: `9f538c4` | Scope: implement actual execution for approved/allowed mainline Bash commands (current path returns disposition only). Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: `ExecuteMainline` runs command segments and reports outcome.
