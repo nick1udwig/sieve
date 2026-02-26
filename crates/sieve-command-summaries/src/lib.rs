@@ -4,7 +4,7 @@ use codex_shell_command::command_safety::is_dangerous_command::command_might_be_
 use codex_shell_command::command_safety::is_safe_command::is_known_safe_command;
 use sieve_types::{Action, Capability, Resource, SinkCheck, SinkKey, ValueRef};
 use sieve_types::{CommandKnowledge, CommandSummary};
-use url::Url;
+use url::{Host, Url};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryOutcome {
@@ -806,7 +806,11 @@ fn basename(s: Option<&String>) -> Option<&str> {
 fn canonicalize_url_sink(raw: &str) -> Option<SinkKey> {
     let url = Url::parse(raw).ok()?;
     let scheme = url.scheme().to_ascii_lowercase();
-    let host = url.host_str()?.to_ascii_lowercase();
+    let host = match url.host()? {
+        Host::Domain(domain) => domain.to_ascii_lowercase(),
+        Host::Ipv4(addr) => addr.to_string(),
+        Host::Ipv6(addr) => format!("[{addr}]"),
+    };
     let port = url
         .port()
         .filter(|p| Some(*p) != default_port_for_scheme(&scheme));
@@ -1226,6 +1230,38 @@ mod tests {
     }
 
     #[test]
+    fn curl_short_upload_file_flag_routes_to_unknown() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "PUT",
+            "-T",
+            "payload.bin",
+            "https://api.example.com/v1/upload",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.unsupported_flags, vec!["-T".to_string()]);
+    }
+
+    #[test]
+    fn curl_multipart_form_flag_routes_to_unknown() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "-F",
+            "file=@payload.bin",
+            "https://api.example.com/v1/upload",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.unsupported_flags, vec!["-F".to_string()]);
+    }
+
+    #[test]
     fn curl_post_url_sink_is_canonicalized() {
         let out = summarize_argv(&argv(&[
             "curl",
@@ -1258,6 +1294,96 @@ mod tests {
         assert_eq!(
             summary.required_capabilities[0].scope,
             "https://api.example.com:8443/v1/upload".to_string()
+        );
+    }
+
+    #[test]
+    fn curl_post_ipv6_sink_keeps_brackets() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "https://[2001:DB8::1]:443/a/./b/../c",
+            "-d",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        let expected = "https://[2001:db8::1]/a/c".to_string();
+        assert_eq!(summary.required_capabilities[0].scope, expected);
+        assert_eq!(summary.sink_checks[0].sink, SinkKey(expected));
+    }
+
+    #[test]
+    fn curl_post_idn_host_is_normalized_to_ascii() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "https://BÜCHER.example/%C3%BCber",
+            "-d",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        let expected = "https://xn--bcher-kva.example/%C3%BCber".to_string();
+        assert_eq!(summary.required_capabilities[0].scope, expected);
+    }
+
+    #[test]
+    fn curl_post_encoded_slash_stays_encoded() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "https://api.example.com/a%2fb?debug=1",
+            "-d",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        let expected = "https://api.example.com/a%2Fb".to_string();
+        assert_eq!(summary.required_capabilities[0].scope, expected);
+    }
+
+    #[test]
+    fn curl_post_host_without_path_normalizes_to_root_path() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "https://api.example.com",
+            "-d",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities[0].scope,
+            "https://api.example.com/".to_string()
+        );
+    }
+
+    #[test]
+    fn curl_post_dot_segment_with_trailing_slash_is_preserved() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-X",
+            "POST",
+            "https://api.example.com/a/b/../",
+            "-d",
+            "body",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities[0].scope,
+            "https://api.example.com/a/".to_string()
         );
     }
 
