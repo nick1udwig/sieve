@@ -8,3 +8,13 @@ version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sieve-types = { path = "../sieve-types" }
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+sieve-command-summaries = { path = "../sieve-command-summaries" }
+sieve-llm = { path = "../sieve-llm" }
+sieve-policy = { path = "../sieve-policy" }
+sieve-quarantine = { path = "../sieve-quarantine" }
+sieve-runtime = { path = "../sieve-runtime" }
+sieve-shell = { path = "../sieve-shell" }

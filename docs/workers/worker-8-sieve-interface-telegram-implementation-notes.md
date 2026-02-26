@@ -27,6 +27,9 @@ You are reading implementation notes for Worker 8 (`crates/sieve-interface-teleg
   - `crates/sieve-interface-telegram/examples/manual-smoke.rs`
 - Crate runbook added:
   - `crates/sieve-interface-telegram/README.md`
+- Chunk J finalization wired in tests against finalized runtime flow:
+  - runtime `orchestrate_shell` approval request -> Telegram `/approve_once` -> runtime resumes
+  - planner tool-contract validation failure stays internal-only and emits no Telegram chat message
 
 ## Tests Added
 
@@ -45,6 +48,9 @@ You are reading implementation notes for Worker 8 (`crates/sieve-interface-teleg
   - `getUpdates` URL + decode mapping
   - `sendMessage` POST payload shape
   - Telegram API error mapping
+- Runtime-loop finalization tests:
+  - runtime approval roundtrip works through real `sieve-runtime` orchestrator + in-process approval bus
+  - planner contract failure path returns runtime error with no Telegram-visible event/message
 
 ## Surprises / Gotchas
 
@@ -58,9 +64,6 @@ You are reading implementation notes for Worker 8 (`crates/sieve-interface-teleg
 
 ## Remaining TODO (Worker 8 Scope)
 
-- Run real Telegram manual smoke with valid env:
-  - `TELEGRAM_BOT_TOKEN`
-  - `TELEGRAM_CHAT_ID`
 - Optional hardening:
   - add retries/backoff strategy in long-poll loop
   - add command help text for malformed approval commands
@@ -68,5 +71,6 @@ You are reading implementation notes for Worker 8 (`crates/sieve-interface-teleg
 
 ## Done Criteria Status
 
-- `cargo test -p sieve-interface-telegram --offline`: passing.
-- Manual approve/deny run against real Telegram chat: pending env secrets.
+- `cargo test -p sieve-interface-telegram`: passing.
+- Runtime approval interaction tested against finalized runtime loop.
+- Manual approve/deny smoke was later checked by integrator (see TODO board note).

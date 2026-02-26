@@ -141,13 +141,27 @@ where
 mod tests {
     use super::*;
     use crate::{TelegramMessage, TelegramUpdate};
-    use sieve_types::{
-        Action, ApprovalRequestId, Capability, CommandSegment, PolicyDecision, PolicyDecisionKind,
-        PolicyEvaluatedEvent, QuarantineCompletedEvent, QuarantineReport, Resource, RunId,
-        UnixMillis,
+    use async_trait::async_trait;
+    use sieve_command_summaries::DefaultCommandSummarizer;
+    use sieve_llm::{LlmError, PlannerModel};
+    use sieve_policy::TomlPolicyEngine;
+    use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
+    use sieve_runtime::{
+        EventLogError, InProcessApprovalBus, PlannerRunRequest, RuntimeDeps, RuntimeDisposition,
+        RuntimeError, RuntimeEventLog, RuntimeOrchestrator, ShellRunRequest,
+        SystemClock as RuntimeSystemClock,
     };
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
+    use sieve_shell::BasicShellAnalyzer;
+    use sieve_types::{
+        Action, ApprovalRequestId, Capability, CommandSegment, LlmModelConfig, LlmProvider,
+        PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, PolicyDecisionKind,
+        PolicyEvaluatedEvent, QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest,
+        Resource, RunId, UncertainMode, UnixMillis, UnknownMode,
+    };
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::time::{sleep, timeout};
 
     struct TestBridge {
         runtime_events: Mutex<Vec<RuntimeEvent>>,
@@ -480,5 +494,359 @@ mod tests {
             .expect("approvals mutex poisoned")
             .clone();
         assert!(approvals.is_empty());
+    }
+
+    #[derive(Clone, Default)]
+    struct SharedPoller {
+        updates: Arc<Mutex<VecDeque<Vec<TelegramUpdate>>>>,
+        sent_messages: Arc<Mutex<Vec<(i64, String)>>>,
+    }
+
+    impl SharedPoller {
+        fn push_updates(&self, updates: Vec<TelegramUpdate>) {
+            self.updates
+                .lock()
+                .expect("shared updates mutex poisoned")
+                .push_back(updates);
+        }
+
+        fn sent_messages(&self) -> Vec<(i64, String)> {
+            self.sent_messages
+                .lock()
+                .expect("shared sent messages mutex poisoned")
+                .clone()
+        }
+    }
+
+    impl TelegramLongPoll for SharedPoller {
+        fn get_updates(
+            &mut self,
+            _offset: Option<i64>,
+            _timeout_secs: u16,
+        ) -> Result<Vec<TelegramUpdate>, String> {
+            Ok(self
+                .updates
+                .lock()
+                .expect("shared updates mutex poisoned")
+                .pop_front()
+                .unwrap_or_default())
+        }
+
+        fn send_message(&mut self, chat_id: i64, text: &str) -> Result<(), String> {
+            self.sent_messages
+                .lock()
+                .expect("shared sent messages mutex poisoned")
+                .push((chat_id, text.to_string()));
+            Ok(())
+        }
+    }
+
+    struct RuntimeBridge {
+        approval_bus: Arc<InProcessApprovalBus>,
+        runtime_events: Mutex<Vec<RuntimeEvent>>,
+        submit_errors: Mutex<Vec<String>>,
+    }
+
+    impl RuntimeBridge {
+        fn new(approval_bus: Arc<InProcessApprovalBus>) -> Self {
+            Self {
+                approval_bus,
+                runtime_events: Mutex::new(Vec::new()),
+                submit_errors: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn runtime_events(&self) -> Vec<RuntimeEvent> {
+            self.runtime_events
+                .lock()
+                .expect("runtime bridge events mutex poisoned")
+                .clone()
+        }
+
+        fn submit_errors(&self) -> Vec<String> {
+            self.submit_errors
+                .lock()
+                .expect("runtime bridge submit errors mutex poisoned")
+                .clone()
+        }
+    }
+
+    impl TelegramEventBridge for RuntimeBridge {
+        fn publish_runtime_event(&self, event: &RuntimeEvent) {
+            self.runtime_events
+                .lock()
+                .expect("runtime bridge events mutex poisoned")
+                .push(event.clone());
+        }
+
+        fn submit_approval(&self, approval: ApprovalResolvedEvent) {
+            if let Err(err) = self.approval_bus.resolve(approval) {
+                eprintln!("telegram bridge failed to resolve approval: {err}");
+                self.submit_errors
+                    .lock()
+                    .expect("runtime bridge submit errors mutex poisoned")
+                    .push(err.to_string());
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturingRuntimeEventLog {
+        events: Mutex<Vec<RuntimeEvent>>,
+    }
+
+    impl CapturingRuntimeEventLog {
+        fn snapshot(&self) -> Vec<RuntimeEvent> {
+            self.events
+                .lock()
+                .expect("runtime event log mutex poisoned")
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl RuntimeEventLog for CapturingRuntimeEventLog {
+        async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError> {
+            self.events
+                .lock()
+                .map_err(|_| EventLogError::Append("runtime event log mutex poisoned".into()))?
+                .push(event);
+            Ok(())
+        }
+    }
+
+    struct NoopQuarantineRunner;
+
+    #[async_trait]
+    impl QuarantineRunner for NoopQuarantineRunner {
+        async fn run(
+            &self,
+            request: QuarantineRunRequest,
+        ) -> Result<QuarantineReport, QuarantineRunError> {
+            Ok(QuarantineReport {
+                run_id: request.run_id,
+                trace_path: "/tmp/unused-trace".into(),
+                stdout_path: None,
+                stderr_path: None,
+                attempted_capabilities: Vec::new(),
+                exit_code: Some(0),
+            })
+        }
+    }
+
+    struct StaticPlanner {
+        config: LlmModelConfig,
+        output: PlannerTurnOutput,
+    }
+
+    impl StaticPlanner {
+        fn new(output: PlannerTurnOutput) -> Self {
+            Self {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "test-planner".to_string(),
+                    api_base: None,
+                },
+                output,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PlannerModel for StaticPlanner {
+        fn config(&self) -> &LlmModelConfig {
+            &self.config
+        }
+
+        async fn plan_turn(&self, _input: PlannerTurnInput) -> Result<PlannerTurnOutput, LlmError> {
+            Ok(self.output.clone())
+        }
+    }
+
+    fn mk_runtime(
+        planner_output: PlannerTurnOutput,
+    ) -> (
+        Arc<RuntimeOrchestrator>,
+        Arc<InProcessApprovalBus>,
+        Arc<CapturingRuntimeEventLog>,
+    ) {
+        let policy = TomlPolicyEngine::from_toml_str(
+            r#"
+[[deny_rules]]
+id = "deny-rm-rf"
+argv_prefix = ["rm", "-rf"]
+decision = "deny_with_approval"
+reason = "rm -rf requires approval"
+"#,
+        )
+        .expect("policy config must parse");
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(CapturingRuntimeEventLog::default());
+        let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+            shell: Arc::new(BasicShellAnalyzer),
+            summaries: Arc::new(DefaultCommandSummarizer),
+            policy: Arc::new(policy),
+            quarantine: Arc::new(NoopQuarantineRunner),
+            planner: Arc::new(StaticPlanner::new(planner_output)),
+            approval_bus: approval_bus.clone(),
+            event_log: event_log.clone(),
+            clock: Arc::new(RuntimeSystemClock),
+        }));
+        (runtime, approval_bus, event_log)
+    }
+
+    #[tokio::test]
+    async fn runtime_approval_roundtrip_works_with_telegram_adapter() {
+        let (runtime, approval_bus, event_log) = mk_runtime(PlannerTurnOutput {
+            thoughts: None,
+            tool_calls: Vec::new(),
+        });
+        let poller = SharedPoller::default();
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+            },
+            RuntimeBridge::new(approval_bus.clone()),
+            poller.clone(),
+            FixedClock { now: 4444 },
+        );
+
+        let runtime_task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .orchestrate_shell(ShellRunRequest {
+                        run_id: RunId("run_runtime_telegram".to_string()),
+                        cwd: "/tmp".to_string(),
+                        script: "rm -rf /tmp/scratch".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Deny,
+                    })
+                    .await
+            }
+        });
+
+        let mut forwarded = 0usize;
+        let mut request_id = None;
+        for _ in 0..80 {
+            let snapshot = event_log.snapshot();
+            for event in snapshot.iter().skip(forwarded).cloned() {
+                if let RuntimeEvent::ApprovalRequested(requested) = &event {
+                    request_id = Some(requested.request_id.0.clone());
+                }
+                adapter
+                    .publish_runtime_event(event)
+                    .expect("forward runtime event to telegram");
+            }
+            forwarded = snapshot.len();
+            if request_id.is_some() {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+
+        let request_id = request_id.expect("runtime did not emit approval request");
+        poller.push_updates(vec![TelegramUpdate {
+            update_id: 1,
+            message: Some(TelegramMessage {
+                chat_id: 42,
+                text: format!("/approve_once {request_id}"),
+            }),
+        }]);
+        adapter.poll_once().expect("telegram poll once");
+
+        let disposition = timeout(Duration::from_secs(2), runtime_task)
+            .await
+            .expect("runtime task timed out")
+            .expect("runtime task join failed")
+            .expect("runtime orchestration failed");
+        assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+
+        let final_events = event_log.snapshot();
+        for event in final_events.iter().skip(forwarded).cloned() {
+            adapter
+                .publish_runtime_event(event)
+                .expect("forward remaining runtime event");
+        }
+
+        assert!(final_events
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::ApprovalResolved(_))));
+        assert!(adapter.bridge.submit_errors().is_empty());
+
+        let sent_messages = poller.sent_messages();
+        assert!(sent_messages
+            .iter()
+            .any(|(_, text)| text.contains("approval requested")));
+        assert!(sent_messages.iter().any(|(_, text)| {
+            text.contains(&format!("approval resolved: {request_id} approve_once"))
+        }));
+        assert!(adapter
+            .bridge
+            .runtime_events()
+            .iter()
+            .any(|event| matches!(event, RuntimeEvent::ApprovalRequested(_))));
+    }
+
+    #[tokio::test]
+    async fn tool_contract_failure_stays_internal_not_chat_visible() {
+        let mut args = BTreeMap::new();
+        args.insert(
+            "cmd".to_string(),
+            serde_json::json!(["rm", "-rf", "/tmp/scratch"]),
+        );
+        let planner_output = PlannerTurnOutput {
+            thoughts: Some("invalid args shape".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "bash".to_string(),
+                args,
+            }],
+        };
+        let (runtime, approval_bus, event_log) = mk_runtime(planner_output);
+        let poller = SharedPoller::default();
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+            },
+            RuntimeBridge::new(approval_bus),
+            poller.clone(),
+            FixedClock { now: 5555 },
+        );
+
+        let err = runtime
+            .orchestrate_planner_turn(PlannerRunRequest {
+                run_id: RunId("run_contract_failure".to_string()),
+                cwd: "/tmp".to_string(),
+                user_message: "dangerous".to_string(),
+                allowed_tools: vec!["bash".to_string()],
+                previous_events: Vec::new(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect_err("planner contract validation must fail");
+
+        match err {
+            RuntimeError::ToolContract { report } => {
+                assert!(!report.errors.is_empty());
+            }
+            other => panic!("expected tool contract runtime error, got {other:?}"),
+        }
+
+        let runtime_events = event_log.snapshot();
+        assert!(runtime_events.is_empty());
+        for event in runtime_events {
+            adapter
+                .publish_runtime_event(event)
+                .expect("forward runtime event");
+        }
+        assert!(poller.sent_messages().is_empty());
+        assert!(adapter.bridge.runtime_events().is_empty());
     }
 }
