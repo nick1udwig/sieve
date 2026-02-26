@@ -1,0 +1,9 @@
+[package]
+name = "sieve-shell"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+sieve-types = { path = "../sieve-types" }
+thiserror.workspace = true
