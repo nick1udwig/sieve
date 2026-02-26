@@ -21,10 +21,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `T` Q-LLM Runtime Decision and Integration (If Required)
-: Owner: `codex` | Branch: `master` | PR: `-` | Scope: explicitly decide whether quarantine LLM extraction must be in the integrated runtime loop for MVP. If yes, wire `OpenAiQuarantineModel` into app/runtime flow and add integration tests; if no, document deferral in MVP docs/TODO. Files: [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [openai.rs](/root/git/sieve-v3/crates/sieve-llm/src/openai.rs), [sieve-v3-mvp-spec-v1.3.md](/root/git/sieve-v3/docs/sieve-v3-mvp-spec-v1.3.md), [docs/TODO.md](/root/git/sieve-v3/docs/TODO.md). Done when: decision is explicit and corresponding code/tests/docs are aligned.
-
 ## Done
+
+- [x] `T` Q-LLM Runtime Decision and Integration (If Required)
+: Owner: `codex` | Branch: `master` | PR: `04de1aa` | Scope: explicitly decide whether quarantine LLM extraction must be in the integrated runtime loop for MVP. If yes, wire `OpenAiQuarantineModel` into app/runtime flow and add integration tests; if no, document deferral in MVP docs/TODO. Files: [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [openai.rs](/root/git/sieve-v3/crates/sieve-llm/src/openai.rs), [sieve-v3-mvp-spec-v1.3.md](/root/git/sieve-v3/docs/sieve-v3-mvp-spec-v1.3.md), [docs/TODO.md](/root/git/sieve-v3/docs/TODO.md). Done when: decision is explicit and corresponding code/tests/docs are aligned.
 
 - [x] `S` Baseline Policy File + Wiring
 : Owner: `codex` | Branch: `master` | PR: `c03bebf` | Scope: add a checked-in baseline policy TOML and wire docs/env defaults to that path so `SIEVE_POLICY_PATH` has an in-repo default target. Files: [`.env.example`](/root/git/sieve-v3/.env.example), [README.md](/root/git/sieve-v3/README.md), plus new policy file under `docs/` or repo root. Done when: fresh setup can point to a committed policy file without out-of-band file creation.
