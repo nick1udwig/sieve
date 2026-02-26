@@ -33,10 +33,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `L` Runtime Allowed-Tools Enforcement Boundary
-: Owner: `codex` | Branch: `master` | PR: `-` | Scope: enforce `PlannerRunRequest.allowed_tools` in runtime dispatch so disallowed `tool_name` values are rejected before execution. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: runtime rejects disallowed tools even if planner backend omits allowlist checks.
-
 ## Done
+
+- [x] `L` Runtime Allowed-Tools Enforcement Boundary
+: Owner: `codex` | Branch: `master` | PR: `3caedf3` | Scope: enforce `PlannerRunRequest.allowed_tools` in runtime dispatch so disallowed `tool_name` values are rejected before execution. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: runtime rejects disallowed tools even if planner backend omits allowlist checks.
 
 - [x] `K` End-to-End Security Harness
 : Owner: `codex` | Branch: `master` | PR: `710d409, 026eff3, d1e839d` | Plan: [Chunk K](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-k-end-to-end-security-harness)
