@@ -42,6 +42,14 @@ In MVP, unknown/uncertain accepted commands run in quarantine. We capture attemp
   - net: `family=af_inet6,address=<ip6>,port=<u16>`
   - ipc: `family=af_unix,path=<socket|unknown>`
   - fallback: `family=unknown,address=unknown,port=0`
+- Process metadata inference added:
+  - `clone`, `clone3`, `fork`, `vfork` -> `proc.exec` with spawn scope (`spawn.<syscall>:pid=<pid|unknown>`).
+- Environment metadata inference added (best-effort):
+  - `open*` of `/proc/*/environ` -> `env.read|write` with normalized scope
+  - `getenv|secure_getenv` -> `env.read`
+  - `setenv|putenv|unsetenv` -> `env.write`
+- Golden trace fixtures added under `crates/sieve-quarantine/tests/fixtures/`.
+- Mapping table + limits documented in `crates/sieve-quarantine/README.md`.
 
 ## Proposed Work
 

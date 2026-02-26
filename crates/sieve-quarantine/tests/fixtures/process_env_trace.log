@@ -1,0 +1,3 @@
+clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|SIGCHLD) = 3210
+openat(AT_FDCWD, "/proc/999/environ", O_RDONLY|O_CLOEXEC) = 4
+setenv("API_TOKEN", "secret", 1) = 0

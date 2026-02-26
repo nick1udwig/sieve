@@ -298,6 +298,14 @@ fn parse_trace_line(line: &str) -> Option<Capability> {
         });
     }
 
+    if let Some(capability) = parse_process_spawn_capability(line) {
+        return Some(capability);
+    }
+
+    if let Some(capability) = parse_env_capability(line) {
+        return Some(capability);
+    }
+
     if is_open_family(line) {
         let scope = extract_first_quoted(line)?;
         let action = action_from_open_flags(line);
@@ -322,6 +330,76 @@ fn parse_trace_line(line: &str) -> Option<Capability> {
     }
 
     None
+}
+
+fn parse_process_spawn_capability(line: &str) -> Option<Capability> {
+    let syscall = if line.contains("clone3(") {
+        "clone3"
+    } else if line.contains("clone(") {
+        "clone"
+    } else if line.contains("vfork(") {
+        "vfork"
+    } else if line.contains("fork(") {
+        "fork"
+    } else {
+        return None;
+    };
+
+    let pid = extract_syscall_result_number(line);
+    Some(Capability {
+        resource: Resource::Proc,
+        action: Action::Exec,
+        scope: format!(
+            "spawn.{syscall}:pid={}",
+            pid.map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ),
+    })
+}
+
+fn parse_env_capability(line: &str) -> Option<Capability> {
+    if line.contains("getenv(") || line.contains("secure_getenv(") {
+        let key = extract_first_quoted(line).unwrap_or_else(|| "unknown".to_string());
+        return Some(Capability {
+            resource: Resource::Env,
+            action: Action::Read,
+            scope: format!("key={}", normalize_scope_value(&key)),
+        });
+    }
+
+    if line.contains("setenv(") || line.contains("putenv(") || line.contains("unsetenv(") {
+        let key = extract_first_quoted(line).unwrap_or_else(|| "unknown".to_string());
+        return Some(Capability {
+            resource: Resource::Env,
+            action: Action::Write,
+            scope: format!("key={}", normalize_scope_value(&key)),
+        });
+    }
+
+    if is_open_family(line) {
+        let path = extract_first_quoted(line)?;
+        if is_environment_path(&path) {
+            return Some(Capability {
+                resource: Resource::Env,
+                action: action_from_open_flags(line),
+                scope: normalize_env_scope(&path),
+            });
+        }
+    }
+
+    None
+}
+
+fn is_environment_path(path: &str) -> bool {
+    path.ends_with("/environ")
+}
+
+fn normalize_env_scope(path: &str) -> String {
+    let pid = path
+        .strip_prefix("/proc/")
+        .and_then(|rest| rest.strip_suffix("/environ"))
+        .unwrap_or("unknown");
+    format!("proc_environ:pid={}", normalize_scope_value(pid))
 }
 
 fn parse_connect_capability(line: &str) -> Option<Capability> {
@@ -495,6 +573,14 @@ fn extract_numeric_after(line: &str, marker: &str) -> Option<u16> {
     digits.parse::<u16>().ok()
 }
 
+fn extract_syscall_result_number(line: &str) -> Option<i64> {
+    let marker = ") =";
+    let start = line.find(marker)? + marker.len();
+    let token = line[start..].trim_start().split_whitespace().next()?;
+    let value = token.parse::<i64>().ok()?;
+    if value > 0 { Some(value) } else { None }
+}
+
 fn write_report_json(
     run_dir: &Path,
     trace_files: &[PathBuf],
@@ -502,7 +588,10 @@ fn write_report_json(
 ) -> Result<(), QuarantineRunError> {
     let mut json = String::new();
     json.push_str("{\n");
-    json.push_str(&format!("  \"run_id\": {},\n", json_string(&report.run_id.0)));
+    json.push_str(&format!(
+        "  \"run_id\": {},\n",
+        json_string(&report.run_id.0)
+    ));
     json.push_str(&format!(
         "  \"trace_path\": {},\n",
         json_string(&report.trace_path)
@@ -522,7 +611,11 @@ fn write_report_json(
     } else {
         json.push('\n');
         for (index, trace_file) in trace_files.iter().enumerate() {
-            let comma = if index + 1 < trace_files.len() { "," } else { "" };
+            let comma = if index + 1 < trace_files.len() {
+                ","
+            } else {
+                ""
+            };
             let trace_file = trace_file.to_string_lossy();
             json.push_str(&format!("    {}{comma}\n", json_string(&trace_file)));
         }
@@ -800,6 +893,105 @@ mod tests {
     }
 
     #[test]
+    fn parse_trace_line_infers_process_spawn_and_env_access() {
+        let clone = parse_trace_line(
+            "clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|SIGCHLD) = 4321",
+        )
+        .expect("clone capability");
+        assert_eq!(
+            clone,
+            Capability {
+                resource: Resource::Proc,
+                action: Action::Exec,
+                scope: "spawn.clone:pid=4321".to_string(),
+            }
+        );
+
+        let vfork = parse_trace_line("vfork() = 0").expect("vfork capability");
+        assert_eq!(
+            vfork,
+            Capability {
+                resource: Resource::Proc,
+                action: Action::Exec,
+                scope: "spawn.vfork:pid=unknown".to_string(),
+            }
+        );
+
+        let env_read = parse_trace_line(
+            "openat(AT_FDCWD, \"/proc/self/environ\", O_RDONLY|O_CLOEXEC) = 3",
+        )
+        .expect("env read capability");
+        assert_eq!(
+            env_read,
+            Capability {
+                resource: Resource::Env,
+                action: Action::Read,
+                scope: "proc_environ:pid=self".to_string(),
+            }
+        );
+
+        let env_write =
+            parse_trace_line("setenv(\"TOKEN\", \"secret\", 1) = 0").expect("env write capability");
+        assert_eq!(
+            env_write,
+            Capability {
+                resource: Resource::Env,
+                action: Action::Write,
+                scope: "key=TOKEN".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn fixture_connect_trace_normalizes_endpoints() {
+        let fixture = fixture_path("connect_trace.log");
+        let caps = parse_trace_capabilities(&[fixture]).expect("parse fixture");
+
+        assert!(caps.contains(&Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: "family=af_inet,address=1.2.3.4,port=443".to_string(),
+        }));
+        assert!(caps.contains(&Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: "family=af_inet6,address=2001:db8::1,port=53".to_string(),
+        }));
+        assert!(caps.contains(&Capability {
+            resource: Resource::Ipc,
+            action: Action::Connect,
+            scope: "family=af_unix,path=/tmp/socket".to_string(),
+        }));
+        assert!(caps.contains(&Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: "family=unknown,address=unknown,port=0".to_string(),
+        }));
+    }
+
+    #[test]
+    fn fixture_process_env_trace_infers_process_and_env_capabilities() {
+        let fixture = fixture_path("process_env_trace.log");
+        let caps = parse_trace_capabilities(&[fixture]).expect("parse fixture");
+
+        assert!(caps.contains(&Capability {
+            resource: Resource::Proc,
+            action: Action::Exec,
+            scope: "spawn.clone:pid=3210".to_string(),
+        }));
+        assert!(caps.contains(&Capability {
+            resource: Resource::Env,
+            action: Action::Read,
+            scope: "proc_environ:pid=999".to_string(),
+        }));
+        assert!(caps.contains(&Capability {
+            resource: Resource::Env,
+            action: Action::Write,
+            scope: "key=API_TOKEN".to_string(),
+        }));
+    }
+
+    #[test]
     fn report_paths_follow_run_directory_layout() {
         let root = unique_temp_dir();
         let runner = BwrapQuarantineRunner::new(root.clone());
@@ -930,5 +1122,12 @@ mod tests {
             .expect("time")
             .as_nanos();
         env::temp_dir().join(format!("sieve-quarantine-test-{nanos}"))
+    }
+
+    fn fixture_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
     }
 }

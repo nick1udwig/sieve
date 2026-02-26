@@ -1,0 +1,5 @@
+execve("/usr/bin/curl", ["curl"], 0x0) = 0
+connect(3, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("1.2.3.4")}, 16) = -1
+connect(3, {sa_family=AF_INET6, sin6_port=htons(53), sin6_addr=inet_pton(AF_INET6, "2001:db8::1")}, 28) = 0
+connect(3, {sa_family=AF_UNIX, sun_path="/tmp/socket"}, 110) = 0
+connect(3, {sa_family=AF_BLUETOOTH}, 16) = -1
