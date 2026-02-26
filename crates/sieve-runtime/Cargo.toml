@@ -1,0 +1,17 @@
+[package]
+name = "sieve-runtime"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+sieve-command-summaries = { path = "../sieve-command-summaries" }
+sieve-llm = { path = "../sieve-llm" }
+sieve-policy = { path = "../sieve-policy" }
+sieve-quarantine = { path = "../sieve-quarantine" }
+sieve-shell = { path = "../sieve-shell" }
+sieve-types = { path = "../sieve-types" }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
