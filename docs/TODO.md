@@ -25,9 +25,6 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 - [ ] `E` Command Summary Expansion
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
 
-- [ ] `F` Runtime Value-State Engine
-: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk F](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-f-runtime-value-state-engine)
-
 - [ ] `G` Policy Uses Runtime Context
 : Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk G](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-g-policy-uses-runtime-context)
 
@@ -43,13 +40,16 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `H` Quarantine Connect Coverage + Mandatory Report
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk H](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-h-quarantine-connect-coverage--mandatory-report)
-
 - [ ] `D` Shell Parser Security-Equivalent Parity
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
 
+- [ ] `F` Runtime Value-State Engine
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk F](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-f-runtime-value-state-engine)
+
 ## Done
+
+- [x] `H` Quarantine Connect Coverage + Mandatory Report
+: Owner: `codex` | Branch: `master` | PR: `d50ef93, 9d2e6b1` | Plan: [Chunk H](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-h-quarantine-connect-coverage--mandatory-report)
 
 - [x] `A` Contract Freeze v1
 : Owner: `codex` | Branch: `master` | PR: `a37bde1` | Plan: [Chunk A](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-a-contract-freeze-v1)
