@@ -33,10 +33,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 - [ ] `B` Rust Tool Contracts + Schema Emission
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
 
-- [ ] `G` Policy Uses Runtime Context
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk G](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-g-policy-uses-runtime-context)
-
 ## Done
+
+- [x] `G` Policy Uses Runtime Context
+: Owner: `codex` | Branch: `master` | PR: `1f88c16` | Plan: [Chunk G](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-g-policy-uses-runtime-context)
 
 - [x] `E` Command Summary Expansion
 : Owner: `codex` | Branch: `master` | PR: `e5ca790` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
