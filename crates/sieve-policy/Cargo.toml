@@ -1,0 +1,12 @@
+[package]
+name = "sieve-policy"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+sieve-types = { path = "../sieve-types" }
+serde.workspace = true
+thiserror.workspace = true
+toml = "0.8"
+url = "=2.5.8"
