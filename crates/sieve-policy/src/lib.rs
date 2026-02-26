@@ -413,8 +413,9 @@ pub fn canonicalize_sink_set(sinks: &BTreeSet<SinkKey>) -> BTreeSet<SinkKey> {
 mod tests {
     use super::*;
     use sieve_types::{
-        Action, Capability, CommandKnowledge, CommandSegment, CommandSummary, PolicyDecisionKind,
-        PrecheckInput, Resource, RunId, SinkCheck, SinkKey, UncertainMode, UnknownMode, ValueRef,
+        Action, Capability, CommandKnowledge, CommandSegment, CommandSummary, ControlContext,
+        Integrity, PolicyDecisionKind, PrecheckInput, Resource, RunId, RuntimePolicyContext,
+        SinkCheck, SinkKey, SinkPermissionContext, UncertainMode, UnknownMode, ValueRef,
     };
 
     fn engine_with_default_policy() -> TomlPolicyEngine {
@@ -449,6 +450,14 @@ trusted_control = true
                 sink_checks: vec![],
                 unsupported_flags: vec![],
             }),
+            runtime_context: RuntimePolicyContext {
+                control: ControlContext {
+                    integrity: Integrity::Trusted,
+                    value_refs: BTreeSet::new(),
+                    endorsed_by: None,
+                },
+                sink_permissions: SinkPermissionContext::default(),
+            },
             unknown_mode: UnknownMode::Deny,
             uncertain_mode: UncertainMode::Deny,
         }

@@ -179,6 +179,7 @@ pub struct PrecheckInput {
     pub command_segments: Vec<CommandSegment>,
     pub knowledge: CommandKnowledge,
     pub summary: Option<CommandSummary>,
+    pub runtime_context: RuntimePolicyContext,
     pub unknown_mode: UnknownMode,
     pub uncertain_mode: UncertainMode,
 }

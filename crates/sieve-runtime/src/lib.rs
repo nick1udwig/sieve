@@ -8,11 +8,13 @@ use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_types::{
     ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
-    CommandKnowledge, CommandSegment, CommandSummary, DeclassifyRequest, EndorseRequest,
+    CommandKnowledge, CommandSegment, CommandSummary, ControlContext, DeclassifyRequest,
+    DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity,
     PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent,
-    QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent, UncertainMode, UnknownMode,
+    QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent, RuntimePolicyContext, SinkKey,
+    SinkPermissionContext, UncertainMode, UnknownMode, ValueLabel, ValueRef,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -50,6 +52,101 @@ pub enum EventLogError {
 #[async_trait]
 pub trait RuntimeEventLog: Send + Sync {
     async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError>;
+}
+
+#[derive(Debug, Error)]
+pub enum ValueStateError {
+    #[error("value state lock poisoned")]
+    LockPoisoned,
+    #[error("unknown value reference: {0}")]
+    UnknownValueRef(String),
+}
+
+#[derive(Default)]
+struct RuntimeValueState {
+    labels_by_value: BTreeMap<ValueRef, ValueLabel>,
+}
+
+impl RuntimeValueState {
+    fn upsert_label(&mut self, value_ref: ValueRef, label: ValueLabel) {
+        self.labels_by_value.insert(value_ref, label);
+    }
+
+    fn runtime_policy_context_for_control(
+        &self,
+        control_value_refs: BTreeSet<ValueRef>,
+        endorsed_by: Option<ApprovalRequestId>,
+    ) -> RuntimePolicyContext {
+        let control_integrity = if control_value_refs.is_empty()
+            || control_value_refs.iter().all(|value_ref| {
+                self.labels_by_value
+                    .get(value_ref)
+                    .map(|label| label.integrity == Integrity::Trusted)
+                    .unwrap_or(false)
+            }) {
+            Integrity::Trusted
+        } else {
+            Integrity::Untrusted
+        };
+
+        let allowed_sinks_by_value = self
+            .labels_by_value
+            .iter()
+            .map(|(value_ref, label)| (value_ref.clone(), label.allowed_sinks.clone()))
+            .collect();
+
+        RuntimePolicyContext {
+            control: ControlContext {
+                integrity: control_integrity,
+                value_refs: control_value_refs,
+                endorsed_by,
+            },
+            sink_permissions: SinkPermissionContext {
+                allowed_sinks_by_value,
+            },
+        }
+    }
+
+    fn apply_endorse_transition(
+        &mut self,
+        value_ref: ValueRef,
+        to_integrity: Integrity,
+        approved_by: Option<ApprovalRequestId>,
+    ) -> Result<EndorseStateTransition, ValueStateError> {
+        let label = self
+            .labels_by_value
+            .get_mut(&value_ref)
+            .ok_or_else(|| ValueStateError::UnknownValueRef(value_ref.0.clone()))?;
+        let from_integrity = label.integrity;
+        label.integrity = to_integrity;
+
+        Ok(EndorseStateTransition {
+            value_ref,
+            from_integrity,
+            to_integrity,
+            approved_by,
+        })
+    }
+
+    fn apply_declassify_transition(
+        &mut self,
+        value_ref: ValueRef,
+        sink: SinkKey,
+        approved_by: Option<ApprovalRequestId>,
+    ) -> Result<DeclassifyStateTransition, ValueStateError> {
+        let label = self
+            .labels_by_value
+            .get_mut(&value_ref)
+            .ok_or_else(|| ValueStateError::UnknownValueRef(value_ref.0.clone()))?;
+        let sink_was_already_allowed = !label.allowed_sinks.insert(sink.clone());
+
+        Ok(DeclassifyStateTransition {
+            value_ref,
+            sink,
+            sink_was_already_allowed,
+            approved_by,
+        })
+    }
 }
 
 #[derive(Default)]
@@ -212,6 +309,8 @@ pub enum RuntimeError {
     Approval(#[from] ApprovalBusError),
     #[error("quarantine run failed: {0}")]
     Quarantine(#[from] QuarantineRunError),
+    #[error("value state failed: {0}")]
+    ValueState(#[from] ValueStateError),
 }
 
 #[derive(Debug, Clone)]
@@ -219,6 +318,8 @@ pub struct ShellRunRequest {
     pub run_id: RunId,
     pub cwd: String,
     pub script: String,
+    pub control_value_refs: BTreeSet<ValueRef>,
+    pub control_endorsed_by: Option<ApprovalRequestId>,
     pub unknown_mode: UnknownMode,
     pub uncertain_mode: UncertainMode,
 }
@@ -240,6 +341,7 @@ pub struct RuntimeOrchestrator {
     event_log: Arc<dyn RuntimeEventLog>,
     clock: Arc<dyn Clock>,
     next_request: AtomicU64,
+    value_state: Mutex<RuntimeValueState>,
 }
 
 pub struct RuntimeDeps {
@@ -267,7 +369,41 @@ impl RuntimeOrchestrator {
             event_log: deps.event_log,
             clock: deps.clock,
             next_request: AtomicU64::new(1),
+            value_state: Mutex::new(RuntimeValueState::default()),
         }
+    }
+
+    pub fn upsert_value_label(
+        &self,
+        value_ref: ValueRef,
+        label: ValueLabel,
+    ) -> Result<(), RuntimeError> {
+        let mut state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        state.upsert_label(value_ref, label);
+        Ok(())
+    }
+
+    pub fn value_label(&self, value_ref: &ValueRef) -> Result<Option<ValueLabel>, RuntimeError> {
+        let state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(state.labels_by_value.get(value_ref).cloned())
+    }
+
+    pub fn runtime_policy_context_for_control(
+        &self,
+        control_value_refs: BTreeSet<ValueRef>,
+        endorsed_by: Option<ApprovalRequestId>,
+    ) -> Result<RuntimePolicyContext, RuntimeError> {
+        let state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(state.runtime_policy_context_for_control(control_value_refs, endorsed_by))
     }
 
     /// Orchestrates shell execution precheck flow.
@@ -277,6 +413,10 @@ impl RuntimeOrchestrator {
         &self,
         request: ShellRunRequest,
     ) -> Result<RuntimeDisposition, RuntimeError> {
+        let runtime_context = self.runtime_policy_context_for_control(
+            request.control_value_refs.clone(),
+            request.control_endorsed_by.clone(),
+        )?;
         let shell = self.shell.analyze_shell_lc_script(&request.script)?;
         let (knowledge, summary) = self.merge_summary(&shell.segments, shell.knowledge);
 
@@ -312,6 +452,7 @@ impl RuntimeOrchestrator {
             command_segments: shell.segments.clone(),
             knowledge,
             summary,
+            runtime_context,
             unknown_mode: request.unknown_mode,
             uncertain_mode: request.uncertain_mode,
         };
@@ -372,6 +513,46 @@ impl RuntimeOrchestrator {
             "endorse requires approval",
         )
         .await
+        .map(|resolution| resolution.action)
+    }
+
+    /// Runs `endorse` approval and applies state transition when approved once.
+    pub async fn endorse_value_once(
+        &self,
+        run_id: RunId,
+        request: EndorseRequest,
+    ) -> Result<Option<EndorseStateTransition>, RuntimeError> {
+        let segment = CommandSegment {
+            argv: vec![
+                "endorse".to_string(),
+                request.value_ref.0.clone(),
+                format!("{:?}", request.target_integrity).to_lowercase(),
+            ],
+            operator_before: None,
+        };
+        let resolution = self
+            .approve_tool_call(
+                run_id,
+                segment,
+                "endorse_requires_approval",
+                "endorse requires approval",
+            )
+            .await?;
+
+        if resolution.action == ApprovalAction::Deny {
+            return Ok(None);
+        }
+
+        let mut state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        let transition = state.apply_endorse_transition(
+            request.value_ref,
+            request.target_integrity,
+            Some(resolution.request_id),
+        )?;
+        Ok(Some(transition))
     }
 
     /// Starts approval lifecycle for an explicit `declassify` tool request.
@@ -396,6 +577,46 @@ impl RuntimeOrchestrator {
             "declassify requires approval",
         )
         .await
+        .map(|resolution| resolution.action)
+    }
+
+    /// Runs `declassify` approval and applies state transition when approved once.
+    pub async fn declassify_value_once(
+        &self,
+        run_id: RunId,
+        request: DeclassifyRequest,
+    ) -> Result<Option<DeclassifyStateTransition>, RuntimeError> {
+        let segment = CommandSegment {
+            argv: vec![
+                "declassify".to_string(),
+                request.value_ref.0.clone(),
+                request.sink.0.clone(),
+            ],
+            operator_before: None,
+        };
+        let resolution = self
+            .approve_tool_call(
+                run_id,
+                segment,
+                "declassify_requires_approval",
+                "declassify requires approval",
+            )
+            .await?;
+
+        if resolution.action == ApprovalAction::Deny {
+            return Ok(None);
+        }
+
+        let mut state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        let transition = state.apply_declassify_transition(
+            request.value_ref,
+            request.sink,
+            Some(resolution.request_id),
+        )?;
+        Ok(Some(transition))
     }
 
     fn merge_summary(
@@ -456,7 +677,8 @@ impl RuntimeOrchestrator {
                         kind.to_blocked_rule_id().to_string(),
                         kind.to_approval_reason().to_string(),
                     )
-                    .await?;
+                    .await?
+                    .action;
                 match action {
                     ApprovalAction::ApproveOnce => {
                         let report = self
@@ -509,7 +731,7 @@ impl RuntimeOrchestrator {
         segment: CommandSegment,
         blocked_rule_id: &str,
         reason: &str,
-    ) -> Result<ApprovalAction, RuntimeError> {
+    ) -> Result<ApprovalResolution, RuntimeError> {
         self.request_approval(
             run_id,
             vec![segment],
@@ -538,6 +760,7 @@ impl RuntimeOrchestrator {
                 reason,
             )
             .await?
+            .action
         {
             ApprovalAction::ApproveOnce => Ok(approved),
             ApprovalAction::Deny => Ok(RuntimeDisposition::Denied {
@@ -553,7 +776,7 @@ impl RuntimeOrchestrator {
         inferred_capabilities: Vec<sieve_types::Capability>,
         blocked_rule_id: String,
         reason: String,
-    ) -> Result<ApprovalAction, RuntimeError> {
+    ) -> Result<ApprovalResolution, RuntimeError> {
         let request_id = self.new_request_id();
         let approval_requested = ApprovalRequestedEvent {
             schema_version: 1,
@@ -574,7 +797,10 @@ impl RuntimeOrchestrator {
         let approval_resolved = self.approval_bus.wait_resolved(&request_id).await?;
         self.append_event(RuntimeEvent::ApprovalResolved(approval_resolved.clone()))
             .await?;
-        Ok(approval_resolved.action)
+        Ok(ApprovalResolution {
+            request_id: approval_resolved.request_id,
+            action: approval_resolved.action,
+        })
     }
 
     async fn append_event(&self, event: RuntimeEvent) -> Result<(), RuntimeError> {
@@ -586,6 +812,11 @@ impl RuntimeOrchestrator {
         let next = self.next_request.fetch_add(1, Ordering::Relaxed);
         ApprovalRequestId(format!("approval-{next}"))
     }
+}
+
+struct ApprovalResolution {
+    request_id: ApprovalRequestId,
+    action: ApprovalAction,
 }
 
 #[derive(Clone, Copy)]
@@ -651,9 +882,10 @@ mod tests {
     use sieve_llm::LlmError;
     use sieve_shell::ShellAnalysis;
     use sieve_types::{
-        Action, Capability, CommandKnowledge, CommandSummary, LlmModelConfig, LlmProvider,
-        PlannerTurnInput, PlannerTurnOutput, PolicyDecision, QuarantineExtractInput,
-        QuarantineExtractOutput, Resource, SinkCheck, SinkKey, TypedValue, ValueRef,
+        Action, Capability, CommandKnowledge, CommandSummary, Integrity, LlmModelConfig,
+        LlmProvider, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, QuarantineExtractInput,
+        QuarantineExtractOutput, Resource, SinkCheck, SinkKey, Source, TypedValue, ValueLabel,
+        ValueRef,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env::temp_dir;
@@ -690,6 +922,35 @@ mod tests {
 
     impl PolicyEngine for StubPolicy {
         fn evaluate_precheck(&self, _input: &PrecheckInput) -> PolicyDecision {
+            self.decision.clone()
+        }
+    }
+
+    struct CapturingPolicy {
+        decision: PolicyDecision,
+        last_input: StdMutex<Option<PrecheckInput>>,
+    }
+
+    impl CapturingPolicy {
+        fn new(decision: PolicyDecision) -> Self {
+            Self {
+                decision,
+                last_input: StdMutex::new(None),
+            }
+        }
+
+        fn captured_input(&self) -> PrecheckInput {
+            self.last_input
+                .lock()
+                .expect("policy lock")
+                .clone()
+                .expect("captured precheck input")
+        }
+    }
+
+    impl PolicyEngine for CapturingPolicy {
+        fn evaluate_precheck(&self, input: &PrecheckInput) -> PolicyDecision {
+            *self.last_input.lock().expect("policy lock") = Some(input.clone());
             self.decision.clone()
         }
     }
@@ -782,6 +1043,21 @@ mod tests {
         }
     }
 
+    fn label_with_sinks(integrity: Integrity, sinks: &[&str]) -> ValueLabel {
+        let mut provenance = BTreeSet::new();
+        provenance.insert(Source::User);
+        let allowed_sinks = sinks
+            .iter()
+            .map(|sink| SinkKey((*sink).to_string()))
+            .collect();
+        ValueLabel {
+            integrity,
+            provenance,
+            allowed_sinks,
+            capacity_type: sieve_types::CapacityType::Enum,
+        }
+    }
+
     fn mk_runtime(
         shell_knowledge: CommandKnowledge,
         segments: Vec<CommandSegment>,
@@ -869,6 +1145,264 @@ mod tests {
         panic!("approval count not reached in time");
     }
 
+    #[tokio::test]
+    async fn orchestrate_shell_passes_runtime_context_to_policy() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string(), "ok".to_string()],
+            operator_before: None,
+        }];
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(VecEventLog::default());
+        let policy = Arc::new(CapturingPolicy::new(PolicyDecision {
+            kind: PolicyDecisionKind::Allow,
+            reason: "allow".to_string(),
+            blocked_rule_id: None,
+        }));
+
+        let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+            shell: Arc::new(StubShell {
+                analysis: ShellAnalysis {
+                    knowledge: CommandKnowledge::Known,
+                    segments,
+                    unsupported_constructs: Vec::new(),
+                },
+            }),
+            summaries: Arc::new(StubSummaries {
+                outcome: SummaryOutcome {
+                    knowledge: CommandKnowledge::Known,
+                    summary: Some(stub_summary()),
+                    reason: None,
+                },
+            }),
+            policy: policy.clone(),
+            quarantine: Arc::new(StubQuarantine {
+                report: QuarantineReport {
+                    run_id: RunId("run-1".to_string()),
+                    trace_path: "/tmp/sieve/trace".to_string(),
+                    stdout_path: None,
+                    stderr_path: None,
+                    attempted_capabilities: Vec::new(),
+                    exit_code: Some(0),
+                },
+            }),
+            planner: Arc::new(StubPlanner {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "gpt-test".to_string(),
+                    api_base: None,
+                },
+            }),
+            approval_bus,
+            event_log,
+            clock: Arc::new(DeterministicClock::new(1000)),
+        }));
+
+        runtime
+            .upsert_value_label(
+                ValueRef("v_control".to_string()),
+                label_with_sinks(Integrity::Untrusted, &[]),
+            )
+            .expect("insert control value label");
+        runtime
+            .upsert_value_label(
+                ValueRef("v_payload".to_string()),
+                label_with_sinks(Integrity::Trusted, &["https://example.com/path"]),
+            )
+            .expect("insert payload value label");
+
+        let mut control_refs = BTreeSet::new();
+        control_refs.insert(ValueRef("v_control".to_string()));
+        let disposition = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-1".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "echo ok".to_string(),
+                control_value_refs: control_refs,
+                control_endorsed_by: Some(ApprovalRequestId("approval-42".to_string())),
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime ok");
+        assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+
+        let captured = policy.captured_input();
+        assert_eq!(
+            captured.runtime_context.control.integrity,
+            Integrity::Untrusted
+        );
+        assert_eq!(
+            captured.runtime_context.control.endorsed_by,
+            Some(ApprovalRequestId("approval-42".to_string()))
+        );
+        assert!(captured
+            .runtime_context
+            .control
+            .value_refs
+            .contains(&ValueRef("v_control".to_string())));
+        let sinks = captured
+            .runtime_context
+            .sink_permissions
+            .allowed_sinks_by_value
+            .get(&ValueRef("v_payload".to_string()))
+            .expect("payload sink permissions");
+        assert!(sinks.contains(&SinkKey("https://example.com/path".to_string())));
+    }
+
+    #[tokio::test]
+    async fn endorse_value_once_updates_runtime_state_when_approved() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+        runtime
+            .upsert_value_label(
+                ValueRef("v123".to_string()),
+                label_with_sinks(Integrity::Untrusted, &[]),
+            )
+            .expect("seed value state");
+
+        let runtime_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .endorse_value_once(
+                        RunId("run-1".to_string()),
+                        EndorseRequest {
+                            value_ref: ValueRef("v123".to_string()),
+                            target_integrity: Integrity::Trusted,
+                            reason: None,
+                        },
+                    )
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id.clone(),
+                run_id: RunId("run-1".to_string()),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 2000,
+            })
+            .expect("resolve approval");
+
+        let transition = runtime_task
+            .await
+            .expect("task join")
+            .expect("runtime ok")
+            .expect("approved transition");
+        assert_eq!(transition.value_ref, ValueRef("v123".to_string()));
+        assert_eq!(transition.from_integrity, Integrity::Untrusted);
+        assert_eq!(transition.to_integrity, Integrity::Trusted);
+        assert_eq!(transition.approved_by, Some(requested.request_id));
+
+        let label = runtime
+            .value_label(&ValueRef("v123".to_string()))
+            .expect("read value label")
+            .expect("value label present");
+        assert_eq!(label.integrity, Integrity::Trusted);
+    }
+
+    #[tokio::test]
+    async fn declassify_value_once_tracks_existing_sink_allowance() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+        let sink = "https://api.example.com/v1/upload";
+        runtime
+            .upsert_value_label(
+                ValueRef("v456".to_string()),
+                label_with_sinks(Integrity::Trusted, &[]),
+            )
+            .expect("seed value state");
+
+        let first_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .declassify_value_once(
+                        RunId("run-1".to_string()),
+                        DeclassifyRequest {
+                            value_ref: ValueRef("v456".to_string()),
+                            sink: SinkKey(sink.to_string()),
+                            reason: None,
+                        },
+                    )
+                    .await
+            })
+        };
+        let first_requested = wait_for_approval_count(&approval_bus, 1).await[0].clone();
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: first_requested.request_id.clone(),
+                run_id: first_requested.run_id.clone(),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 2000,
+            })
+            .expect("resolve first approval");
+        let first_transition = first_task
+            .await
+            .expect("task join")
+            .expect("runtime ok")
+            .expect("approved transition");
+        assert!(!first_transition.sink_was_already_allowed);
+
+        let second_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .declassify_value_once(
+                        RunId("run-2".to_string()),
+                        DeclassifyRequest {
+                            value_ref: ValueRef("v456".to_string()),
+                            sink: SinkKey(sink.to_string()),
+                            reason: None,
+                        },
+                    )
+                    .await
+            })
+        };
+        let second_requested = wait_for_approval_count(&approval_bus, 2).await[1].clone();
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: second_requested.request_id.clone(),
+                run_id: second_requested.run_id.clone(),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 2001,
+            })
+            .expect("resolve second approval");
+        let second_transition = second_task
+            .await
+            .expect("task join")
+            .expect("runtime ok")
+            .expect("approved transition");
+        assert!(second_transition.sink_was_already_allowed);
+
+        let label = runtime
+            .value_label(&ValueRef("v456".to_string()))
+            .expect("read value label")
+            .expect("value label present");
+        assert!(label.allowed_sinks.contains(&SinkKey(sink.to_string())));
+    }
+
     #[test]
     fn approval_requested_event_schema_shape_stable() {
         let event = ApprovalRequestedEvent {
@@ -953,6 +1487,8 @@ mod tests {
                         run_id: RunId("run-1".to_string()),
                         cwd: "/tmp".to_string(),
                         script: "rm -rf tmp".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
                         unknown_mode: UnknownMode::Deny,
                         uncertain_mode: UncertainMode::Deny,
                     })
@@ -1009,6 +1545,8 @@ mod tests {
                         run_id: RunId("run-1".to_string()),
                         cwd: "/tmp".to_string(),
                         script: "rm -rf tmp".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
                         unknown_mode: UnknownMode::Deny,
                         uncertain_mode: UncertainMode::Deny,
                     })
@@ -1023,6 +1561,8 @@ mod tests {
                         run_id: RunId("run-2".to_string()),
                         cwd: "/tmp".to_string(),
                         script: "rm -rf tmp".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
                         unknown_mode: UnknownMode::Deny,
                         uncertain_mode: UncertainMode::Deny,
                     })
@@ -1089,6 +1629,8 @@ mod tests {
                         run_id: RunId("run-1".to_string()),
                         cwd: "/tmp".to_string(),
                         script: "echo hi && rm -rf tmp".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
                         unknown_mode: UnknownMode::Deny,
                         uncertain_mode: UncertainMode::Deny,
                     })
@@ -1139,6 +1681,8 @@ mod tests {
                         run_id: RunId("run-1".to_string()),
                         cwd: "/tmp".to_string(),
                         script: "custom-cmd --flag".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
                         unknown_mode: UnknownMode::Ask,
                         uncertain_mode: UncertainMode::Deny,
                     })
@@ -1192,6 +1736,8 @@ mod tests {
                         run_id: RunId("run-1".to_string()),
                         cwd: "/tmp".to_string(),
                         script: "weird-shell-construct".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
                         unknown_mode: UnknownMode::Deny,
                         uncertain_mode: UncertainMode::Ask,
                     })

@@ -24,6 +24,14 @@ You are reading implementation notes for Worker 7 (`crates/sieve-runtime`).
 - Explicit tool approval lifecycle hooks implemented:
   - `request_endorse_approval`
   - `request_declassify_approval`
+- Runtime value-state engine implemented (Chunk F):
+  - in-memory `RuntimeValueState` keyed by `ValueRef`
+  - `upsert_value_label`, `value_label`, `runtime_policy_context_for_control`
+  - `orchestrate_shell` now includes `runtime_context` in `PrecheckInput`
+  - `ShellRunRequest` now carries control refs + optional endorsement source
+  - one-shot transition helpers:
+    - `endorse_value_once`
+    - `declassify_value_once`
 - Deterministic event timing support via injectable `Clock`.
 
 ## Tests Added
@@ -36,6 +44,10 @@ You are reading implementation notes for Worker 7 (`crates/sieve-runtime`).
   - approve/deny coverage
 - Declassify approval lifecycle tests:
   - approve/deny coverage
+- Runtime value-state tests:
+  - policy precheck receives runtime context from value-state
+  - endorse transition updates integrity label on approval
+  - declassify transition tracks first/duplicate sink allowance
 - Approval bus concurrency test:
   - parallel pending requests, out-of-order resolves, no cross-delivery.
 - Runtime JSONL event log ordering test.
