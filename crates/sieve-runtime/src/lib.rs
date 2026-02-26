@@ -1026,8 +1026,7 @@ mod tests {
     use sieve_types::{
         Action, Capability, CommandKnowledge, CommandSummary, Integrity, LlmModelConfig,
         LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision,
-        QuarantineExtractInput, QuarantineExtractOutput, Resource, SinkCheck, SinkKey, Source,
-        TypedValue, ValueLabel, ValueRef,
+        Resource, SinkCheck, SinkKey, Source, ValueLabel, ValueRef,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env::temp_dir;
@@ -2667,22 +2666,5 @@ require_trusted_control_for_mutating = true
         assert!(matches!(second, RuntimeEvent::ApprovalResolved(_)));
 
         let _ = remove_file(path);
-    }
-
-    #[allow(dead_code)]
-    async fn _unused_quarantine_extract_example(
-        _input: QuarantineExtractInput,
-    ) -> QuarantineExtractOutput {
-        QuarantineExtractOutput {
-            value: TypedValue::Enum {
-                registry: "r".to_string(),
-                variant: "v".to_string(),
-            },
-        }
-    }
-
-    #[allow(dead_code)]
-    fn _unused_map_example() -> BTreeMap<String, BTreeSet<String>> {
-        BTreeMap::new()
     }
 }
