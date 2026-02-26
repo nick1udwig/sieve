@@ -1,0 +1,15 @@
+# Sieve v3 baseline MVP policy.
+# Conservative default:
+# - blocks `rm -rf` unless user approves once
+# - denies unsupported mutating/network actions unless explicitly allowed
+
+[[deny_rules]]
+id = "deny-rm-rf"
+argv_prefix = ["rm", "-rf"]
+decision = "deny_with_approval"
+reason = "rm -rf requires explicit approval"
+
+[options]
+violation_mode = "deny"
+require_trusted_control_for_mutating = true
+trusted_control = true

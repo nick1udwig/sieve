@@ -18,7 +18,7 @@ Inspired by:
    - `SIEVE_PLANNER_MODEL`
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
-   - `SIEVE_POLICY_PATH`
+   - optional: `SIEVE_POLICY_PATH` (defaults to `docs/policy/baseline-policy.toml`)
 2. Start the app:
 
 ```bash
@@ -26,3 +26,5 @@ cargo run -p sieve-app -- "review workspace status"
 ```
 
 If no CLI prompt is passed, `sieve-app` reads prompts from stdin (one line per turn).
+
+Baseline policy file: `docs/policy/baseline-policy.toml`.

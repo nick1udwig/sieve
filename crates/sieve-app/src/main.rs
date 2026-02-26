@@ -38,6 +38,8 @@ struct AppConfig {
     uncertain_mode: UncertainMode,
 }
 
+const DEFAULT_POLICY_PATH: &str = "docs/policy/baseline-policy.toml";
+
 impl AppConfig {
     fn from_env() -> Result<Self, String> {
         let telegram_bot_token = required_env("TELEGRAM_BOT_TOKEN")?;
@@ -45,7 +47,7 @@ impl AppConfig {
             .parse::<i64>()
             .map_err(|err| format!("invalid TELEGRAM_CHAT_ID: {err}"))?;
         let telegram_poll_timeout_secs = parse_u16_env("SIEVE_TELEGRAM_POLL_TIMEOUT_SECS", 1)?;
-        let policy_path = PathBuf::from(required_env("SIEVE_POLICY_PATH")?);
+        let policy_path = parse_policy_path(env::var("SIEVE_POLICY_PATH").ok());
         let event_log_path = env::var("SIEVE_RUNTIME_EVENT_LOG")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(".sieve/logs/runtime-events.jsonl"));
@@ -74,6 +76,13 @@ impl AppConfig {
 
 fn required_env(key: &str) -> Result<String, String> {
     env::var(key).map_err(|_| format!("missing required environment variable `{key}`"))
+}
+
+fn parse_policy_path(raw: Option<String>) -> PathBuf {
+    match raw.map(|value| value.trim().to_string()) {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => PathBuf::from(DEFAULT_POLICY_PATH),
+    }
 }
 
 fn parse_u16_env(key: &str, default: u16) -> Result<u16, String> {
@@ -407,5 +416,29 @@ mod tests {
         let body = fs::read_to_string(&path).expect("read jsonl log");
         assert!(body.contains("policy_evaluated"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn parse_policy_path_uses_baseline_default_for_missing_or_blank() {
+        assert_eq!(
+            parse_policy_path(None),
+            PathBuf::from("docs/policy/baseline-policy.toml")
+        );
+        assert_eq!(
+            parse_policy_path(Some(String::new())),
+            PathBuf::from("docs/policy/baseline-policy.toml")
+        );
+        assert_eq!(
+            parse_policy_path(Some("   ".to_string())),
+            PathBuf::from("docs/policy/baseline-policy.toml")
+        );
+    }
+
+    #[test]
+    fn parse_policy_path_honors_explicit_env_override() {
+        assert_eq!(
+            parse_policy_path(Some("custom/policy.toml".to_string())),
+            PathBuf::from("custom/policy.toml")
+        );
     }
 }
