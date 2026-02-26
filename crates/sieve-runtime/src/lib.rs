@@ -263,17 +263,18 @@ impl JsonlRuntimeEventLog {
     pub fn path(&self) -> &Path {
         &self.path
     }
-}
 
-#[async_trait]
-impl RuntimeEventLog for JsonlRuntimeEventLog {
-    async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError> {
+    pub async fn append_json_value(&self, value: &serde_json::Value) -> Result<(), EventLogError> {
+        let encoded =
+            serde_json::to_string(value).map_err(|err| EventLogError::Append(err.to_string()))?;
+        self.append_encoded_line(&encoded)
+    }
+
+    fn append_encoded_line(&self, encoded: &str) -> Result<(), EventLogError> {
         let _guard = self
             .writer_lock
             .lock()
             .map_err(|_| EventLogError::Append("event writer lock poisoned".to_string()))?;
-        let encoded =
-            serde_json::to_string(&event).map_err(|err| EventLogError::Append(err.to_string()))?;
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -284,6 +285,15 @@ impl RuntimeEventLog for JsonlRuntimeEventLog {
         file.write_all(b"\n")
             .map_err(|err| EventLogError::Append(err.to_string()))?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl RuntimeEventLog for JsonlRuntimeEventLog {
+    async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError> {
+        let encoded =
+            serde_json::to_string(&event).map_err(|err| EventLogError::Append(err.to_string()))?;
+        self.append_encoded_line(&encoded)
     }
 }
 
@@ -3372,6 +3382,37 @@ require_trusted_control_for_mutating = true
         let second: RuntimeEvent = serde_json::from_str(lines[1]).expect("parse second event");
         assert!(matches!(first, RuntimeEvent::ApprovalRequested(_)));
         assert!(matches!(second, RuntimeEvent::ApprovalResolved(_)));
+
+        let _ = remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn jsonl_event_log_appends_custom_json_records() {
+        let path = temp_dir().join(format!(
+            "sieve-runtime-records-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = remove_file(&path);
+        let log = JsonlRuntimeEventLog::new(&path).expect("create log");
+
+        log.append_json_value(&serde_json::json!({
+            "event": "conversation",
+            "schema_version": 1,
+            "run_id": "run-1",
+            "role": "user",
+            "message": "hello",
+            "created_at_ms": 1002
+        }))
+        .await
+        .expect("append custom record");
+
+        let body = read_to_string(&path).expect("read log file");
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 1);
+        let record: serde_json::Value = serde_json::from_str(lines[0]).expect("parse json record");
+        assert_eq!(record["event"], "conversation");
+        assert_eq!(record["role"], "user");
+        assert_eq!(record["message"], "hello");
 
         let _ = remove_file(path);
     }

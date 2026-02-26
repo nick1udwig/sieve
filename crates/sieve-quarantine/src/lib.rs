@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use thiserror::Error;
 
-const DEFAULT_TRACE_ROOT_REL: &str = ".sieve/logs/traces";
+const DEFAULT_SIEVE_DIR_NAME: &str = ".sieve";
 const REPORT_FILE_NAME: &str = "report.json";
 
 #[derive(Debug, Error)]
@@ -235,10 +235,21 @@ fn shell_escape_single_quoted(value: &str) -> String {
 }
 
 fn default_trace_root() -> PathBuf {
-    if let Ok(home) = env::var("HOME") {
-        return PathBuf::from(home).join(DEFAULT_TRACE_ROOT_REL);
+    if let Ok(sieve_home) = env::var("SIEVE_HOME") {
+        let sieve_home = sieve_home.trim();
+        if !sieve_home.is_empty() {
+            return PathBuf::from(sieve_home).join("logs/traces");
+        }
     }
-    PathBuf::from("/tmp").join(DEFAULT_TRACE_ROOT_REL)
+
+    if let Ok(home) = env::var("HOME") {
+        return PathBuf::from(home)
+            .join(DEFAULT_SIEVE_DIR_NAME)
+            .join("logs/traces");
+    }
+    PathBuf::from("/tmp")
+        .join(DEFAULT_SIEVE_DIR_NAME)
+        .join("logs/traces")
 }
 
 fn collect_trace_files(run_dir: &Path) -> Result<Vec<PathBuf>, QuarantineRunError> {
