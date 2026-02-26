@@ -30,10 +30,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `M` Policy Gate for `endorse` and `declassify`
-: Owner: `codex` | Branch: `master` | PR: `-` | Scope: add explicit policy evaluation for `endorse`/`declassify` before approval and state mutation. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-policy/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs). Done when: flow is `policy -> approval -> transition`, with deny paths covered.
-
 ## Done
+
+- [x] `M` Policy Gate for `endorse` and `declassify`
+: Owner: `codex` | Branch: `master` | PR: `1293af5` | Scope: add explicit policy evaluation for `endorse`/`declassify` before approval and state mutation. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-policy/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs). Done when: flow is `policy -> approval -> transition`, with deny paths covered.
 
 - [x] `L` Runtime Allowed-Tools Enforcement Boundary
 : Owner: `codex` | Branch: `master` | PR: `3caedf3` | Scope: enforce `PlannerRunRequest.allowed_tools` in runtime dispatch so disallowed `tool_name` values are rejected before execution. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs). Done when: runtime rejects disallowed tools even if planner backend omits allowlist checks.
