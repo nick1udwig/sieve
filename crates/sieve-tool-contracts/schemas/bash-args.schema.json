@@ -1,0 +1,12 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cmd": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cmd"
+  ],
+  "type": "object"
+}

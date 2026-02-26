@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target_integrity": {
+      "enum": [
+        "trusted",
+        "untrusted"
+      ],
+      "type": "string"
+    },
+    "value_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "value_ref",
+    "target_integrity"
+  ],
+  "type": "object"
+}

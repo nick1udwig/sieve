@@ -1,0 +1,123 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "thoughts": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tool_calls": {
+      "items": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "cmd": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "cmd"
+                ],
+                "type": "object"
+              },
+              "tool_name": {
+                "const": "bash"
+              }
+            },
+            "required": [
+              "tool_name",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "target_integrity": {
+                    "enum": [
+                      "trusted",
+                      "untrusted"
+                    ],
+                    "type": "string"
+                  },
+                  "value_ref": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "value_ref",
+                  "target_integrity"
+                ],
+                "type": "object"
+              },
+              "tool_name": {
+                "const": "endorse"
+              }
+            },
+            "required": [
+              "tool_name",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sink": {
+                    "description": "absolute URL sink key",
+                    "type": "string"
+                  },
+                  "value_ref": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "value_ref",
+                  "sink"
+                ],
+                "type": "object"
+              },
+              "tool_name": {
+                "const": "declassify"
+              }
+            },
+            "required": [
+              "tool_name",
+              "args"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "thoughts",
+    "tool_calls"
+  ],
+  "type": "object"
+}
