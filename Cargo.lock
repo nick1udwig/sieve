@@ -2931,9 +2931,17 @@ dependencies = [
 name = "sieve-interface-telegram"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "serde",
  "serde_json",
+ "sieve-command-summaries",
+ "sieve-llm",
+ "sieve-policy",
+ "sieve-quarantine",
+ "sieve-runtime",
+ "sieve-shell",
  "sieve-types",
+ "tokio",
 ]
 
 [[package]]
