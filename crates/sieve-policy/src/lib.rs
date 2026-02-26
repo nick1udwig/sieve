@@ -6,6 +6,7 @@ use sieve_types::{
     PrecheckInput, RuntimePolicyContext, SinkKey, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 use url::Url;
 
@@ -177,9 +178,9 @@ impl PolicyEngine for TomlPolicyEngine {
         }
 
         for cap in &summary.required_capabilities {
-            if !self.capability_allowed(cap) {
+            if !self.capability_allowed(cap, &input.cwd) {
                 return self.policy_violation_decision(
-                    format!("missing capability {}", capability_key(cap)),
+                    format!("missing capability {}", capability_key(cap, &input.cwd)),
                     "missing-capability",
                 );
             }
@@ -259,8 +260,13 @@ fn has_consequential_capability(required: &[Capability]) -> bool {
     required.iter().any(|cap| cap.action != Action::Read)
 }
 
-fn capability_key(cap: &Capability) -> String {
-    format!("{:?}:{:?}:{}", cap.resource, cap.action, cap.scope)
+fn capability_key(cap: &Capability, cwd: &str) -> String {
+    format!(
+        "{:?}:{:?}:{}",
+        cap.resource,
+        cap.action,
+        normalize_capability_scope(cap.resource, &cap.scope, cwd)
+    )
 }
 
 fn normalize_config(config: &mut PolicyConfig) {
@@ -279,18 +285,79 @@ fn normalize_config(config: &mut PolicyConfig) {
     }
 }
 
-impl TomlPolicyEngine {
-    fn capability_allowed(&self, cap: &Capability) -> bool {
-        let scope = if cap.resource == sieve_types::Resource::Net {
-            canonicalize_sink_key(&cap.scope).unwrap_or_else(|_| cap.scope.clone())
+fn normalize_capability_scope(resource: sieve_types::Resource, scope: &str, cwd: &str) -> String {
+    match resource {
+        sieve_types::Resource::Net => {
+            canonicalize_sink_key(scope).unwrap_or_else(|_| scope.to_string())
+        }
+        sieve_types::Resource::Fs => canonicalize_fs_scope(scope, cwd),
+        _ => scope.to_string(),
+    }
+}
+
+fn canonicalize_fs_scope(scope: &str, cwd: &str) -> String {
+    let path = Path::new(scope);
+    let base = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        Path::new(cwd).join(path)
+    };
+    normalize_path_lexically(base)
+}
+
+fn normalize_path_lexically(path: PathBuf) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut absolute = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                out.clear();
+                out.push(prefix.as_os_str().to_string_lossy().into_owned());
+            }
+            Component::RootDir => {
+                absolute = true;
+                out.clear();
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if let Some(last) = out.last() {
+                    if last != ".." {
+                        out.pop();
+                    } else if !absolute {
+                        out.push("..".to_string());
+                    }
+                } else if !absolute {
+                    out.push("..".to_string());
+                }
+            }
+            Component::Normal(seg) => out.push(seg.to_string_lossy().into_owned()),
+        }
+    }
+
+    if absolute {
+        if out.is_empty() {
+            "/".to_string()
         } else {
-            cap.scope.clone()
-        };
+            format!("/{}", out.join("/"))
+        }
+    } else if out.is_empty() {
+        ".".to_string()
+    } else {
+        out.join("/")
+    }
+}
+
+impl TomlPolicyEngine {
+    fn capability_allowed(&self, cap: &Capability, cwd: &str) -> bool {
+        let scope = normalize_capability_scope(cap.resource, &cap.scope, cwd);
 
         self.config.allow_capabilities.iter().any(|candidate| {
+            let candidate_scope =
+                normalize_capability_scope(candidate.resource, &candidate.scope, cwd);
             candidate.resource == cap.resource
                 && candidate.action == cap.action
-                && candidate.scope == scope
+                && candidate_scope == scope
         })
     }
 
@@ -828,6 +895,68 @@ require_trusted_control_for_mutating = true
             decision.blocked_rule_id.as_deref(),
             Some("missing-capability")
         );
+    }
+
+    #[test]
+    fn allows_relative_fs_scope_when_absolute_capability_present() {
+        let engine = TomlPolicyEngine::from_toml_str(
+            r#"
+[[allow_capabilities]]
+resource = "fs"
+action = "write"
+scope = "/tmp/workspace/dst.txt"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        )
+        .expect("policy parse");
+
+        let mut input = base_input();
+        input.cwd = "/tmp/workspace".to_string();
+        input.summary = Some(CommandSummary {
+            required_capabilities: vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "./out/../dst.txt".to_string(),
+            }],
+            sink_checks: vec![],
+            unsupported_flags: vec![],
+        });
+
+        let decision = engine.evaluate_precheck(&input);
+        assert_eq!(decision.kind, PolicyDecisionKind::Allow);
+    }
+
+    #[test]
+    fn missing_fs_capability_reason_uses_normalized_scope() {
+        let engine = TomlPolicyEngine::from_toml_str(
+            r#"
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        )
+        .expect("policy parse");
+
+        let mut input = base_input();
+        input.cwd = "/tmp/workspace".to_string();
+        input.summary = Some(CommandSummary {
+            required_capabilities: vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "dst.txt".to_string(),
+            }],
+            sink_checks: vec![],
+            unsupported_flags: vec![],
+        });
+
+        let decision = engine.evaluate_precheck(&input);
+        assert_eq!(decision.kind, PolicyDecisionKind::Deny);
+        assert!(decision.reason.contains("Fs:Write:/tmp/workspace/dst.txt"));
     }
 
     #[test]

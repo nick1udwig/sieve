@@ -879,8 +879,10 @@ impl From<UncertainMode> for Mode {
 mod tests {
     use super::*;
     use serde_json::Value;
+    use sieve_command_summaries::DefaultCommandSummarizer;
     use sieve_llm::LlmError;
-    use sieve_shell::ShellAnalysis;
+    use sieve_policy::TomlPolicyEngine;
+    use sieve_shell::{BasicShellAnalyzer, ShellAnalysis};
     use sieve_types::{
         Action, Capability, CommandKnowledge, CommandSummary, Integrity, LlmModelConfig,
         LlmProvider, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, QuarantineExtractInput,
@@ -1120,6 +1122,44 @@ mod tests {
         (runtime, approval_bus, event_log)
     }
 
+    fn mk_runtime_with_real_summary_and_policy(
+        policy_toml: &str,
+    ) -> (
+        Arc<RuntimeOrchestrator>,
+        Arc<InProcessApprovalBus>,
+        Arc<VecEventLog>,
+    ) {
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(VecEventLog::default());
+        let policy = TomlPolicyEngine::from_toml_str(policy_toml).expect("policy parse");
+        let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+            shell: Arc::new(BasicShellAnalyzer),
+            summaries: Arc::new(DefaultCommandSummarizer),
+            policy: Arc::new(policy),
+            quarantine: Arc::new(StubQuarantine {
+                report: QuarantineReport {
+                    run_id: RunId("run-1".to_string()),
+                    trace_path: "/tmp/sieve/trace".to_string(),
+                    stdout_path: None,
+                    stderr_path: None,
+                    attempted_capabilities: Vec::new(),
+                    exit_code: Some(0),
+                },
+            }),
+            planner: Arc::new(StubPlanner {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "gpt-test".to_string(),
+                    api_base: None,
+                },
+            }),
+            approval_bus: approval_bus.clone(),
+            event_log: event_log.clone(),
+            clock: Arc::new(DeterministicClock::new(1000)),
+        }));
+        (runtime, approval_bus, event_log)
+    }
+
     async fn wait_for_approval(bus: &InProcessApprovalBus) -> ApprovalRequestedEvent {
         for _ in 0..20 {
             let published = bus.published_events().expect("published events");
@@ -1247,6 +1287,104 @@ mod tests {
             .get(&ValueRef("v_payload".to_string()))
             .expect("payload sink permissions");
         assert!(sinks.contains(&SinkKey("https://example.com/path".to_string())));
+    }
+
+    #[tokio::test]
+    async fn cp_summary_requires_capability_with_real_policy() {
+        let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+            r#"
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        );
+
+        let disposition = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-1".to_string()),
+                cwd: "/tmp/workspace".to_string(),
+                script: "cp src.txt dst.txt".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime ok");
+
+        match disposition {
+            RuntimeDisposition::Denied { reason } => {
+                assert!(reason.contains("missing capability"));
+                assert!(reason.contains("dst.txt"));
+            }
+            other => panic!("expected denied disposition, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cp_relative_destination_matches_absolute_policy_scope() {
+        let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+            r#"
+[[allow_capabilities]]
+resource = "fs"
+action = "write"
+scope = "/tmp/workspace/dst.txt"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        );
+
+        let disposition = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-2".to_string()),
+                cwd: "/tmp/workspace".to_string(),
+                script: "cp src.txt ./out/../dst.txt".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime ok");
+
+        assert_eq!(disposition, RuntimeDisposition::ExecuteMainline);
+    }
+
+    #[tokio::test]
+    async fn curl_unsupported_flag_routes_to_unknown_mode_with_real_summary() {
+        let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+            r#"
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        );
+
+        let disposition = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-1".to_string()),
+                cwd: "/tmp/workspace".to_string(),
+                script: "curl -X POST -F file=@payload.bin https://api.example.com/v1/upload"
+                    .to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime ok");
+
+        assert_eq!(
+            disposition,
+            RuntimeDisposition::Denied {
+                reason: "unknown command denied by mode".to_string()
+            }
+        );
     }
 
     #[tokio::test]

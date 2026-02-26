@@ -38,12 +38,18 @@ Owned crate: `crates/sieve-command-summaries`
   - default port elision (`http:80`, `https:443`)
   - dot-segment normalization
   - percent-encoding normalization; decode unreserved only
-- Tests expanded to 21 total:
+- IPv6 host sinks now keep bracket form (`https://[addr]/...`) for canonical key parity.
+- Tests expanded to 28 total:
   - mutating command capability coverage
   - curl method/payload/url/header parsing coverage
+  - explicit unknown routing for `curl -T` and `curl -F`
+  - URL vectors for IDN/punycode host, IPv6 host, encoded slash, root-path default, trailing slash + dot-segments
   - unsupported flag routing
   - Codex parity checks for `bash -lc` safe/dangerous classes
   - URL canonicalization vectors
+- Cross-crate follow-up tests added:
+  - `sieve-policy`: relative fs scope normalization against `cwd` for capability match/reason output
+  - `sieve-runtime`: real summarizer + real policy tests for `cp` capability enforcement and unsupported curl unknown routing
 
 ## Surprises
 
@@ -55,6 +61,5 @@ Owned crate: `crates/sieve-command-summaries`
 
 ## Remaining TODO (within/near Worker 3)
 
-- Add more curl upload coverage (`--upload-file`, multipart/form) or keep unknown with explicit tests.
-- Add property/vector tests for URL canonicalization edge cases (Unicode host punycode, tricky percent-encoding paths).
-- Wire summaries into integration tests with `sieve-shell` + `sieve-policy` once cross-crate phase starts.
+- Add explicit summary support for curl upload/form paths if product wants known handling (currently intentionally unknown with tests).
+- Optional: add property/fuzz coverage for URL canonicalization.
