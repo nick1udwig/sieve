@@ -43,9 +43,6 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `A` Contract Freeze v1
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk A](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-a-contract-freeze-v1)
-
 - [ ] `H` Quarantine Connect Coverage + Mandatory Report
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk H](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-h-quarantine-connect-coverage--mandatory-report)
 
@@ -53,6 +50,9 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 : Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
 
 ## Done
+
+- [x] `A` Contract Freeze v1
+: Owner: `codex` | Branch: `master` | PR: `a37bde1` | Plan: [Chunk A](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-a-contract-freeze-v1)
 
 - [x] Telegram manual smoke check
 : Owner: `integrator` | Branch: `-` | PR: `-` | Notes: sample approval event sent, long-poll wait confirmed.
