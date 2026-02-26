@@ -16,10 +16,12 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
-- [ ] `K` End-to-End Security Harness
-: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk K](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-k-end-to-end-security-harness)
+
 
 ## Claimed
+
+- [ ] `K` End-to-End Security Harness
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk K](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-k-end-to-end-security-harness)
 
 ## Done
 
