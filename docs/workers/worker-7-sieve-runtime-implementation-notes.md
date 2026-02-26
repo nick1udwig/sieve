@@ -65,6 +65,15 @@ You are reading implementation notes for Worker 7 (`crates/sieve-runtime`).
   - planner `bash` unknown + `accept` mode executes quarantine.
   - planner invalid args return structured tool-contract report.
   - planner `endorse` tool call runs approval and applies state transition.
+- Chunk K end-to-end security harness (runtime integration tests):
+  - `rm -rf` deny-with-approval gate with approval roundtrip.
+  - `curl -X POST ... -d ...` sink-flow denial, then allow after approved `declassify`.
+  - unknown mode matrix: `deny`, `accept`, `ask`.
+  - uncertain mode matrix: `deny`, `accept`, `ask`.
+  - explicit tool one-shot approval behavior: repeated `endorse` still re-prompts.
+  - quarantine report artifact generation path (`report.json`) via runtime using fake `bwrap`.
+  - File: `crates/sieve-runtime/tests/e2e_security_harness.rs`.
+  - Command: `cargo test -p sieve-runtime --test e2e_security_harness`.
 
 ## Surprises / Gotchas
 
