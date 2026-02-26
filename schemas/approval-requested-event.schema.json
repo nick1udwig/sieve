@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sieve.local/schemas/approval-requested-event.schema.json",
+  "title": "ApprovalRequestedEvent",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "run_id",
+    "command_segments",
+    "inferred_capabilities",
+    "blocked_rule_id",
+    "reason",
+    "created_at_ms"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "command_segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["argv"],
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "operator_before": {
+            "type": ["string", "null"],
+            "enum": ["sequence", "and", "or", "pipe", null]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "inferred_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["resource", "action", "scope"],
+        "properties": {
+          "resource": {
+            "type": "string",
+            "enum": ["fs", "net", "proc", "env", "ipc"]
+          },
+          "action": {
+            "type": "string",
+            "enum": ["read", "write", "append", "exec", "connect"]
+          },
+          "scope": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "blocked_rule_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "created_at_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

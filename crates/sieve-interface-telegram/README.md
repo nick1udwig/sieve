@@ -9,6 +9,19 @@ Requirements:
 - `TELEGRAM_BOT_TOKEN` env var
 - `TELEGRAM_CHAT_ID` env var (numeric chat id)
 
+### How to get `TELEGRAM_CHAT_ID`
+
+1. Send a message to your bot in Telegram (or mention it in the target group).
+2. Run:
+
+```bash
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates"
+```
+
+3. Read `result[].message.chat.id` from the JSON response.
+   - Personal chat IDs are usually positive.
+   - Group/supergroup chat IDs are usually negative.
+
 Run:
 
 ```bash

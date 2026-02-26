@@ -1,0 +1,24 @@
+[workspace]
+members = [
+  "crates/sieve-types",
+  "crates/sieve-shell",
+  "crates/sieve-command-summaries",
+  "crates/sieve-policy",
+  "crates/sieve-quarantine",
+  "crates/sieve-llm",
+  "crates/sieve-runtime",
+  "crates/sieve-interface-telegram",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
