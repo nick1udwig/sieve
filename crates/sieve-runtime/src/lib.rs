@@ -590,9 +590,9 @@ impl RuntimeOrchestrator {
             return self
                 .handle_unknown_or_uncertain(
                     &request,
+                    runtime_context.clone(),
                     shell.segments,
                     UnknownOrUncertain::Unknown,
-                    Mode::from(request.unknown_mode),
                 )
                 .await;
         }
@@ -601,9 +601,9 @@ impl RuntimeOrchestrator {
             return self
                 .handle_unknown_or_uncertain(
                     &request,
+                    runtime_context.clone(),
                     shell.segments,
                     UnknownOrUncertain::Uncertain,
-                    Mode::from(request.uncertain_mode),
                 )
                 .await;
         }
@@ -915,22 +915,45 @@ impl RuntimeOrchestrator {
     async fn handle_unknown_or_uncertain(
         &self,
         request: &ShellRunRequest,
+        runtime_context: RuntimePolicyContext,
         segments: Vec<CommandSegment>,
         kind: UnknownOrUncertain,
-        mode: Mode,
     ) -> Result<RuntimeDisposition, RuntimeError> {
-        match mode {
-            Mode::Deny => Ok(RuntimeDisposition::Denied {
-                reason: kind.to_deny_reason().to_string(),
+        let precheck = PrecheckInput {
+            run_id: request.run_id.clone(),
+            cwd: request.cwd.clone(),
+            command_segments: segments.clone(),
+            knowledge: kind.to_knowledge(),
+            summary: None,
+            runtime_context,
+            unknown_mode: request.unknown_mode,
+            uncertain_mode: request.uncertain_mode,
+        };
+        let decision = self.policy.evaluate_precheck(&precheck);
+        let policy_event = PolicyEvaluatedEvent {
+            schema_version: 1,
+            run_id: request.run_id.clone(),
+            decision: decision.clone(),
+            inferred_capabilities: Vec::new(),
+            trace_path: None,
+            created_at_ms: self.clock.now_ms(),
+        };
+        self.append_event(RuntimeEvent::PolicyEvaluated(policy_event))
+            .await?;
+
+        match decision.kind {
+            PolicyDecisionKind::Deny => Ok(RuntimeDisposition::Denied {
+                reason: decision.reason,
             }),
-            Mode::Ask => {
+            PolicyDecisionKind::DenyWithApproval => {
+                let blocked_rule_id = kind.to_blocked_rule_id().to_string();
                 let action = self
                     .request_approval(
                         request.run_id.clone(),
                         segments.clone(),
                         Vec::new(),
-                        kind.to_blocked_rule_id().to_string(),
-                        kind.to_approval_reason().to_string(),
+                        blocked_rule_id,
+                        decision.reason,
                     )
                     .await?
                     .action;
@@ -946,7 +969,7 @@ impl RuntimeOrchestrator {
                     }),
                 }
             }
-            Mode::Accept => {
+            PolicyDecisionKind::Allow => {
                 let report = self
                     .run_quarantine(request.run_id.clone(), request.cwd.clone(), segments)
                     .await?;
@@ -1137,44 +1160,10 @@ impl UnknownOrUncertain {
         }
     }
 
-    fn to_approval_reason(self) -> &'static str {
+    fn to_knowledge(self) -> CommandKnowledge {
         match self {
-            Self::Unknown => "unknown command requires approval",
-            Self::Uncertain => "uncertain command requires approval",
-        }
-    }
-
-    fn to_deny_reason(self) -> &'static str {
-        match self {
-            Self::Unknown => "unknown command denied by mode",
-            Self::Uncertain => "uncertain command denied by mode",
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Mode {
-    Ask,
-    Accept,
-    Deny,
-}
-
-impl From<UnknownMode> for Mode {
-    fn from(value: UnknownMode) -> Self {
-        match value {
-            UnknownMode::Ask => Self::Ask,
-            UnknownMode::Accept => Self::Accept,
-            UnknownMode::Deny => Self::Deny,
-        }
-    }
-}
-
-impl From<UncertainMode> for Mode {
-    fn from(value: UncertainMode) -> Self {
-        match value {
-            UncertainMode::Ask => Self::Ask,
-            UncertainMode::Accept => Self::Accept,
-            UncertainMode::Deny => Self::Deny,
+            Self::Unknown => CommandKnowledge::Unknown,
+            Self::Uncertain => CommandKnowledge::Uncertain,
         }
     }
 }
@@ -1227,8 +1216,44 @@ mod tests {
     }
 
     impl PolicyEngine for StubPolicy {
-        fn evaluate_precheck(&self, _input: &PrecheckInput) -> PolicyDecision {
-            self.decision.clone()
+        fn evaluate_precheck(&self, input: &PrecheckInput) -> PolicyDecision {
+            match input.knowledge {
+                CommandKnowledge::Unknown => match input.unknown_mode {
+                    UnknownMode::Deny => PolicyDecision {
+                        kind: PolicyDecisionKind::Deny,
+                        reason: "unknown command denied by mode".to_string(),
+                        blocked_rule_id: Some("unknown-mode".to_string()),
+                    },
+                    UnknownMode::Ask => PolicyDecision {
+                        kind: PolicyDecisionKind::DenyWithApproval,
+                        reason: "unknown command requires approval".to_string(),
+                        blocked_rule_id: Some("unknown-mode".to_string()),
+                    },
+                    UnknownMode::Accept => PolicyDecision {
+                        kind: PolicyDecisionKind::Allow,
+                        reason: "unknown command accepted by mode".to_string(),
+                        blocked_rule_id: None,
+                    },
+                },
+                CommandKnowledge::Uncertain => match input.uncertain_mode {
+                    UncertainMode::Deny => PolicyDecision {
+                        kind: PolicyDecisionKind::Deny,
+                        reason: "uncertain command denied by mode".to_string(),
+                        blocked_rule_id: Some("uncertain-mode".to_string()),
+                    },
+                    UncertainMode::Ask => PolicyDecision {
+                        kind: PolicyDecisionKind::DenyWithApproval,
+                        reason: "uncertain command requires approval".to_string(),
+                        blocked_rule_id: Some("uncertain-mode".to_string()),
+                    },
+                    UncertainMode::Accept => PolicyDecision {
+                        kind: PolicyDecisionKind::Allow,
+                        reason: "uncertain command accepted by mode".to_string(),
+                        blocked_rule_id: None,
+                    },
+                },
+                CommandKnowledge::Known => self.decision.clone(),
+            }
         }
     }
 
@@ -2882,6 +2907,118 @@ require_trusted_control_for_mutating = true
     }
 
     #[tokio::test]
+    async fn unknown_deny_and_accept_emit_policy_evaluated_events() {
+        let segments = vec![CommandSegment {
+            argv: vec!["custom-cmd".to_string(), "--flag".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, event_log) = mk_runtime(
+            CommandKnowledge::Unknown,
+            segments,
+            CommandKnowledge::Unknown,
+            PolicyDecisionKind::Allow,
+        );
+
+        let deny = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-unknown-deny".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "custom-cmd --flag".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime deny ok");
+        assert_eq!(
+            deny,
+            RuntimeDisposition::Denied {
+                reason: "unknown command denied by mode".to_string(),
+            }
+        );
+
+        let accept = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-unknown-accept".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "custom-cmd --flag".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Accept,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime accept ok");
+        assert!(matches!(accept, RuntimeDisposition::ExecuteQuarantine(_)));
+        assert!(approval_bus
+            .published_events()
+            .expect("published events")
+            .is_empty());
+
+        let events = event_log.snapshot();
+        assert!(matches!(events[0], RuntimeEvent::PolicyEvaluated(_)));
+        assert!(matches!(events[1], RuntimeEvent::PolicyEvaluated(_)));
+        assert!(matches!(events[2], RuntimeEvent::QuarantineCompleted(_)));
+    }
+
+    #[tokio::test]
+    async fn uncertain_deny_and_accept_emit_policy_evaluated_events() {
+        let segments = vec![CommandSegment {
+            argv: vec!["weird-shell-construct".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, event_log) = mk_runtime(
+            CommandKnowledge::Uncertain,
+            segments,
+            CommandKnowledge::Uncertain,
+            PolicyDecisionKind::Allow,
+        );
+
+        let deny = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-uncertain-deny".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "weird-shell-construct".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("runtime deny ok");
+        assert_eq!(
+            deny,
+            RuntimeDisposition::Denied {
+                reason: "uncertain command denied by mode".to_string(),
+            }
+        );
+
+        let accept = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-uncertain-accept".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "weird-shell-construct".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Accept,
+            })
+            .await
+            .expect("runtime accept ok");
+        assert!(matches!(accept, RuntimeDisposition::ExecuteQuarantine(_)));
+        assert!(approval_bus
+            .published_events()
+            .expect("published events")
+            .is_empty());
+
+        let events = event_log.snapshot();
+        assert!(matches!(events[0], RuntimeEvent::PolicyEvaluated(_)));
+        assert!(matches!(events[1], RuntimeEvent::PolicyEvaluated(_)));
+        assert!(matches!(events[2], RuntimeEvent::QuarantineCompleted(_)));
+    }
+
+    #[tokio::test]
     async fn unknown_ask_requires_approval_before_quarantine() {
         let segments = vec![CommandSegment {
             argv: vec!["custom-cmd".to_string(), "--flag".to_string()],
@@ -2931,9 +3068,10 @@ require_trusted_control_for_mutating = true
         ));
 
         let events = event_log.snapshot();
-        assert!(matches!(events[0], RuntimeEvent::ApprovalRequested(_)));
-        assert!(matches!(events[1], RuntimeEvent::ApprovalResolved(_)));
-        assert!(matches!(events[2], RuntimeEvent::QuarantineCompleted(_)));
+        assert!(matches!(events[0], RuntimeEvent::PolicyEvaluated(_)));
+        assert!(matches!(events[1], RuntimeEvent::ApprovalRequested(_)));
+        assert!(matches!(events[2], RuntimeEvent::ApprovalResolved(_)));
+        assert!(matches!(events[3], RuntimeEvent::QuarantineCompleted(_)));
     }
 
     #[tokio::test]
@@ -2985,9 +3123,10 @@ require_trusted_control_for_mutating = true
         ));
 
         let events = event_log.snapshot();
-        assert!(matches!(events[0], RuntimeEvent::ApprovalRequested(_)));
-        assert!(matches!(events[1], RuntimeEvent::ApprovalResolved(_)));
-        assert!(matches!(events[2], RuntimeEvent::QuarantineCompleted(_)));
+        assert!(matches!(events[0], RuntimeEvent::PolicyEvaluated(_)));
+        assert!(matches!(events[1], RuntimeEvent::ApprovalRequested(_)));
+        assert!(matches!(events[2], RuntimeEvent::ApprovalResolved(_)));
+        assert!(matches!(events[3], RuntimeEvent::QuarantineCompleted(_)));
     }
 
     #[tokio::test]
