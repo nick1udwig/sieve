@@ -254,6 +254,8 @@ pub struct RuntimeDeps {
 }
 
 impl RuntimeOrchestrator {
+    /// Constructs the runtime orchestrator from injected crate boundaries.
+    /// Approval is one-shot and never mutates persistent policy.
     pub fn new(deps: RuntimeDeps) -> Self {
         Self {
             shell: deps.shell,
@@ -268,6 +270,9 @@ impl RuntimeOrchestrator {
         }
     }
 
+    /// Orchestrates shell execution precheck flow.
+    /// For composed commands, this executes a single all-or-nothing precheck
+    /// and emits one consolidated approval request when needed.
     pub async fn orchestrate_shell(
         &self,
         request: ShellRunRequest,
@@ -345,6 +350,8 @@ impl RuntimeOrchestrator {
         }
     }
 
+    /// Starts approval lifecycle for an explicit `endorse` tool request.
+    /// Returns one-shot approval action; no persistent allowlist state.
     pub async fn request_endorse_approval(
         &self,
         run_id: RunId,
@@ -367,6 +374,8 @@ impl RuntimeOrchestrator {
         .await
     }
 
+    /// Starts approval lifecycle for an explicit `declassify` tool request.
+    /// Returns one-shot approval action; no persistent allowlist state.
     pub async fn request_declassify_approval(
         &self,
         run_id: RunId,
@@ -638,6 +647,7 @@ impl From<UncertainMode> for Mode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use sieve_llm::LlmError;
     use sieve_shell::ShellAnalysis;
     use sieve_types::{
@@ -845,6 +855,83 @@ mod tests {
         panic!("approval not requested in time");
     }
 
+    async fn wait_for_approval_count(
+        bus: &InProcessApprovalBus,
+        count: usize,
+    ) -> Vec<ApprovalRequestedEvent> {
+        for _ in 0..20 {
+            let published = bus.published_events().expect("published events");
+            if published.len() >= count {
+                return published;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        panic!("approval count not reached in time");
+    }
+
+    #[test]
+    fn approval_requested_event_schema_shape_stable() {
+        let event = ApprovalRequestedEvent {
+            schema_version: 1,
+            request_id: ApprovalRequestId("approval-1".to_string()),
+            run_id: RunId("run-1".to_string()),
+            command_segments: vec![CommandSegment {
+                argv: vec!["rm".to_string(), "-rf".to_string(), "tmp".to_string()],
+                operator_before: None,
+            }],
+            inferred_capabilities: vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "/tmp".to_string(),
+            }],
+            blocked_rule_id: "rule-1".to_string(),
+            reason: "requires approval".to_string(),
+            created_at_ms: 1000,
+        };
+        let as_json = serde_json::to_value(&event).expect("serialize");
+        let obj = as_json.as_object().expect("event object");
+        for key in [
+            "schema_version",
+            "request_id",
+            "run_id",
+            "command_segments",
+            "inferred_capabilities",
+            "blocked_rule_id",
+            "reason",
+            "created_at_ms",
+        ] {
+            assert!(obj.contains_key(key), "missing key: {key}");
+        }
+        assert_eq!(obj.len(), 8);
+        assert_eq!(obj.get("schema_version"), Some(&Value::from(1)));
+        assert_eq!(obj.get("request_id"), Some(&Value::from("approval-1")));
+        assert_eq!(obj.get("run_id"), Some(&Value::from("run-1")));
+    }
+
+    #[test]
+    fn approval_resolved_event_schema_shape_stable() {
+        let event = ApprovalResolvedEvent {
+            schema_version: 1,
+            request_id: ApprovalRequestId("approval-1".to_string()),
+            run_id: RunId("run-1".to_string()),
+            action: ApprovalAction::ApproveOnce,
+            created_at_ms: 1001,
+        };
+        let as_json = serde_json::to_value(&event).expect("serialize");
+        let obj = as_json.as_object().expect("event object");
+        for key in [
+            "schema_version",
+            "request_id",
+            "run_id",
+            "action",
+            "created_at_ms",
+        ] {
+            assert!(obj.contains_key(key), "missing key: {key}");
+        }
+        assert_eq!(obj.len(), 5);
+        assert_eq!(obj.get("action"), Some(&Value::from("approve_once")));
+    }
+
     #[tokio::test]
     async fn approval_roundtrip_known_command() {
         let segments = vec![CommandSegment {
@@ -899,6 +986,79 @@ mod tests {
             RuntimeEvent::ApprovalRequested(event) => assert_eq!(event.created_at_ms, 1001),
             _ => panic!("expected approval requested event"),
         }
+    }
+
+    #[tokio::test]
+    async fn approval_bus_concurrent_requests_do_not_cross_resolve() {
+        let segments = vec![CommandSegment {
+            argv: vec!["rm".to_string(), "-rf".to_string(), "tmp".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::DenyWithApproval,
+        );
+
+        let task_1 = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_shell(ShellRunRequest {
+                        run_id: RunId("run-1".to_string()),
+                        cwd: "/tmp".to_string(),
+                        script: "rm -rf tmp".to_string(),
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Deny,
+                    })
+                    .await
+            })
+        };
+        let task_2 = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_shell(ShellRunRequest {
+                        run_id: RunId("run-2".to_string()),
+                        cwd: "/tmp".to_string(),
+                        script: "rm -rf tmp".to_string(),
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Deny,
+                    })
+                    .await
+            })
+        };
+
+        let published = wait_for_approval_count(&approval_bus, 2).await;
+        assert_eq!(published.len(), 2);
+        let req_1 = published[0].clone();
+        let req_2 = published[1].clone();
+        assert_ne!(req_1.request_id, req_2.request_id);
+
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: req_2.request_id.clone(),
+                run_id: req_2.run_id.clone(),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 3000,
+            })
+            .expect("resolve second");
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: req_1.request_id.clone(),
+                run_id: req_1.run_id.clone(),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 3001,
+            })
+            .expect("resolve first");
+
+        let out_1 = task_1.await.expect("join 1").expect("runtime 1");
+        let out_2 = task_2.await.expect("join 2").expect("runtime 2");
+        assert_eq!(out_1, RuntimeDisposition::ExecuteMainline);
+        assert_eq!(out_2, RuntimeDisposition::ExecuteMainline);
     }
 
     #[tokio::test]
@@ -1012,6 +1172,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn uncertain_ask_requires_approval_before_quarantine() {
+        let segments = vec![CommandSegment {
+            argv: vec!["weird-shell-construct".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, event_log) = mk_runtime(
+            CommandKnowledge::Uncertain,
+            segments,
+            CommandKnowledge::Uncertain,
+            PolicyDecisionKind::Allow,
+        );
+
+        let runtime_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_shell(ShellRunRequest {
+                        run_id: RunId("run-1".to_string()),
+                        cwd: "/tmp".to_string(),
+                        script: "weird-shell-construct".to_string(),
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Ask,
+                    })
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        assert_eq!(requested.blocked_rule_id, "uncertain_command_mode");
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id,
+                run_id: RunId("run-1".to_string()),
+                action: ApprovalAction::ApproveOnce,
+                created_at_ms: 2000,
+            })
+            .expect("resolve approval");
+
+        let disposition = runtime_task.await.expect("task join").expect("runtime ok");
+        assert!(matches!(
+            disposition,
+            RuntimeDisposition::ExecuteQuarantine(_)
+        ));
+
+        let events = event_log.snapshot();
+        assert!(matches!(events[0], RuntimeEvent::ApprovalRequested(_)));
+        assert!(matches!(events[1], RuntimeEvent::ApprovalResolved(_)));
+        assert!(matches!(events[2], RuntimeEvent::QuarantineCompleted(_)));
+    }
+
+    #[tokio::test]
     async fn endorse_request_lifecycle_uses_approval_flow() {
         let segments = vec![CommandSegment {
             argv: vec!["echo".to_string()],
@@ -1059,6 +1271,55 @@ mod tests {
         let events = event_log.snapshot();
         assert!(matches!(events[0], RuntimeEvent::ApprovalRequested(_)));
         assert!(matches!(events[1], RuntimeEvent::ApprovalResolved(_)));
+    }
+
+    #[tokio::test]
+    async fn endorse_request_deny_path_records_resolution() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+
+        let runtime_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .request_endorse_approval(
+                        RunId("run-1".to_string()),
+                        EndorseRequest {
+                            value_ref: ValueRef("v123".to_string()),
+                            target_integrity: sieve_types::Integrity::Trusted,
+                            reason: None,
+                        },
+                    )
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id,
+                run_id: RunId("run-1".to_string()),
+                action: ApprovalAction::Deny,
+                created_at_ms: 2000,
+            })
+            .expect("resolve approval");
+
+        let action = runtime_task.await.expect("task join").expect("runtime ok");
+        assert_eq!(action, ApprovalAction::Deny);
+        let events = event_log.snapshot();
+        match &events[1] {
+            RuntimeEvent::ApprovalResolved(e) => assert_eq!(e.action, ApprovalAction::Deny),
+            _ => panic!("expected approval resolved"),
+        }
     }
 
     #[tokio::test]
@@ -1113,6 +1374,56 @@ mod tests {
         let events = event_log.snapshot();
         assert!(matches!(events[0], RuntimeEvent::ApprovalRequested(_)));
         assert!(matches!(events[1], RuntimeEvent::ApprovalResolved(_)));
+    }
+
+    #[tokio::test]
+    async fn declassify_request_deny_path_records_resolution() {
+        let segments = vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            segments,
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+
+        let runtime_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .request_declassify_approval(
+                        RunId("run-1".to_string()),
+                        DeclassifyRequest {
+                            value_ref: ValueRef("v456".to_string()),
+                            sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                            reason: None,
+                        },
+                    )
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id,
+                run_id: RunId("run-1".to_string()),
+                action: ApprovalAction::Deny,
+                created_at_ms: 2000,
+            })
+            .expect("resolve approval");
+
+        let action = runtime_task.await.expect("task join").expect("runtime ok");
+        assert_eq!(action, ApprovalAction::Deny);
+        let events = event_log.snapshot();
+        assert!(matches!(events[0], RuntimeEvent::ApprovalRequested(_)));
+        match &events[1] {
+            RuntimeEvent::ApprovalResolved(e) => assert_eq!(e.action, ApprovalAction::Deny),
+            _ => panic!("expected approval resolved"),
+        }
     }
 
     #[tokio::test]
