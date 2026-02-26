@@ -578,7 +578,11 @@ fn extract_syscall_result_number(line: &str) -> Option<i64> {
     let start = line.find(marker)? + marker.len();
     let token = line[start..].trim_start().split_whitespace().next()?;
     let value = token.parse::<i64>().ok()?;
-    if value > 0 { Some(value) } else { None }
+    if value > 0 {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 fn write_report_json(
@@ -894,10 +898,9 @@ mod tests {
 
     #[test]
     fn parse_trace_line_infers_process_spawn_and_env_access() {
-        let clone = parse_trace_line(
-            "clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|SIGCHLD) = 4321",
-        )
-        .expect("clone capability");
+        let clone =
+            parse_trace_line("clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|SIGCHLD) = 4321")
+                .expect("clone capability");
         assert_eq!(
             clone,
             Capability {
@@ -917,10 +920,9 @@ mod tests {
             }
         );
 
-        let env_read = parse_trace_line(
-            "openat(AT_FDCWD, \"/proc/self/environ\", O_RDONLY|O_CLOEXEC) = 3",
-        )
-        .expect("env read capability");
+        let env_read =
+            parse_trace_line("openat(AT_FDCWD, \"/proc/self/environ\", O_RDONLY|O_CLOEXEC) = 3")
+                .expect("env read capability");
         assert_eq!(
             env_read,
             Capability {

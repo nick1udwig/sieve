@@ -2944,9 +2944,11 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sieve-tool-contracts",
  "sieve-types",
  "thiserror 1.0.69",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -2980,6 +2982,7 @@ dependencies = [
  "sieve-policy",
  "sieve-quarantine",
  "sieve-shell",
+ "sieve-tool-contracts",
  "sieve-types",
  "thiserror 1.0.69",
  "tokio",
@@ -2991,6 +2994,19 @@ version = "0.1.0"
 dependencies = [
  "sieve-types",
  "thiserror 1.0.69",
+ "tree-sitter",
+ "tree-sitter-bash",
+]
+
+[[package]]
+name = "sieve-tool-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sieve-types",
+ "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]
