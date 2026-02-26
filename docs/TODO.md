@@ -21,10 +21,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `J` Telegram Adapter Finalization
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk J](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-j-telegram-adapter-finalization)
-
 ## Done
+
+- [x] `J` Telegram Adapter Finalization
+: Owner: `codex` | Branch: `master` | PR: `854d338, 222505e` | Plan: [Chunk J](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-j-telegram-adapter-finalization)
 
 - [x] `I` Runtime End-to-End Planner Loop
 : Owner: `codex` | Branch: `master` | PR: `64083ae, 9d50794` | Plan: [Chunk I](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-i-runtime-end-to-end-planner-loop)
