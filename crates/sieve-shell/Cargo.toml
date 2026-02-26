@@ -7,3 +7,5 @@ version.workspace = true
 [dependencies]
 sieve-types = { path = "../sieve-types" }
 thiserror.workspace = true
+tree-sitter = "0.25.10"
+tree-sitter-bash = "0.25.1"
