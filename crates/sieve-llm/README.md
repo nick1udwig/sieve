@@ -19,6 +19,8 @@ Quarantine config env:
 ## Guarantees
 
 - Planner input boundary: only trusted user message + constrained metadata shape.
+- Planner tool-call args validated against strict per-tool contracts (`bash|endorse|declassify`).
+- On planner tool-arg contract failure, one regeneration pass is attempted with structured diagnostics.
 - Quarantine output boundary: typed only (`bool | int | float | enum`).
 - Enum output validated against provided compile-time registry map.
 

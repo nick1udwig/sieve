@@ -58,7 +58,9 @@ Implemented real OpenAI-backed planner and quarantine adapters under provider ab
 
 ## Remaining TODOs (Within/Adjacent to Worker 6)
 
-- Optional hardening: planner output schema currently allows arbitrary `args` object; can tighten per-tool once runtime tool arg contracts are fixed centrally.
+- Chunk C done: planner output schema now enforces per-tool argument shapes.
+- Chunk C done: decode path returns structured tool-contract diagnostics with tool-call index and recoverable source spans.
+- Chunk C done: OpenAI planner path retries exactly once on tool-arg validation failure, then hard-fails with diagnostic payload.
 - Optional coverage: add deterministic mocked transport tests for retry backoff behavior (current tests focus on boundary/decode + env-gated live paths).
 - Optional docs: add planner-specific example alongside quarantine example if desired for operator onboarding.
 

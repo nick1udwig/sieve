@@ -1,9 +1,12 @@
 use crate::LlmError;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+use sieve_tool_contracts::{
+    planner_turn_output_schema as strict_planner_turn_output_schema, validate_at_index,
+};
 use sieve_types::{
     PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, QuarantineExtractOutput, RuntimeEvent,
-    TypedValue,
+    SourceSpan, ToolContractValidationReport, TypedValue, TOOL_CONTRACTS_VERSION_V1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,27 +23,13 @@ Never output free-form strings.
 If enum requested, use only provided registry and variants.
 Return JSON only matching schema."#;
 
+pub(crate) enum PlannerDecodeOutcome {
+    Valid(PlannerTurnOutput),
+    InvalidToolContracts(ToolContractValidationReport),
+}
+
 pub(crate) fn planner_output_schema() -> Value {
-    json!({
-        "type":"object",
-        "additionalProperties": false,
-        "properties": {
-            "thoughts": { "type": ["string", "null"] },
-            "tool_calls": {
-                "type":"array",
-                "items": {
-                    "type":"object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "tool_name": {"type":"string"},
-                        "args": {"type":"object","additionalProperties": true}
-                    },
-                    "required":["tool_name","args"]
-                }
-            }
-        },
-        "required":["thoughts","tool_calls"]
-    })
+    strict_planner_turn_output_schema()
 }
 
 pub(crate) fn quarantine_output_schema() -> Value {
@@ -148,6 +137,22 @@ pub(crate) fn extract_openai_message_content_json(response: &Value) -> Result<Va
         .map_err(|e| LlmError::Decode(format!("content is not valid JSON object: {e}")))
 }
 
+pub(crate) fn planner_regeneration_diagnostic_prompt(
+    report: &ToolContractValidationReport,
+) -> Result<String, LlmError> {
+    let diagnostics = serde_json::to_string_pretty(report).map_err(|e| {
+        LlmError::Decode(format!(
+            "failed to serialize tool-contract diagnostics for regeneration: {e}"
+        ))
+    })?;
+
+    Ok(format!(
+        "Your previous planner output violated strict tool argument contracts. \
+Regenerate the full planner_turn_output JSON and fix every diagnostic below. \
+Return JSON only.\n\nDiagnostics:\n{diagnostics}"
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 struct PlannerTurnOutputWire {
     thoughts: Option<String>,
@@ -158,26 +163,116 @@ struct PlannerTurnOutputWire {
 struct PlannerToolCallWire {
     tool_name: String,
     #[serde(default)]
-    args: BTreeMap<String, Value>,
+    args: Map<String, Value>,
 }
 
-pub(crate) fn decode_planner_output(content_json: Value) -> Result<PlannerTurnOutput, LlmError> {
-    let decoded: PlannerTurnOutputWire = serde_json::from_value(content_json)
+pub(crate) fn decode_planner_output(content_json: Value) -> Result<PlannerDecodeOutcome, LlmError> {
+    let decoded: PlannerTurnOutputWire = serde_json::from_value(content_json.clone())
         .map_err(|e| LlmError::Decode(format!("invalid planner output payload: {e}")))?;
 
-    let tool_calls = decoded
-        .tool_calls
-        .into_iter()
-        .map(|tool| PlannerToolCall {
-            tool_name: tool.tool_name,
-            args: tool.args,
-        })
-        .collect();
+    let mut tool_calls = Vec::with_capacity(decoded.tool_calls.len());
+    let mut errors = Vec::new();
 
-    Ok(PlannerTurnOutput {
+    for (idx, tool) in decoded.tool_calls.into_iter().enumerate() {
+        let args_value = Value::Object(tool.args.clone());
+        if let Err(err) = validate_at_index(idx, &tool.tool_name, &args_value) {
+            let mut diagnostic = err.as_validation_error();
+            diagnostic.span = recover_contract_span(&content_json, idx, &diagnostic.argument_path);
+            errors.push(diagnostic);
+        }
+
+        tool_calls.push(PlannerToolCall {
+            tool_name: tool.tool_name,
+            args: tool.args.into_iter().collect(),
+        });
+    }
+
+    if !errors.is_empty() {
+        return Ok(PlannerDecodeOutcome::InvalidToolContracts(
+            ToolContractValidationReport {
+                contract_version: TOOL_CONTRACTS_VERSION_V1,
+                errors,
+            },
+        ));
+    }
+
+    Ok(PlannerDecodeOutcome::Valid(PlannerTurnOutput {
         thoughts: decoded.thoughts,
         tool_calls,
+    }))
+}
+
+fn recover_contract_span(
+    root: &Value,
+    tool_call_index: usize,
+    argument_path: &str,
+) -> Option<SourceSpan> {
+    let tool_calls = root.pointer("/tool_calls")?.as_array()?;
+    let target_call = tool_calls.get(tool_call_index)?;
+
+    let source = serde_json::to_string(root).ok()?;
+    let (call_start, call_source) =
+        locate_tool_call_minified(&source, tool_calls, tool_call_index)?;
+
+    let (value_start, value_end_exclusive) =
+        locate_argument_value_range(&call_source, target_call, argument_path)?;
+
+    Some(SourceSpan {
+        line: 1,
+        column: (call_start + value_start + 1) as u32,
+        end_line: 1,
+        end_column: (call_start + value_end_exclusive + 1) as u32,
     })
+}
+
+fn locate_tool_call_minified(
+    source: &str,
+    tool_calls: &[Value],
+    target_index: usize,
+) -> Option<(usize, String)> {
+    let mut cursor = 0usize;
+    for (idx, call) in tool_calls.iter().enumerate() {
+        let call_source = serde_json::to_string(call).ok()?;
+        let rel = source.get(cursor..)?.find(&call_source)?;
+        let start = cursor + rel;
+        if idx == target_index {
+            return Some((start, call_source));
+        }
+        cursor = start + call_source.len();
+    }
+    None
+}
+
+fn locate_argument_value_range(
+    call_source: &str,
+    target_call: &Value,
+    argument_path: &str,
+) -> Option<(usize, usize)> {
+    let args_value = target_call.pointer("/args")?;
+
+    if argument_path == "/" {
+        let args_source = serde_json::to_string(args_value).ok()?;
+        let pattern = format!("\"args\":{args_source}");
+        let offset = call_source.find(&pattern)?;
+        let value_start = offset + "\"args\":".len();
+        let value_end = value_start + args_source.len();
+        return Some((value_start, value_end));
+    }
+
+    let key = argument_path.strip_prefix('/')?;
+    if key.is_empty() {
+        return None;
+    }
+
+    let args_object = args_value.as_object()?;
+    let field_value = args_object.get(key)?;
+    let key_source = serde_json::to_string(key).ok()?;
+    let value_source = serde_json::to_string(field_value).ok()?;
+    let pattern = format!("{key_source}:{value_source}");
+    let offset = call_source.find(&pattern)?;
+    let value_start = offset + key_source.len() + 1;
+    let value_end = value_start + value_source.len();
+    Some((value_start, value_end))
 }
 
 pub(crate) fn decode_quarantine_output(

@@ -3,8 +3,8 @@ use crate::config::{
 };
 use crate::wire::{
     decode_planner_output, decode_quarantine_output, extract_openai_message_content_json,
-    planner_output_schema, quarantine_output_schema, serialize_planner_input,
-    PLANNER_SYSTEM_PROMPT, QUARANTINE_SYSTEM_PROMPT,
+    planner_output_schema, planner_regeneration_diagnostic_prompt, quarantine_output_schema,
+    serialize_planner_input, PlannerDecodeOutcome, PLANNER_SYSTEM_PROMPT, QUARANTINE_SYSTEM_PROMPT,
 };
 use crate::{LlmError, PlannerModel, QuarantineModel};
 use async_trait::async_trait;
@@ -12,8 +12,9 @@ use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use sieve_types::{
     LlmModelConfig, PlannerTurnInput, PlannerTurnOutput, QuarantineExtractInput,
-    QuarantineExtractOutput,
+    QuarantineExtractOutput, ToolContractValidationReport,
 };
+use std::future::Future;
 use std::time::Duration;
 
 const OPENAI_DEFAULT_API_BASE: &str = "https://api.openai.com";
@@ -134,39 +135,18 @@ impl PlannerModel for OpenAiPlannerModel {
 
     async fn plan_turn(&self, input: PlannerTurnInput) -> Result<PlannerTurnOutput, LlmError> {
         let planner_payload = serialize_planner_input(&input)?;
-        let request = json!({
-            "model": self.config.model,
-            "temperature": 0,
-            "messages": [
-                {"role":"system","content": PLANNER_SYSTEM_PROMPT},
-                {"role":"user","content": planner_payload.to_string()}
-            ],
-            "response_format": {
-                "type":"json_schema",
-                "json_schema": {
-                    "name":"planner_turn_output",
-                    "strict": true,
-                    "schema": planner_output_schema()
-                }
-            }
-        });
+        let messages = vec![
+            json!({"role":"system","content": PLANNER_SYSTEM_PROMPT}),
+            json!({"role":"user","content": planner_payload.to_string()}),
+        ];
 
-        let response = self.client.create_chat_completion(request).await?;
-        let content_json = extract_openai_message_content_json(&response)?;
-        let output = decode_planner_output(content_json)?;
-        for call in &output.tool_calls {
-            if !input
-                .allowed_tools
-                .iter()
-                .any(|allowed| allowed == &call.tool_name)
-            {
-                return Err(LlmError::Boundary(format!(
-                    "planner emitted disallowed tool `{}`",
-                    call.tool_name
-                )));
-            }
-        }
-        Ok(output)
+        run_planner_with_one_regeneration(
+            self.config.model.as_str(),
+            messages,
+            &input.allowed_tools,
+            |request| self.client.create_chat_completion(request),
+        )
+        .await
     }
 }
 
@@ -231,6 +211,82 @@ impl QuarantineModel for OpenAiQuarantineModel {
     }
 }
 
+async fn run_planner_with_one_regeneration<F, Fut>(
+    model: &str,
+    mut messages: Vec<Value>,
+    allowed_tools: &[String],
+    mut send_request: F,
+) -> Result<PlannerTurnOutput, LlmError>
+where
+    F: FnMut(Value) -> Fut,
+    Fut: Future<Output = Result<Value, LlmError>>,
+{
+    let mut regenerated = false;
+
+    loop {
+        let request = planner_chat_completion_request(model, messages.clone());
+        let response = send_request(request).await?;
+        let content_json = extract_openai_message_content_json(&response)?;
+
+        match decode_planner_output(content_json)? {
+            PlannerDecodeOutcome::Valid(output) => {
+                ensure_allowed_tools(allowed_tools, &output)?;
+                return Ok(output);
+            }
+            PlannerDecodeOutcome::InvalidToolContracts(report) => {
+                if regenerated {
+                    return Err(regeneration_exhausted_error(report));
+                }
+                regenerated = true;
+                let prompt = planner_regeneration_diagnostic_prompt(&report)?;
+                messages.push(json!({"role":"user","content": prompt}));
+            }
+        }
+    }
+}
+
+fn planner_chat_completion_request(model: &str, messages: Vec<Value>) -> Value {
+    json!({
+        "model": model,
+        "temperature": 0,
+        "messages": messages,
+        "response_format": {
+            "type":"json_schema",
+            "json_schema": {
+                "name":"planner_turn_output",
+                "strict": true,
+                "schema": planner_output_schema()
+            }
+        }
+    })
+}
+
+fn ensure_allowed_tools(
+    allowed_tools: &[String],
+    output: &PlannerTurnOutput,
+) -> Result<(), LlmError> {
+    for call in &output.tool_calls {
+        if !allowed_tools
+            .iter()
+            .any(|allowed| allowed == &call.tool_name)
+        {
+            return Err(LlmError::Boundary(format!(
+                "planner emitted disallowed tool `{}`",
+                call.tool_name
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn regeneration_exhausted_error(report: ToolContractValidationReport) -> LlmError {
+    let serialized = serde_json::to_string(&report)
+        .unwrap_or_else(|_| "{\"serialization\":\"failed\"}".to_string());
+    LlmError::Boundary(format!(
+        "planner emitted invalid tool args after one regeneration pass: {serialized}"
+    ))
+}
+
 fn is_transient_status(status: StatusCode) -> bool {
     matches!(
         status,
@@ -254,5 +310,127 @@ fn truncate_for_error(input: &str) -> String {
         input.to_string()
     } else {
         format!("{}...[truncated]", &input[..MAX])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    fn planner_response(content: Value) -> Value {
+        json!({
+            "choices": [
+                {
+                    "message": {
+                        "content": content.to_string()
+                    }
+                }
+            ]
+        })
+    }
+
+    #[tokio::test]
+    async fn planner_regenerates_once_then_succeeds() {
+        let responses = Arc::new(Mutex::new(VecDeque::from(vec![
+            planner_response(json!({
+                "thoughts": null,
+                "tool_calls": [
+                    {"tool_name":"bash","args":{"cmd":123}}
+                ]
+            })),
+            planner_response(json!({
+                "thoughts": null,
+                "tool_calls": [
+                    {"tool_name":"bash","args":{"cmd":"ls -la"}}
+                ]
+            })),
+        ])));
+        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+
+        let output = run_planner_with_one_regeneration(
+            "gpt-test",
+            vec![
+                json!({"role":"system","content":"sys"}),
+                json!({"role":"user","content":"input"}),
+            ],
+            &["bash".to_string()],
+            {
+                let responses = responses.clone();
+                let requests = requests.clone();
+                move |request| {
+                    requests.lock().expect("request lock").push(request);
+                    let response = responses
+                        .lock()
+                        .expect("response lock")
+                        .pop_front()
+                        .expect("mock response");
+                    async move { Ok(response) }
+                }
+            },
+        )
+        .await
+        .expect("regeneration should recover");
+
+        assert_eq!(output.tool_calls.len(), 1);
+        assert_eq!(output.tool_calls[0].tool_name, "bash");
+        assert_eq!(output.tool_calls[0].args.get("cmd"), Some(&json!("ls -la")));
+
+        let requests = requests.lock().expect("request lock");
+        assert_eq!(requests.len(), 2);
+        let retry_prompt = requests[1]
+            .pointer("/messages/2/content")
+            .and_then(Value::as_str)
+            .expect("retry diagnostic prompt");
+        assert!(retry_prompt.contains("tool_call_index"));
+        assert!(retry_prompt.contains("Diagnostics"));
+    }
+
+    #[tokio::test]
+    async fn planner_fails_after_one_regeneration_pass() {
+        let responses = Arc::new(Mutex::new(VecDeque::from(vec![
+            planner_response(json!({
+                "thoughts": null,
+                "tool_calls": [
+                    {"tool_name":"bash","args":{"cmd":123}}
+                ]
+            })),
+            planner_response(json!({
+                "thoughts": null,
+                "tool_calls": [
+                    {"tool_name":"bash","args":{"cmd":456}}
+                ]
+            })),
+        ])));
+
+        let err = run_planner_with_one_regeneration(
+            "gpt-test",
+            vec![
+                json!({"role":"system","content":"sys"}),
+                json!({"role":"user","content":"input"}),
+            ],
+            &["bash".to_string()],
+            {
+                let responses = responses.clone();
+                move |_request| {
+                    let response = responses
+                        .lock()
+                        .expect("response lock")
+                        .pop_front()
+                        .expect("mock response");
+                    async move { Ok(response) }
+                }
+            },
+        )
+        .await
+        .expect_err("second validation failure should hard-fail");
+
+        match err {
+            LlmError::Boundary(message) => {
+                assert!(message.contains("after one regeneration pass"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

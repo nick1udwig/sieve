@@ -1,11 +1,13 @@
 use crate::config::load_model_config_from_env;
-use crate::wire::{decode_planner_output, decode_quarantine_output, serialize_planner_input};
+use crate::wire::{
+    decode_planner_output, decode_quarantine_output, serialize_planner_input, PlannerDecodeOutcome,
+};
 use crate::{LlmError, OpenAiPlannerModel, OpenAiQuarantineModel, PlannerModel, QuarantineModel};
 use serde_json::json;
 use sieve_types::{
     Action, Capability, LlmModelConfig, LlmProvider, PlannerTurnInput, PolicyDecision,
     PolicyDecisionKind, PolicyEvaluatedEvent, QuarantineExtractInput, Resource, RunId,
-    RuntimeEvent, TypedValue,
+    RuntimeEvent, TypedValue, TOOL_CONTRACTS_VERSION_V1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -115,9 +117,38 @@ fn decode_planner_output_parses_tool_args() {
         ]
     });
     let out = decode_planner_output(raw).unwrap();
-    assert_eq!(out.tool_calls.len(), 1);
-    assert_eq!(out.tool_calls[0].tool_name, "bash");
-    assert_eq!(out.tool_calls[0].args["cmd"], json!("ls -la"));
+    match out {
+        PlannerDecodeOutcome::Valid(out) => {
+            assert_eq!(out.tool_calls.len(), 1);
+            assert_eq!(out.tool_calls[0].tool_name, "bash");
+            assert_eq!(out.tool_calls[0].args["cmd"], json!("ls -la"));
+        }
+        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
+    }
+}
+
+#[test]
+fn decode_planner_output_returns_diagnostics_for_contract_failure() {
+    let raw = json!({
+        "thoughts": null,
+        "tool_calls": [
+            {"tool_name":"bash","args":{"cmd":123}}
+        ]
+    });
+    let out = decode_planner_output(raw).unwrap();
+    let report = match out {
+        PlannerDecodeOutcome::InvalidToolContracts(report) => report,
+        PlannerDecodeOutcome::Valid(_) => panic!("expected tool-contract diagnostics"),
+    };
+
+    assert_eq!(report.contract_version, TOOL_CONTRACTS_VERSION_V1);
+    assert_eq!(report.errors.len(), 1);
+    let err = &report.errors[0];
+    assert_eq!(err.tool_call_index, 0);
+    assert_eq!(err.tool_name, "bash");
+    assert_eq!(err.argument_path, "/cmd");
+    assert!(err.hint.is_some());
+    assert!(err.span.is_some());
 }
 
 #[tokio::test]
