@@ -1,6 +1,6 @@
 use crate::config::load_model_config_from_env;
 use crate::wire::{decode_planner_output, decode_quarantine_output, serialize_planner_input};
-use crate::{LlmError, OpenAiQuarantineModel, QuarantineModel};
+use crate::{LlmError, OpenAiPlannerModel, OpenAiQuarantineModel, PlannerModel, QuarantineModel};
 use serde_json::json;
 use sieve_types::{
     Action, Capability, LlmModelConfig, LlmProvider, PlannerTurnInput, PolicyDecision,
@@ -150,4 +150,38 @@ async fn openai_live_quarantine_smoke_env_gated() {
     };
     let out = model.extract_typed(input).await.unwrap();
     assert_eq!(out.value, TypedValue::Bool(true));
+}
+
+#[tokio::test]
+async fn openai_live_planner_smoke_env_gated() {
+    if env::var("SIEVE_RUN_OPENAI_LIVE").ok().as_deref() != Some("1") {
+        return;
+    }
+
+    let api_key = match env::var("OPENAI_API_KEY") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => return,
+    };
+
+    let model_name = env::var("SIEVE_PLANNER_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let model = OpenAiPlannerModel::new(
+        LlmModelConfig {
+            provider: LlmProvider::OpenAi,
+            model: model_name,
+            api_base: env::var("SIEVE_PLANNER_API_BASE").ok(),
+        },
+        api_key,
+    )
+    .unwrap();
+
+    let out = model
+        .plan_turn(PlannerTurnInput {
+            run_id: RunId("live-planner".to_string()),
+            user_message: "Use bash to print hello world.".to_string(),
+            allowed_tools: vec!["bash".to_string()],
+            previous_events: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(out.tool_calls.iter().all(|c| c.tool_name == "bash"));
 }
