@@ -13,6 +13,7 @@ use std::process::{Command, Output};
 use thiserror::Error;
 
 const DEFAULT_TRACE_ROOT_REL: &str = ".sieve/logs/traces";
+const REPORT_FILE_NAME: &str = "report.json";
 
 #[derive(Debug, Error)]
 pub enum QuarantineRunError {
@@ -102,15 +103,17 @@ impl BwrapQuarantineRunner {
             )));
         }
         let attempted_capabilities = parse_trace_capabilities(&trace_files)?;
-
-        Ok(QuarantineReport {
+        let report = QuarantineReport {
             run_id: request.run_id,
             trace_path: run_dir.to_string_lossy().to_string(),
             stdout_path: Some(stdout_path.to_string_lossy().to_string()),
             stderr_path: Some(stderr_path.to_string_lossy().to_string()),
             attempted_capabilities,
             exit_code: output.status.code(),
-        })
+        };
+        write_report_json(&run_dir, &trace_files, &report)?;
+
+        Ok(report)
     }
 
     fn execute_quarantine(
@@ -314,32 +317,92 @@ fn parse_trace_line(line: &str) -> Option<Capability> {
         });
     }
 
-    if line.contains("connect(") {
-        if line.contains("AF_UNIX") {
-            let scope =
-                extract_named_quoted(line, "sun_path=").or_else(|| extract_first_quoted(line))?;
-            return Some(Capability {
-                resource: Resource::Ipc,
-                action: Action::Connect,
-                scope,
-            });
-        }
-
-        if line.contains("AF_INET") || line.contains("AF_INET6") {
-            let address = extract_named_quoted(line, "inet_addr(")
-                .or_else(|| extract_named_quoted(line, "inet_pton(AF_INET6,"))
-                .or_else(|| extract_first_quoted(line))
-                .unwrap_or_else(|| "unknown".to_string());
-            let port = extract_port(line).unwrap_or(0);
-            return Some(Capability {
-                resource: Resource::Net,
-                action: Action::Connect,
-                scope: format!("{address}:{port}"),
-            });
-        }
+    if let Some(capability) = parse_connect_capability(line) {
+        return Some(capability);
     }
 
     None
+}
+
+fn parse_connect_capability(line: &str) -> Option<Capability> {
+    if !is_connect_related_call(line) {
+        return None;
+    }
+
+    if line.contains("AF_UNIX") {
+        let path = extract_named_quoted(line, "sun_path=")
+            .or_else(|| extract_named_quoted(line, "path="))
+            .unwrap_or_else(|| "unknown".to_string());
+        return Some(Capability {
+            resource: Resource::Ipc,
+            action: Action::Connect,
+            scope: format!("family=af_unix,path={}", normalize_scope_value(&path)),
+        });
+    }
+
+    if line.contains("AF_INET6") {
+        let address = extract_named_quoted(line, "inet_pton(AF_INET6,")
+            .or_else(|| extract_named_quoted(line, "sin6_addr=inet_pton(AF_INET6,"))
+            .or_else(|| extract_first_quoted(line))
+            .unwrap_or_else(|| "unknown".to_string());
+        let port = extract_port(line).unwrap_or(0);
+        return Some(Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: format!(
+                "family=af_inet6,address={},port={port}",
+                normalize_scope_value(&address)
+            ),
+        });
+    }
+
+    if line.contains("AF_INET") {
+        let address = extract_named_quoted(line, "inet_addr(")
+            .or_else(|| extract_named_quoted(line, "sin_addr=inet_addr("))
+            .or_else(|| extract_first_quoted(line))
+            .unwrap_or_else(|| "unknown".to_string());
+        let port = extract_port(line).unwrap_or(0);
+        return Some(Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: format!(
+                "family=af_inet,address={},port={port}",
+                normalize_scope_value(&address)
+            ),
+        });
+    }
+
+    Some(Capability {
+        resource: Resource::Net,
+        action: Action::Connect,
+        scope: "family=unknown,address=unknown,port=0".to_string(),
+    })
+}
+
+fn is_connect_related_call(line: &str) -> bool {
+    [
+        "connect(",
+        "socket(",
+        "sendto(",
+        "sendmsg(",
+        "recvfrom(",
+        "recvmsg(",
+        "bind(",
+        "listen(",
+        "accept(",
+        "accept4(",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle))
+}
+
+fn normalize_scope_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "unknown".to_string();
+    }
+
+    trimmed.replace(',', "%2C")
 }
 
 fn is_open_family(line: &str) -> bool {
@@ -410,11 +473,145 @@ fn extract_named_quoted(input: &str, marker: &str) -> Option<String> {
 }
 
 fn extract_port(line: &str) -> Option<u16> {
-    let marker = "htons(";
+    extract_numeric_wrapped(line, "htons(", ')')
+        .or_else(|| extract_numeric_after(line, "sin_port="))
+        .or_else(|| extract_numeric_after(line, "sin6_port="))
+}
+
+fn extract_numeric_wrapped(line: &str, marker: &str, terminator: char) -> Option<u16> {
     let start = line.find(marker)? + marker.len();
     let tail = &line[start..];
-    let end = tail.find(')')?;
+    let end = tail.find(terminator)?;
     tail[..end].trim().parse::<u16>().ok()
+}
+
+fn extract_numeric_after(line: &str, marker: &str) -> Option<u16> {
+    let start = line.find(marker)? + marker.len();
+    let tail = &line[start..];
+    let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<u16>().ok()
+}
+
+fn write_report_json(
+    run_dir: &Path,
+    trace_files: &[PathBuf],
+    report: &QuarantineReport,
+) -> Result<(), QuarantineRunError> {
+    let mut json = String::new();
+    json.push_str("{\n");
+    json.push_str(&format!("  \"run_id\": {},\n", json_string(&report.run_id.0)));
+    json.push_str(&format!(
+        "  \"trace_path\": {},\n",
+        json_string(&report.trace_path)
+    ));
+    json.push_str(&format!(
+        "  \"stdout_path\": {},\n",
+        json_optional_string(report.stdout_path.as_deref())
+    ));
+    json.push_str(&format!(
+        "  \"stderr_path\": {},\n",
+        json_optional_string(report.stderr_path.as_deref())
+    ));
+
+    json.push_str("  \"trace_files\": [");
+    if trace_files.is_empty() {
+        json.push_str("],\n");
+    } else {
+        json.push('\n');
+        for (index, trace_file) in trace_files.iter().enumerate() {
+            let comma = if index + 1 < trace_files.len() { "," } else { "" };
+            let trace_file = trace_file.to_string_lossy();
+            json.push_str(&format!("    {}{comma}\n", json_string(&trace_file)));
+        }
+        json.push_str("  ],\n");
+    }
+
+    json.push_str("  \"attempted_capabilities\": [");
+    if report.attempted_capabilities.is_empty() {
+        json.push_str("],\n");
+    } else {
+        json.push('\n');
+        for (index, capability) in report.attempted_capabilities.iter().enumerate() {
+            let comma = if index + 1 < report.attempted_capabilities.len() {
+                ","
+            } else {
+                ""
+            };
+            json.push_str("    {\n");
+            json.push_str(&format!(
+                "      \"resource\": {},\n",
+                json_string(resource_name(capability.resource))
+            ));
+            json.push_str(&format!(
+                "      \"action\": {},\n",
+                json_string(action_name(capability.action))
+            ));
+            json.push_str(&format!(
+                "      \"scope\": {}\n",
+                json_string(&capability.scope)
+            ));
+            json.push_str(&format!("    }}{comma}\n"));
+        }
+        json.push_str("  ],\n");
+    }
+
+    json.push_str(&format!(
+        "  \"exit_code\": {}\n",
+        report
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "null".to_string())
+    ));
+    json.push_str("}\n");
+
+    fs::write(run_dir.join(REPORT_FILE_NAME), json).map_err(io_err)
+}
+
+fn json_string(value: &str) -> String {
+    format!("\"{}\"", json_escape(value))
+}
+
+fn json_optional_string(value: Option<&str>) -> String {
+    value.map(json_string).unwrap_or_else(|| "null".to_string())
+}
+
+fn json_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            c if c.is_control() => escaped.push_str(&format!("\\u{:04x}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+fn resource_name(resource: Resource) -> &'static str {
+    match resource {
+        Resource::Fs => "fs",
+        Resource::Net => "net",
+        Resource::Proc => "proc",
+        Resource::Env => "env",
+        Resource::Ipc => "ipc",
+    }
+}
+
+fn action_name(action: Action) -> &'static str {
+    match action {
+        Action::Read => "read",
+        Action::Write => "write",
+        Action::Append => "append",
+        Action::Exec => "exec",
+        Action::Connect => "connect",
+    }
 }
 
 fn resource_order(resource: Resource) -> u8 {
@@ -533,7 +730,7 @@ mod tests {
                 Capability {
                     resource: Resource::Net,
                     action: Action::Connect,
-                    scope: "1.2.3.4:443".to_string(),
+                    scope: "family=af_inet,address=1.2.3.4,port=443".to_string(),
                 },
                 Capability {
                     resource: Resource::Proc,
@@ -543,12 +740,63 @@ mod tests {
                 Capability {
                     resource: Resource::Ipc,
                     action: Action::Connect,
-                    scope: "/tmp/socket".to_string(),
+                    scope: "family=af_unix,path=/tmp/socket".to_string(),
                 },
             ]
         );
 
         fs::remove_dir_all(&run_dir).expect("cleanup");
+    }
+
+    #[test]
+    fn parse_trace_line_normalizes_connect_families_and_unknowns() {
+        let ipv6 = parse_trace_line(
+            "connect(3, {sa_family=AF_INET6, sin6_port=htons(443), sin6_addr=inet_pton(AF_INET6, \"2001:db8::1\")}, 28) = 0",
+        )
+        .expect("ipv6 capability");
+        assert_eq!(
+            ipv6,
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "family=af_inet6,address=2001:db8::1,port=443".to_string(),
+            }
+        );
+
+        let unix = parse_trace_line("socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 3")
+            .expect("unix capability");
+        assert_eq!(
+            unix,
+            Capability {
+                resource: Resource::Ipc,
+                action: Action::Connect,
+                scope: "family=af_unix,path=unknown".to_string(),
+            }
+        );
+
+        let sendto = parse_trace_line(
+            "sendto(3, \"x\", 1, 0, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr(\"8.8.8.8\")}, 16) = 1",
+        )
+        .expect("sendto capability");
+        assert_eq!(
+            sendto,
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "family=af_inet,address=8.8.8.8,port=53".to_string(),
+            }
+        );
+
+        let unknown = parse_trace_line("connect(3, {sa_family=AF_BLUETOOTH}, 16) = -1")
+            .expect("unknown fallback capability");
+        assert_eq!(
+            unknown,
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "family=unknown,address=unknown,port=0".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -621,6 +869,15 @@ mod tests {
                 scope: "/bin/echo".to_string(),
             }]
         );
+
+        let report_json_path = PathBuf::from(&report.trace_path).join(REPORT_FILE_NAME);
+        let report_json = fs::read_to_string(report_json_path).expect("report json");
+        assert!(report_json.contains("\"run_id\": \"run-fake\""));
+        assert!(report_json.contains("\"trace_files\": ["));
+        assert!(report_json.contains("strace.123"));
+        assert!(report_json.contains("\"attempted_capabilities\": ["));
+        assert!(report_json.contains("\"resource\": \"proc\""));
+        assert!(report_json.contains("\"action\": \"exec\""));
 
         fs::remove_dir_all(&root).expect("cleanup");
     }

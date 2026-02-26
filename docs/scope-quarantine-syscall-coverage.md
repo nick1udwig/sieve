@@ -30,6 +30,19 @@ In MVP, unknown/uncertain accepted commands run in quarantine. We capture attemp
   - `AF_INET/AF_INET6` -> `net.connect`
   - `AF_UNIX` -> `ipc.connect`
 
+## Implemented Notes (2026-02-26)
+
+- `report.json` now emitted for every successful quarantine run with trace artifacts:
+  - `~/.sieve/logs/traces/<run_id>/report.json`
+  - includes run metadata, trace file list, normalized attempted capabilities, exit code.
+- Connect-attempt extraction widened to connect-family syscalls:
+  - `connect`, `socket`, `sendto`, `sendmsg`, `recvfrom`, `recvmsg`, `bind`, `listen`, `accept`, `accept4`.
+- Endpoint normalization now records family metadata in capability scope:
+  - net: `family=af_inet,address=<ip>,port=<u16>`
+  - net: `family=af_inet6,address=<ip6>,port=<u16>`
+  - ipc: `family=af_unix,path=<socket|unknown>`
+  - fallback: `family=unknown,address=unknown,port=0`
+
 ## Proposed Work
 
 1. Add network-related syscall parsing beyond `connect`:

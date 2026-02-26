@@ -1,31 +1,61 @@
-# Sieve v3 TODO
+# Sieve v3 Worker TODO Board
 
-## Setup
+Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-plan.md)
 
-- [x] Run Telegram manual smoke test with `.env` values.
-: Output showed sample approval event published and sent; process then waited in long-poll loop.
-- [x] Add root env template.
-: See [`.env.example`](/root/git/sieve-v3/.env.example).
+## How Workers Use This Board
 
-## Scope Docs (Needs Decisions + Signoff)
+1. Pick one item from **Unclaimed**.
+2. Move that exact line to **Claimed**.
+3. Fill in:
+   - `Owner: <name>`
+   - `Branch: <branch>`
+4. When complete and merged, move line to **Done** and set:
+   - `PR: <link-or-id>`
+   - check the checkbox (`[x]`).
+5. Do not edit items owned by someone else unless reassigned.
 
-- [x] Shell parser parity scope decisions captured.
-: [scope-shell-parser-parity.md](/root/git/sieve-v3/docs/scope-shell-parser-parity.md)
-- [x] Quarantine syscall coverage scope decisions captured.
-: [scope-quarantine-syscall-coverage.md](/root/git/sieve-v3/docs/scope-quarantine-syscall-coverage.md)
-- [x] Tool contract hardening scope decisions captured.
-: [scope-tool-contract-hardening.md](/root/git/sieve-v3/docs/scope-tool-contract-hardening.md)
+## Unclaimed
 
-## Scope Implementation
+- [ ] `A` Contract Freeze v1
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk A](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-a-contract-freeze-v1)
 
-- [ ] Implement shell parser parity work.
-: [scope-shell-parser-parity.md](/root/git/sieve-v3/docs/scope-shell-parser-parity.md)
-- [ ] Implement syscall coverage expansion and mandatory trace `report.json`.
-: [scope-quarantine-syscall-coverage.md](/root/git/sieve-v3/docs/scope-quarantine-syscall-coverage.md)
-- [ ] Implement Rust-type tool contracts + schema generation + one-pass regeneration diagnostics.
-: [scope-tool-contract-hardening.md](/root/git/sieve-v3/docs/scope-tool-contract-hardening.md)
+- [ ] `B` Rust Tool Contracts + Schema Emission
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk B](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-b-rust-tool-contracts--schema-emission)
 
-## Supporting Docs
+- [ ] `C` Planner Regeneration Pass
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk C](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-c-planner-regeneration-pass)
 
-- [x] Telegram README includes chat-id retrieval steps.
-: [sieve-interface-telegram README](/root/git/sieve-v3/crates/sieve-interface-telegram/README.md)
+- [ ] `D` Shell Parser Security-Equivalent Parity
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk D](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-d-shell-parser-security-equivalent-parity)
+
+- [ ] `E` Command Summary Expansion
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk E](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-e-command-summary-expansion)
+
+- [ ] `F` Runtime Value-State Engine
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk F](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-f-runtime-value-state-engine)
+
+- [ ] `G` Policy Uses Runtime Context
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk G](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-g-policy-uses-runtime-context)
+
+
+- [ ] `I` Runtime End-to-End Planner Loop
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk I](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-i-runtime-end-to-end-planner-loop)
+
+- [ ] `J` Telegram Adapter Finalization
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk J](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-j-telegram-adapter-finalization)
+
+- [ ] `K` End-to-End Security Harness
+: Owner: `-` | Branch: `-` | PR: `-` | Plan: [Chunk K](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-k-end-to-end-security-harness)
+
+## Claimed
+
+- [ ] `H` Quarantine Connect Coverage + Mandatory Report
+: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk H](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-h-quarantine-connect-coverage--mandatory-report)
+
+## Done
+
+- [x] Telegram manual smoke check
+: Owner: `integrator` | Branch: `-` | PR: `-` | Notes: sample approval event sent, long-poll wait confirmed.
+
+- [x] Root env template added
+: Owner: `integrator` | Branch: `-` | PR: `-` | File: [`.env.example`](/root/git/sieve-v3/.env.example)
