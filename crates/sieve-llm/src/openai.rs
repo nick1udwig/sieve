@@ -3,8 +3,8 @@ use crate::config::{
 };
 use crate::wire::{
     decode_planner_output, decode_quarantine_output, extract_openai_message_content_json,
-    planner_output_schema, planner_regeneration_diagnostic_prompt, quarantine_output_schema,
-    serialize_planner_input, PlannerDecodeOutcome, PLANNER_SYSTEM_PROMPT, QUARANTINE_SYSTEM_PROMPT,
+    planner_regeneration_diagnostic_prompt, quarantine_output_schema, serialize_planner_input,
+    PlannerDecodeOutcome, PLANNER_SYSTEM_PROMPT, QUARANTINE_SYSTEM_PROMPT,
 };
 use crate::{LlmError, PlannerModel, QuarantineModel};
 use async_trait::async_trait;
@@ -250,14 +250,9 @@ fn planner_chat_completion_request(model: &str, messages: Vec<Value>) -> Value {
         "model": model,
         "temperature": 0,
         "messages": messages,
-        "response_format": {
-            "type":"json_schema",
-            "json_schema": {
-                "name":"planner_turn_output",
-                "strict": true,
-                "schema": planner_output_schema()
-            }
-        }
+        // Keep planner output in JSON mode and enforce strict contracts in decode.
+        // OpenAI chat-completions json_schema subset rejects contract schema unions.
+        "response_format": {"type":"json_object"}
     })
 }
 

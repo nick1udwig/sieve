@@ -1,9 +1,7 @@
 use crate::LlmError;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use sieve_tool_contracts::{
-    planner_turn_output_schema as strict_planner_turn_output_schema, validate_at_index,
-};
+use sieve_tool_contracts::validate_at_index;
 use sieve_types::{
     PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, QuarantineExtractOutput, RuntimeEvent,
     SourceSpan, ToolContractValidationError, ToolContractValidationReport, TypedValue,
@@ -27,10 +25,6 @@ Return JSON only matching schema."#;
 pub(crate) enum PlannerDecodeOutcome {
     Valid(PlannerTurnOutput),
     InvalidToolContracts(ToolContractValidationReport),
-}
-
-pub(crate) fn planner_output_schema() -> Value {
-    strict_planner_turn_output_schema()
 }
 
 pub(crate) fn quarantine_output_schema() -> Value {
@@ -168,8 +162,15 @@ struct PlannerToolCallWire {
 }
 
 pub(crate) fn decode_planner_output(content_json: Value) -> Result<PlannerDecodeOutcome, LlmError> {
-    let decoded: PlannerTurnOutputWire = serde_json::from_value(content_json.clone())
-        .map_err(|e| LlmError::Decode(format!("invalid planner output payload: {e}")))?;
+    let decoded: PlannerTurnOutputWire = match serde_json::from_value(content_json.clone()) {
+        Ok(decoded) => decoded,
+        Err(primary_err) => decode_legacy_single_tool_shape(&content_json).ok_or_else(|| {
+            let preview = truncate_json_for_error(&content_json, 240);
+            LlmError::Decode(format!(
+                "invalid planner output payload: {primary_err}; payload={preview}"
+            ))
+        })?,
+    };
 
     let mut tool_calls = Vec::with_capacity(decoded.tool_calls.len());
     let mut errors = Vec::new();
@@ -204,6 +205,61 @@ pub(crate) fn decode_planner_output(content_json: Value) -> Result<PlannerDecode
         thoughts: decoded.thoughts,
         tool_calls,
     }))
+}
+
+fn truncate_json_for_error(value: &Value, max_chars: usize) -> String {
+    let raw =
+        serde_json::to_string(value).unwrap_or_else(|_| "<non-serializable-json>".to_string());
+    if raw.len() <= max_chars {
+        raw
+    } else {
+        format!("{}...[truncated]", &raw[..max_chars])
+    }
+}
+
+fn decode_legacy_single_tool_shape(content_json: &Value) -> Option<PlannerTurnOutputWire> {
+    // Compatibility for older/real-model shape:
+    // {"tool":"bash","command":"ls -la","thoughts":"..."}
+    // {"tool":"bash","parameters":{"command":"ls -la"}}
+    let tool_name = content_json.get("tool")?.as_str()?.trim();
+    let command = extract_legacy_command(content_json)?.trim();
+    if tool_name.is_empty() || command.is_empty() {
+        return None;
+    }
+
+    let mut args = Map::new();
+    args.insert("cmd".to_string(), Value::String(command.to_string()));
+
+    Some(PlannerTurnOutputWire {
+        thoughts: content_json
+            .get("thoughts")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        tool_calls: vec![PlannerToolCallWire {
+            tool_name: tool_name.to_string(),
+            args,
+        }],
+    })
+}
+
+fn extract_legacy_command(content_json: &Value) -> Option<&str> {
+    content_json
+        .get("command")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            content_json
+                .get("args")
+                .and_then(Value::as_object)
+                .and_then(|args| args.get("cmd"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            content_json
+                .get("parameters")
+                .and_then(Value::as_object)
+                .and_then(|params| params.get("command").or_else(|| params.get("cmd")))
+                .and_then(Value::as_str)
+        })
 }
 
 fn recover_contract_span(

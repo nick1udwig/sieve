@@ -39,7 +39,14 @@ pub(crate) fn load_model_config_from_env(
     let provider = parse_provider(&provider_value)
         .map_err(|msg| LlmError::Config(format!("{msg}; set `{provider_key}` to `openai`")))?;
 
-    let api_base = getter(&format!("{prefix}_API_BASE"));
+    let api_base = getter(&format!("{prefix}_API_BASE")).and_then(|raw| {
+        let value = raw.trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    });
     Ok(LlmModelConfig {
         provider,
         model,
@@ -52,7 +59,9 @@ pub(crate) fn load_openai_api_key_from_env(
     getter: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, LlmError> {
     let scoped_key_name = format!("{prefix}_OPENAI_API_KEY");
-    let api_key = getter(&scoped_key_name).or_else(|| getter("OPENAI_API_KEY"));
+    let api_key = getter(&scoped_key_name)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| getter("OPENAI_API_KEY").filter(|value| !value.trim().is_empty()));
     match api_key {
         Some(key) if !key.trim().is_empty() => Ok(key),
         _ => Err(LlmError::Config(format!(

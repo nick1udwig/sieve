@@ -1,4 +1,4 @@
-use crate::config::load_model_config_from_env;
+use crate::config::{load_model_config_from_env, load_openai_api_key_from_env};
 use crate::wire::{
     decode_planner_output, decode_quarantine_output, serialize_planner_input, PlannerDecodeOutcome,
 };
@@ -27,6 +27,15 @@ fn load_model_config_from_env_parses_defaults() {
 }
 
 #[test]
+fn load_model_config_from_env_treats_blank_api_base_as_unset() {
+    let mut env_map = BTreeMap::new();
+    env_map.insert("SIEVE_PLANNER_MODEL".to_string(), "gpt-4o-mini".to_string());
+    env_map.insert("SIEVE_PLANNER_API_BASE".to_string(), "   ".to_string());
+    let cfg = load_model_config_from_env("SIEVE_PLANNER", &map_getter(&env_map)).unwrap();
+    assert_eq!(cfg.api_base, None);
+}
+
+#[test]
 fn load_model_config_from_env_rejects_unsupported_provider() {
     let mut env_map = BTreeMap::new();
     env_map.insert("SIEVE_PLANNER_MODEL".to_string(), "gpt-4o-mini".to_string());
@@ -36,6 +45,16 @@ fn load_model_config_from_env_rejects_unsupported_provider() {
     );
     let err = load_model_config_from_env("SIEVE_PLANNER", &map_getter(&env_map)).unwrap_err();
     assert!(matches!(err, LlmError::Config(_)));
+}
+
+#[test]
+fn load_openai_api_key_from_env_falls_back_when_scoped_key_blank() {
+    let mut env_map = BTreeMap::new();
+    env_map.insert("SIEVE_PLANNER_OPENAI_API_KEY".to_string(), String::new());
+    env_map.insert("OPENAI_API_KEY".to_string(), "fallback-key".to_string());
+
+    let key = load_openai_api_key_from_env("SIEVE_PLANNER", &map_getter(&env_map)).unwrap();
+    assert_eq!(key, "fallback-key");
 }
 
 #[test]
@@ -149,6 +168,48 @@ fn decode_planner_output_returns_diagnostics_for_contract_failure() {
     assert_eq!(err.argument_path, "/cmd");
     assert!(err.hint.is_some());
     assert!(err.span.is_some());
+}
+
+#[test]
+fn decode_planner_output_accepts_legacy_single_tool_shape() {
+    let raw = json!({
+        "tool": "bash",
+        "command": "mkdir -p /tmp/sieve-r-live-smoke"
+    });
+
+    let out = decode_planner_output(raw).unwrap();
+    match out {
+        PlannerDecodeOutcome::Valid(out) => {
+            assert_eq!(out.tool_calls.len(), 1);
+            assert_eq!(out.tool_calls[0].tool_name, "bash");
+            assert_eq!(
+                out.tool_calls[0].args["cmd"],
+                json!("mkdir -p /tmp/sieve-r-live-smoke")
+            );
+        }
+        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
+    }
+}
+
+#[test]
+fn decode_planner_output_accepts_legacy_parameters_command_shape() {
+    let raw = json!({
+        "tool": "bash",
+        "parameters": {"command": "mkdir -p /tmp/sieve-r-live-smoke"}
+    });
+
+    let out = decode_planner_output(raw).unwrap();
+    match out {
+        PlannerDecodeOutcome::Valid(out) => {
+            assert_eq!(out.tool_calls.len(), 1);
+            assert_eq!(out.tool_calls[0].tool_name, "bash");
+            assert_eq!(
+                out.tool_calls[0].args["cmd"],
+                json!("mkdir -p /tmp/sieve-r-live-smoke")
+            );
+        }
+        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
+    }
 }
 
 #[tokio::test]
