@@ -20,10 +20,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `K` End-to-End Security Harness
-: Owner: `codex` | Branch: `master` | PR: `-` | Plan: [Chunk K](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-k-end-to-end-security-harness)
-
 ## Done
+
+- [x] `K` End-to-End Security Harness
+: Owner: `codex` | Branch: `master` | PR: `710d409, 026eff3, d1e839d` | Plan: [Chunk K](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-k-end-to-end-security-harness)
 
 - [x] `J` Telegram Adapter Finalization
 : Owner: `codex` | Branch: `master` | PR: `854d338, 222505e` | Plan: [Chunk J](/root/git/sieve-v3/docs/mvp-completion-plan.md#chunk-j-telegram-adapter-finalization)
