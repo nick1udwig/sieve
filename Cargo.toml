@@ -8,6 +8,7 @@ members = [
   "crates/sieve-llm",
   "crates/sieve-runtime",
   "crates/sieve-interface-telegram",
+  "crates/sieve-app",
 ]
 resolver = "2"
 

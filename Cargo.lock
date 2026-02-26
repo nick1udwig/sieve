@@ -2919,6 +2919,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "sieve-app"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sieve-command-summaries",
+ "sieve-interface-telegram",
+ "sieve-llm",
+ "sieve-policy",
+ "sieve-quarantine",
+ "sieve-runtime",
+ "sieve-shell",
+ "sieve-types",
+ "tokio",
+]
+
+[[package]]
 name = "sieve-command-summaries"
 version = "0.1.0"
 dependencies = [

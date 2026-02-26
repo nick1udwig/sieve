@@ -1,3 +1,4 @@
+// For full runtime + planner + Telegram wiring, run `cargo run -p sieve-app -- "<prompt>"`.
 use sieve_interface_telegram::{
     SystemClock, TelegramAdapter, TelegramAdapterConfig, TelegramBotApiLongPoll,
     TelegramEventBridge,

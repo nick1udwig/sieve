@@ -1,3 +1,4 @@
+// For the integrated runtime + Telegram app entrypoint, run `cargo run -p sieve-app -- "<prompt>"`.
 use sieve_llm::{OpenAiQuarantineModel, QuarantineModel};
 use sieve_types::{LlmModelConfig, LlmProvider, QuarantineExtractInput, RunId};
 use std::collections::BTreeMap;
