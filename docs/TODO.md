@@ -24,10 +24,10 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Claimed
 
-- [ ] `S` Baseline Policy File + Wiring
-: Owner: `codex` | Branch: `master` | PR: `-` | Scope: add a checked-in baseline policy TOML and wire docs/env defaults to that path so `SIEVE_POLICY_PATH` has an in-repo default target. Files: [`.env.example`](/root/git/sieve-v3/.env.example), [README.md](/root/git/sieve-v3/README.md), plus new policy file under `docs/` or repo root. Done when: fresh setup can point to a committed policy file without out-of-band file creation.
-
 ## Done
+
+- [x] `S` Baseline Policy File + Wiring
+: Owner: `codex` | Branch: `master` | PR: `c03bebf` | Scope: add a checked-in baseline policy TOML and wire docs/env defaults to that path so `SIEVE_POLICY_PATH` has an in-repo default target. Files: [`.env.example`](/root/git/sieve-v3/.env.example), [README.md](/root/git/sieve-v3/README.md), plus new policy file under `docs/` or repo root. Done when: fresh setup can point to a committed policy file without out-of-band file creation.
 
 - [x] `Q` End-to-End Tests for Remaining MVP Blockers
 : Owner: `codex` | Branch: `master` | PR: `29967ba` | Scope: add integration tests that lock behavior for `L` through `P` (runtime allowlist gate, explicit-tool policy gate, mainline execution, unknown/uncertain policy events, integrated entrypoint wiring). Files: [e2e_security_policy_flows.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_policy_flows.rs), [e2e_security_quarantine_modes.rs](/root/git/sieve-v3/crates/sieve-runtime/tests/e2e_security_quarantine_modes.rs), plus new tests as needed.
