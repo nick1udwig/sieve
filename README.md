@@ -28,6 +28,6 @@ cargo run -p sieve-app -- "review workspace status"
 
 If no CLI prompt is passed, `sieve-app` reads prompts from stdin (one line per turn).
 Runtime JSONL logs now include both runtime events and conversation records, defaulting to
-`$SIEVE_HOME/logs/runtime-events.jsonl`.
+`$SIEVE_HOME/logs/runtime-events.jsonl` (same base dir as trace logs).
 
 Baseline policy file: `docs/policy/baseline-policy.toml`.

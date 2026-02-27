@@ -50,11 +50,8 @@ impl AppConfig {
             .map_err(|err| format!("invalid TELEGRAM_CHAT_ID: {err}"))?;
         let telegram_poll_timeout_secs = parse_u16_env("SIEVE_TELEGRAM_POLL_TIMEOUT_SECS", 1)?;
         let policy_path = parse_policy_path(env::var("SIEVE_POLICY_PATH").ok());
-        let event_log_path = parse_event_log_path(
-            env::var("SIEVE_RUNTIME_EVENT_LOG").ok(),
-            env::var("SIEVE_HOME").ok(),
-            env::var("HOME").ok(),
-        );
+        let sieve_home = parse_sieve_home(env::var("SIEVE_HOME").ok(), env::var("HOME").ok());
+        let event_log_path = runtime_event_log_path(&sieve_home);
         let runtime_cwd = env::var("SIEVE_RUNTIME_CWD").unwrap_or_else(|_| ".".to_string());
         let allowed_tools = parse_allowed_tools(
             &env::var("SIEVE_ALLOWED_TOOLS")
@@ -89,17 +86,6 @@ fn parse_policy_path(raw: Option<String>) -> PathBuf {
     }
 }
 
-fn parse_event_log_path(
-    raw_event_log: Option<String>,
-    raw_sieve_home: Option<String>,
-    raw_home: Option<String>,
-) -> PathBuf {
-    match raw_event_log.map(|value| value.trim().to_string()) {
-        Some(value) if !value.is_empty() => PathBuf::from(value),
-        _ => parse_sieve_home(raw_sieve_home, raw_home).join("logs/runtime-events.jsonl"),
-    }
-}
-
 fn parse_sieve_home(raw_sieve_home: Option<String>, raw_home: Option<String>) -> PathBuf {
     match raw_sieve_home.map(|value| value.trim().to_string()) {
         Some(value) if !value.is_empty() => PathBuf::from(value),
@@ -108,6 +94,10 @@ fn parse_sieve_home(raw_sieve_home: Option<String>, raw_home: Option<String>) ->
             _ => PathBuf::from(DEFAULT_SIEVE_DIR_NAME),
         },
     }
+}
+
+fn runtime_event_log_path(sieve_home: &std::path::Path) -> PathBuf {
+    sieve_home.join("logs/runtime-events.jsonl")
 }
 
 fn parse_u16_env(key: &str, default: u16) -> Result<u16, String> {
@@ -571,7 +561,7 @@ mod tests {
     #[test]
     fn parse_event_log_path_defaults_to_home_sieve_logs() {
         assert_eq!(
-            parse_event_log_path(None, None, Some("/home/alice".to_string())),
+            runtime_event_log_path(&parse_sieve_home(None, Some("/home/alice".to_string()))),
             PathBuf::from("/home/alice/.sieve/logs/runtime-events.jsonl")
         );
     }
@@ -579,24 +569,11 @@ mod tests {
     #[test]
     fn parse_event_log_path_uses_sieve_home_when_set() {
         assert_eq!(
-            parse_event_log_path(
-                None,
+            runtime_event_log_path(&parse_sieve_home(
                 Some("/var/sieve".to_string()),
                 Some("/home/alice".to_string())
-            ),
+            )),
             PathBuf::from("/var/sieve/logs/runtime-events.jsonl")
-        );
-    }
-
-    #[test]
-    fn parse_event_log_path_honors_explicit_override() {
-        assert_eq!(
-            parse_event_log_path(
-                Some("/tmp/custom-events.jsonl".to_string()),
-                Some("/var/sieve".to_string()),
-                Some("/home/alice".to_string()),
-            ),
-            PathBuf::from("/tmp/custom-events.jsonl")
         );
     }
 }
