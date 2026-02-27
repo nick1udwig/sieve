@@ -99,6 +99,36 @@
         "args"
       ],
       "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "additionalProperties": false,
+          "properties": {
+            "count": {
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "tool_name": {
+          "const": "brave_search"
+        }
+      },
+      "required": [
+        "tool_name",
+        "args"
+      ],
+      "type": "object"
     }
   ]
 }

@@ -9,6 +9,11 @@ argv_prefix = ["rm", "-rf"]
 decision = "deny_with_approval"
 reason = "rm -rf requires explicit approval"
 
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.search.brave.com/res/v1/web/search"
+
 [options]
 violation_mode = "deny"
 require_trusted_control_for_mutating = true

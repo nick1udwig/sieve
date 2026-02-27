@@ -24,6 +24,7 @@ Inspired by:
    - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
    - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
+   - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (required only when using `brave_search`)
 2. Start the app:
 
 ```bash
@@ -84,6 +85,12 @@ Q-LLM summary by ref (planner never receives raw output strings).
 
 Baseline policy file: `docs/policy/baseline-policy.toml`.
 
+`brave_search` tool notes:
+- enable by keeping `brave_search` in `SIEVE_ALLOWED_TOOLS` (default now includes it)
+- provide `BRAVE_API_KEY`
+- policy still gates execution; the tool precheck requires net connect capability to the configured
+  Brave endpoint (`SIEVE_BRAVE_API_BASE`)
+
 ## Live LLM Runtime Tests
 
 Runtime now has live OpenAI planner integration tests that exercise full planner->runtime tool flows (`bash`, `endorse`, `declassify`), including approval handling.
@@ -107,9 +114,10 @@ Standalone helper crate `sieve-captrace`:
 Run:
 
 ```bash
-cargo run -p sieve-captrace -- mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --output /tmp/mkdir-definition.json
+cargo run -p sieve-captrace -- mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --output /tmp/mkdir-definition.json --rust-output /tmp/mkdir-generated.rs
 ```
 
 Optional:
 - omit `--no-llm` to let planner LLM propose additional cases
 - set `SIEVE_PLANNER_MODEL` + `OPENAI_API_KEY` (or `SIEVE_PLANNER_OPENAI_API_KEY`) for LLM mode
+- generated JSON now includes a `rust_snippet` field; `--rust-output` writes that snippet directly

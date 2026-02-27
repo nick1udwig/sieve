@@ -15,12 +15,14 @@ use sieve_runtime::{
     BashMainlineRunner, InProcessApprovalBus, MainlineRunError, MainlineRunReport,
     MainlineRunRequest, MainlineRunner, PlannerRunRequest, RuntimeDeps, RuntimeDisposition,
     RuntimeError, RuntimeEventLog, RuntimeOrchestrator, ShellRunRequest, SystemClock,
+    WebSearchError, WebSearchRunner,
 };
 use sieve_shell::{BasicShellAnalyzer, ShellAnalysis};
 use sieve_types::{
-    ApprovalAction, ApprovalResolvedEvent, CommandKnowledge, CommandSegment, CommandSummary,
-    EndorseRequest, Integrity, LlmModelConfig, LlmProvider, PlannerToolCall, PlannerTurnInput,
-    PlannerTurnOutput, RunId, RuntimeEvent, UncertainMode, UnknownMode, ValueRef,
+    ApprovalAction, ApprovalResolvedEvent, BraveSearchRequest, BraveSearchResponse,
+    CommandKnowledge, CommandSegment, CommandSummary, EndorseRequest, Integrity, LlmModelConfig,
+    LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, RunId, RuntimeEvent,
+    UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -75,6 +77,25 @@ impl MainlineRunner for NoopMainline {
     }
 }
 
+struct NoopWebSearch;
+
+#[async_trait]
+impl WebSearchRunner for NoopWebSearch {
+    fn connect_scope(&self) -> String {
+        "https://api.search.brave.com/res/v1/web/search".to_string()
+    }
+
+    async fn search(
+        &self,
+        request: BraveSearchRequest,
+    ) -> Result<BraveSearchResponse, WebSearchError> {
+        Ok(BraveSearchResponse {
+            query: request.query,
+            results: Vec::new(),
+        })
+    }
+}
+
 fn known_summary_outcome() -> SummaryOutcome {
     SummaryOutcome {
         knowledge: CommandKnowledge::Known,
@@ -106,6 +127,7 @@ fn mk_runtime(
         policy: Arc::new(TomlPolicyEngine::from_toml_str(policy_toml).expect("policy parse")),
         quarantine: Arc::new(RecordingQuarantine::default()) as Arc<dyn QuarantineRunner>,
         mainline,
+        web_search: Arc::new(NoopWebSearch),
         planner: Arc::new(StaticPlanner::new(planner_output)),
         approval_bus: approval_bus.clone(),
         event_log: event_log.clone() as Arc<dyn RuntimeEventLog>,

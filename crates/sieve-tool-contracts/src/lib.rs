@@ -5,7 +5,7 @@ mod validate;
 
 use serde::{Deserialize, Serialize};
 use sieve_types::{
-    DeclassifyRequest, EndorseRequest, Integrity, ToolContractErrorCode,
+    BraveSearchRequest, DeclassifyRequest, EndorseRequest, Integrity, ToolContractErrorCode,
     ToolContractValidationError, TOOL_CONTRACTS_VERSION_V1,
 };
 use thiserror::Error;
@@ -20,6 +20,7 @@ pub const TOOL_CONTRACTS_VERSION: u16 = TOOL_CONTRACTS_VERSION_V1;
 pub const TOOL_BASH: &str = "bash";
 pub const TOOL_ENDORSE: &str = "endorse";
 pub const TOOL_DECLASSIFY: &str = "declassify";
+pub const TOOL_BRAVE_SEARCH: &str = "brave_search";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +44,13 @@ pub struct DeclassifyArgs {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BraveSearchArgs {
+    pub query: String,
+    pub count: Option<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractIntegrity {
@@ -64,6 +72,7 @@ pub enum TypedCall {
     Bash(BashArgs),
     Endorse(EndorseRequest),
     Declassify(DeclassifyRequest),
+    BraveSearch(BraveSearchRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -101,7 +110,7 @@ impl ContractError {
 }
 
 pub fn supported_tools() -> &'static [&'static str] {
-    &[TOOL_BASH, TOOL_ENDORSE, TOOL_DECLASSIFY]
+    &[TOOL_BASH, TOOL_ENDORSE, TOOL_DECLASSIFY, TOOL_BRAVE_SEARCH]
 }
 
 pub(crate) fn make_error(

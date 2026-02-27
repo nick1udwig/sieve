@@ -9,11 +9,13 @@ use sieve_policy::TomlPolicyEngine;
 use sieve_runtime::{
     BashMainlineRunner, InProcessApprovalBus, PlannerRunRequest, PlannerToolResult, RuntimeDeps,
     RuntimeDisposition, RuntimeEventLog, RuntimeOrchestrator, SystemClock as RuntimeClock,
+    WebSearchError, WebSearchRunner,
 };
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
-    ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, Integrity, LlmModelConfig,
-    LlmProvider, RunId, SinkKey, UncertainMode, UnknownMode, ValueRef,
+    ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, BraveSearchRequest,
+    BraveSearchResponse, Integrity, LlmModelConfig, LlmProvider, RunId, SinkKey, UncertainMode,
+    UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 use std::env;
@@ -88,12 +90,32 @@ fn mk_live_runtime(
     let event_log = Arc::new(VecEventLog::default());
     let event_log: Arc<dyn RuntimeEventLog> = event_log;
 
+    struct NoopWebSearch;
+
+    #[async_trait::async_trait]
+    impl WebSearchRunner for NoopWebSearch {
+        fn connect_scope(&self) -> String {
+            "https://api.search.brave.com/res/v1/web/search".to_string()
+        }
+
+        async fn search(
+            &self,
+            request: BraveSearchRequest,
+        ) -> Result<BraveSearchResponse, WebSearchError> {
+            Ok(BraveSearchResponse {
+                query: request.query,
+                results: Vec::new(),
+            })
+        }
+    }
+
     let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
         shell: Arc::new(BasicShellAnalyzer),
         summaries: Arc::new(DefaultCommandSummarizer),
         policy: Arc::new(TomlPolicyEngine::from_toml_str(policy_toml).expect("policy parse")),
         quarantine: Arc::new(RecordingQuarantine::default()),
         mainline: Arc::new(BashMainlineRunner),
+        web_search: Arc::new(NoopWebSearch),
         planner,
         approval_bus: approval_bus.clone(),
         event_log,

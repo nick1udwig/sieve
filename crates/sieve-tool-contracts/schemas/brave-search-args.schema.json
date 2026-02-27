@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "count": {
+      "maximum": 10,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "query": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "type": "object"
+}

@@ -17,12 +17,13 @@ use sieve_runtime::{
     ApprovalBusError, EventLogError, InProcessApprovalBus, JsonlRuntimeEventLog, MainlineArtifact,
     MainlineArtifactKind, MainlineRunError, MainlineRunReport, MainlineRunRequest, MainlineRunner,
     PlannerRunRequest, PlannerRunResult, PlannerToolResult, RuntimeDeps, RuntimeDisposition,
-    RuntimeEventLog, RuntimeOrchestrator, SystemClock as RuntimeClock,
+    RuntimeEventLog, RuntimeOrchestrator, SystemClock as RuntimeClock, WebSearchDisposition,
+    WebSearchError, WebSearchRunner,
 };
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
-    ApprovalResolvedEvent, AssistantMessageEvent, Integrity, RunId, RuntimeEvent, UncertainMode,
-    UnknownMode,
+    ApprovalResolvedEvent, AssistantMessageEvent, BraveSearchRequest, BraveSearchResponse,
+    BraveSearchResult, Integrity, RunId, RuntimeEvent, UncertainMode, UnknownMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -48,6 +49,8 @@ struct AppConfig {
     event_log_path: PathBuf,
     runtime_cwd: String,
     allowed_tools: Vec<String>,
+    brave_api_key: Option<String>,
+    brave_api_base: String,
     unknown_mode: UnknownMode,
     uncertain_mode: UncertainMode,
     max_concurrent_turns: usize,
@@ -55,6 +58,7 @@ struct AppConfig {
 
 const DEFAULT_POLICY_PATH: &str = "docs/policy/baseline-policy.toml";
 const DEFAULT_SIEVE_DIR_NAME: &str = ".sieve";
+const DEFAULT_BRAVE_API_BASE: &str = "https://api.search.brave.com/res/v1/web/search";
 
 impl AppConfig {
     fn from_env() -> Result<Self, String> {
@@ -72,11 +76,17 @@ impl AppConfig {
         let runtime_cwd = env::var("SIEVE_RUNTIME_CWD").unwrap_or_else(|_| ".".to_string());
         let allowed_tools = parse_allowed_tools(
             &env::var("SIEVE_ALLOWED_TOOLS")
-                .unwrap_or_else(|_| "bash,endorse,declassify".to_string()),
+                .unwrap_or_else(|_| "bash,endorse,declassify,brave_search".to_string()),
         );
         if allowed_tools.is_empty() {
             return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
         }
+        let brave_api_key = optional_env("BRAVE_API_KEY");
+        let brave_api_base = env::var("SIEVE_BRAVE_API_BASE")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_BRAVE_API_BASE.to_string());
         let max_concurrent_turns = parse_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
         if max_concurrent_turns == 0 {
             return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
@@ -92,6 +102,8 @@ impl AppConfig {
             event_log_path,
             runtime_cwd,
             allowed_tools,
+            brave_api_key,
+            brave_api_base,
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
             uncertain_mode: parse_uncertain_mode(env::var("SIEVE_UNCERTAIN_MODE").ok())?,
             max_concurrent_turns,
@@ -101,6 +113,13 @@ impl AppConfig {
 
 fn required_env(key: &str) -> Result<String, String> {
     env::var(key).map_err(|_| format!("missing required environment variable `{key}`"))
+}
+
+fn optional_env(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn parse_policy_path(raw: Option<String>) -> PathBuf {
@@ -427,6 +446,100 @@ fn count_newlines(bytes: &[u8]) -> u64 {
     bytes.iter().filter(|byte| **byte == b'\n').count() as u64
 }
 
+struct AppBraveSearchRunner {
+    api_key: Option<String>,
+    api_base: String,
+}
+
+impl AppBraveSearchRunner {
+    fn new(api_key: Option<String>, api_base: String) -> Self {
+        Self { api_key, api_base }
+    }
+}
+
+#[async_trait]
+impl WebSearchRunner for AppBraveSearchRunner {
+    fn connect_scope(&self) -> String {
+        self.api_base.clone()
+    }
+
+    async fn search(
+        &self,
+        request: BraveSearchRequest,
+    ) -> Result<BraveSearchResponse, WebSearchError> {
+        let api_key = self.api_key.clone().ok_or_else(|| {
+            WebSearchError::Exec("BRAVE_API_KEY is required to use brave_search tool".to_string())
+        })?;
+
+        let output = TokioCommand::new("curl")
+            .arg("-sS")
+            .arg("--fail")
+            .arg("--get")
+            .arg("-H")
+            .arg("Accept: application/json")
+            .arg("-H")
+            .arg(format!("X-Subscription-Token: {api_key}"))
+            .arg("--data-urlencode")
+            .arg(format!("q={}", request.query))
+            .arg("--data-urlencode")
+            .arg(format!("count={}", request.count))
+            .arg(&self.api_base)
+            .output()
+            .await
+            .map_err(|err| WebSearchError::Exec(format!("failed to spawn curl: {err}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(WebSearchError::Exec(if stderr.is_empty() {
+                "curl failed calling Brave API".to_string()
+            } else {
+                format!("curl failed calling Brave API: {stderr}")
+            }));
+        }
+
+        decode_brave_search_response(&output.stdout, request.query)
+    }
+}
+
+fn decode_brave_search_response(
+    bytes: &[u8],
+    query: String,
+) -> Result<BraveSearchResponse, WebSearchError> {
+    let payload: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|err| WebSearchError::Exec(format!("invalid Brave API JSON response: {err}")))?;
+    let mut results = Vec::new();
+    if let Some(items) = payload
+        .get("web")
+        .and_then(|web| web.get("results"))
+        .and_then(serde_json::Value::as_array)
+    {
+        for item in items {
+            let Some(url) = item.get("url").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if url.trim().is_empty() {
+                continue;
+            }
+            let title = item
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(url)
+                .to_string();
+            let description = item
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string);
+            results.push(BraveSearchResult {
+                title,
+                url: url.to_string(),
+                description,
+            });
+        }
+    }
+
+    Ok(BraveSearchResponse { query, results })
+}
+
 struct FanoutRuntimeEventLog {
     jsonl: JsonlRuntimeEventLog,
     history: Mutex<Vec<RuntimeEvent>>,
@@ -621,9 +734,7 @@ fn response_has_visible_selected_output(
         output_ref_ids.contains(ref_id) && response.message.contains(&format!("[[ref:{ref_id}]]"))
     }) || response.summarized_ref_ids.iter().any(|ref_id| {
         output_ref_ids.contains(ref_id)
-            && response
-                .message
-                .contains(&format!("[[summary:{ref_id}]]"))
+            && response.message.contains(&format!("[[summary:{ref_id}]]"))
     })
 }
 
@@ -766,6 +877,43 @@ fn summarize_tool_result(
                 ],
             }
         }
+        PlannerToolResult::BraveSearch {
+            request,
+            disposition,
+        } => match disposition {
+            WebSearchDisposition::Executed(response) => {
+                let ref_id = format!("web-search:{}-{}", request.count, render_refs.len() + 1);
+                let encoded = serde_json::to_string_pretty(response).unwrap_or_else(|_| {
+                    "{\"error\":\"failed to encode brave search response\"}".to_string()
+                });
+                let bytes = encoded.as_bytes();
+                render_refs.insert(
+                    ref_id.clone(),
+                    RenderRef::Literal {
+                        value: encoded.clone(),
+                    },
+                );
+                ResponseToolOutcome {
+                    tool_name: "brave_search".to_string(),
+                    outcome: format!(
+                        "brave search executed (query={:?}, results={})",
+                        request.query,
+                        response.results.len()
+                    ),
+                    refs: vec![ResponseRefMetadata {
+                        ref_id,
+                        kind: "web_search_results_json".to_string(),
+                        byte_count: bytes.len() as u64,
+                        line_count: count_newlines(bytes),
+                    }],
+                }
+            }
+            WebSearchDisposition::Denied { reason } => ResponseToolOutcome {
+                tool_name: "brave_search".to_string(),
+                outcome: format!("brave search denied ({reason})"),
+                refs: Vec::new(),
+            },
+        },
     }
 }
 
@@ -966,9 +1114,8 @@ async fn run_turn(
         };
 
         if !response_has_visible_selected_output(&response_input, &response_output) {
-            if let Some(fallback_ref_id) = non_empty_output_ref_ids(&response_input)
-                .into_iter()
-                .next()
+            if let Some(fallback_ref_id) =
+                non_empty_output_ref_ids(&response_input).into_iter().next()
             {
                 response_output
                     .summarized_ref_ids
@@ -1107,6 +1254,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         policy: Arc::new(policy),
         quarantine: Arc::new(BwrapQuarantineRunner::default()),
         mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
+        web_search: Arc::new(AppBraveSearchRunner::new(
+            cfg.brave_api_key.clone(),
+            cfg.brave_api_base.clone(),
+        )),
         planner: Arc::new(planner),
         approval_bus,
         event_log: event_log.clone(),

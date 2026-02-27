@@ -8,13 +8,14 @@ use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
-    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
-    CommandKnowledge, CommandSegment, CommandSummary, ControlContext, DeclassifyRequest,
-    DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity, PlannerToolCall,
-    PlannerTurnInput, PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput,
-    QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent,
-    RuntimePolicyContext, SinkKey, SinkPermissionContext, ToolContractValidationReport,
-    UncertainMode, UnknownMode, ValueLabel, ValueRef,
+    Action, ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
+    BraveSearchRequest, BraveSearchResponse, Capability, CommandKnowledge, CommandSegment,
+    CommandSummary, ControlContext, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
+    EndorseStateTransition, Integrity, PlannerToolCall, PlannerTurnInput, PolicyDecision,
+    PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent,
+    QuarantineReport, QuarantineRunRequest, Resource, RunId, RuntimeEvent, RuntimePolicyContext,
+    SinkKey, SinkPermissionContext, ToolContractValidationReport, UncertainMode, UnknownMode,
+    ValueLabel, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{create_dir_all, OpenOptions};
@@ -378,6 +379,22 @@ impl MainlineRunner for BashMainlineRunner {
 }
 
 #[derive(Debug, Error)]
+pub enum WebSearchError {
+    #[error("web search failed: {0}")]
+    Exec(String),
+}
+
+#[async_trait]
+pub trait WebSearchRunner: Send + Sync {
+    fn connect_scope(&self) -> String;
+
+    async fn search(
+        &self,
+        request: BraveSearchRequest,
+    ) -> Result<BraveSearchResponse, WebSearchError>;
+}
+
+#[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("planner model failed: {0}")]
     Planner(#[from] LlmError),
@@ -391,6 +408,8 @@ pub enum RuntimeError {
     Quarantine(#[from] QuarantineRunError),
     #[error("mainline run failed: {0}")]
     Mainline(#[from] MainlineRunError),
+    #[error("web search failed: {0}")]
+    WebSearch(#[from] WebSearchError),
     #[error("value state failed: {0}")]
     ValueState(#[from] ValueStateError),
     #[error("planner tool call contract validation failed")]
@@ -437,6 +456,12 @@ pub enum RuntimeDisposition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebSearchDisposition {
+    Executed(BraveSearchResponse),
+    Denied { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannerToolResult {
     Bash {
         command: String,
@@ -449,6 +474,10 @@ pub enum PlannerToolResult {
     Declassify {
         request: DeclassifyRequest,
         transition: Option<DeclassifyStateTransition>,
+    },
+    BraveSearch {
+        request: BraveSearchRequest,
+        disposition: WebSearchDisposition,
     },
 }
 
@@ -464,6 +493,7 @@ pub struct RuntimeOrchestrator {
     policy: Arc<dyn PolicyEngine>,
     quarantine: Arc<dyn QuarantineRunner>,
     mainline: Arc<dyn MainlineRunner>,
+    web_search: Arc<dyn WebSearchRunner>,
     planner: Arc<dyn PlannerModel>,
     approval_bus: Arc<dyn ApprovalBus>,
     event_log: Arc<dyn RuntimeEventLog>,
@@ -478,6 +508,7 @@ pub struct RuntimeDeps {
     pub policy: Arc<dyn PolicyEngine>,
     pub quarantine: Arc<dyn QuarantineRunner>,
     pub mainline: Arc<dyn MainlineRunner>,
+    pub web_search: Arc<dyn WebSearchRunner>,
     pub planner: Arc<dyn PlannerModel>,
     pub approval_bus: Arc<dyn ApprovalBus>,
     pub event_log: Arc<dyn RuntimeEventLog>,
@@ -494,6 +525,7 @@ impl RuntimeOrchestrator {
             policy: deps.policy,
             quarantine: deps.quarantine,
             mainline: deps.mainline,
+            web_search: deps.web_search,
             planner: deps.planner,
             approval_bus: deps.approval_bus,
             event_log: deps.event_log,
@@ -589,6 +621,18 @@ impl RuntimeOrchestrator {
                     tool_results.push(PlannerToolResult::Declassify {
                         request: declassify_request,
                         transition,
+                    });
+                }
+                TypedCall::BraveSearch(brave_search_request) => {
+                    let disposition = self
+                        .orchestrate_brave_search(
+                            request.run_id.clone(),
+                            brave_search_request.clone(),
+                        )
+                        .await?;
+                    tool_results.push(PlannerToolResult::BraveSearch {
+                        request: brave_search_request,
+                        disposition,
                     });
                 }
             }
@@ -851,6 +895,85 @@ impl RuntimeOrchestrator {
             Some(resolution.request_id),
         )?;
         Ok(Some(transition))
+    }
+
+    /// Runs policy + optional approval + execution for explicit `brave_search`.
+    pub async fn orchestrate_brave_search(
+        &self,
+        run_id: RunId,
+        request: BraveSearchRequest,
+    ) -> Result<WebSearchDisposition, RuntimeError> {
+        let capability = Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: self.web_search.connect_scope(),
+        };
+        let segment = CommandSegment {
+            argv: vec![
+                "brave_search".to_string(),
+                request.query.clone(),
+                format!("count={}", request.count),
+            ],
+            operator_before: None,
+        };
+        let runtime_context = self.runtime_policy_context_for_control(BTreeSet::new(), None)?;
+        let precheck = PrecheckInput {
+            run_id: run_id.clone(),
+            cwd: ".".to_string(),
+            command_segments: vec![segment.clone()],
+            knowledge: CommandKnowledge::Known,
+            summary: Some(CommandSummary {
+                required_capabilities: vec![capability.clone()],
+                sink_checks: Vec::new(),
+                unsupported_flags: Vec::new(),
+            }),
+            runtime_context,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        };
+
+        let decision = self.policy.evaluate_precheck(&precheck);
+        self.append_event(RuntimeEvent::PolicyEvaluated(PolicyEvaluatedEvent {
+            schema_version: 1,
+            run_id: run_id.clone(),
+            decision: decision.clone(),
+            inferred_capabilities: vec![capability.clone()],
+            trace_path: None,
+            created_at_ms: self.clock.now_ms(),
+        }))
+        .await?;
+
+        match decision.kind {
+            PolicyDecisionKind::Allow => Ok(WebSearchDisposition::Executed(
+                self.web_search.search(request).await?,
+            )),
+            PolicyDecisionKind::Deny => Ok(WebSearchDisposition::Denied {
+                reason: decision.reason,
+            }),
+            PolicyDecisionKind::DenyWithApproval => {
+                let blocked_rule_id = decision
+                    .blocked_rule_id
+                    .unwrap_or_else(|| "brave-search-requires-approval".to_string());
+                let action = self
+                    .request_approval(
+                        run_id,
+                        vec![segment],
+                        vec![capability],
+                        blocked_rule_id,
+                        decision.reason,
+                    )
+                    .await?
+                    .action;
+                match action {
+                    ApprovalAction::ApproveOnce => Ok(WebSearchDisposition::Executed(
+                        self.web_search.search(request).await?,
+                    )),
+                    ApprovalAction::Deny => Ok(WebSearchDisposition::Denied {
+                        reason: "approval denied".to_string(),
+                    }),
+                }
+            }
+        }
     }
 
     fn merge_summary(
@@ -1208,7 +1331,7 @@ mod tests {
     use sieve_types::{
         Action, Capability, CommandKnowledge, CommandSummary, Integrity, LlmModelConfig,
         LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision,
-        Resource, SinkCheck, SinkKey, Source, ValueLabel, ValueRef,
+        PolicyEvaluatedEvent, Resource, SinkCheck, SinkKey, Source, ValueLabel, ValueRef,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env::temp_dir;
@@ -1340,6 +1463,65 @@ mod tests {
                 run_id: request.run_id,
                 exit_code: Some(0),
                 artifacts: Vec::new(),
+            })
+        }
+    }
+
+    struct StubWebSearch;
+
+    #[async_trait]
+    impl WebSearchRunner for StubWebSearch {
+        fn connect_scope(&self) -> String {
+            "https://api.search.brave.com/res/v1/web/search".to_string()
+        }
+
+        async fn search(
+            &self,
+            request: BraveSearchRequest,
+        ) -> Result<BraveSearchResponse, WebSearchError> {
+            Ok(BraveSearchResponse {
+                query: request.query,
+                results: vec![sieve_types::BraveSearchResult {
+                    title: "stub".to_string(),
+                    url: "https://example.com/stub".to_string(),
+                    description: Some("stub result".to_string()),
+                }],
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturingWebSearch {
+        requests: StdMutex<Vec<BraveSearchRequest>>,
+    }
+
+    impl CapturingWebSearch {
+        fn requests(&self) -> Vec<BraveSearchRequest> {
+            self.requests.lock().expect("web search lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl WebSearchRunner for CapturingWebSearch {
+        fn connect_scope(&self) -> String {
+            "https://api.search.brave.com/res/v1/web/search".to_string()
+        }
+
+        async fn search(
+            &self,
+            request: BraveSearchRequest,
+        ) -> Result<BraveSearchResponse, WebSearchError> {
+            self.requests
+                .lock()
+                .map_err(|_| WebSearchError::Exec("web search lock poisoned".to_string()))?
+                .push(request.clone());
+            Ok(BraveSearchResponse {
+                query: request.query,
+                results: vec![sieve_types::BraveSearchResult {
+                    title: "captured".to_string(),
+                    url: "https://example.com/captured".to_string(),
+                    description: Some("captured result".to_string()),
+                }],
             })
         }
     }
@@ -1558,6 +1740,7 @@ mod tests {
                 },
             }),
             mainline: Arc::new(StubMainline),
+            web_search: Arc::new(StubWebSearch),
             planner: Arc::new(StubPlanner {
                 config: LlmModelConfig {
                     provider: LlmProvider::OpenAi,
@@ -1597,6 +1780,7 @@ mod tests {
                 },
             }),
             mainline: Arc::new(StubMainline),
+            web_search: Arc::new(StubWebSearch),
             planner: Arc::new(StubPlanner {
                 config: LlmModelConfig {
                     provider: LlmProvider::OpenAi,
@@ -1663,6 +1847,7 @@ mod tests {
                 },
             }),
             mainline: Arc::new(StubMainline),
+            web_search: Arc::new(StubWebSearch),
             planner: planner.clone(),
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),
@@ -1723,6 +1908,7 @@ mod tests {
                 },
             }),
             mainline: mainline.clone(),
+            web_search: Arc::new(StubWebSearch),
             planner: Arc::new(StubPlanner {
                 config: LlmModelConfig {
                     provider: LlmProvider::OpenAi,
@@ -1803,6 +1989,7 @@ mod tests {
                 },
             }),
             mainline: Arc::new(StubMainline),
+            web_search: Arc::new(StubWebSearch),
             planner: Arc::new(StubPlanner {
                 config: LlmModelConfig {
                     provider: LlmProvider::OpenAi,
@@ -2172,6 +2359,210 @@ mod tests {
             .is_empty());
         let planner_input = planner.captured_input();
         assert_eq!(planner_input.allowed_tools, vec!["endorse".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn orchestrate_planner_turn_executes_brave_search_when_policy_allows() {
+        let mut args = BTreeMap::new();
+        args.insert("query".to_string(), json!("rust tokio channels"));
+        args.insert("count".to_string(), json!(2));
+        let planner_output = PlannerTurnOutput {
+            thoughts: Some("search docs".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "brave_search".to_string(),
+                args,
+            }],
+        };
+
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(VecEventLog::default());
+        let planner = Arc::new(CapturingPlanner::new(planner_output));
+        let web_search = Arc::new(CapturingWebSearch::default());
+        let policy = TomlPolicyEngine::from_toml_str(
+            r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.search.brave.com/res/v1/web/search"
+"#,
+        )
+        .expect("policy parse");
+        let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+            shell: Arc::new(StubShell {
+                analysis: ShellAnalysis {
+                    knowledge: CommandKnowledge::Known,
+                    segments: vec![CommandSegment {
+                        argv: vec!["echo".to_string(), "unused".to_string()],
+                        operator_before: None,
+                    }],
+                    unsupported_constructs: Vec::new(),
+                },
+            }),
+            summaries: Arc::new(StubSummaries {
+                outcome: SummaryOutcome {
+                    knowledge: CommandKnowledge::Known,
+                    summary: Some(stub_summary()),
+                    reason: None,
+                },
+            }),
+            policy: Arc::new(policy),
+            quarantine: Arc::new(StubQuarantine {
+                report: QuarantineReport {
+                    run_id: RunId("run-1".to_string()),
+                    trace_path: "/tmp/sieve/trace".to_string(),
+                    stdout_path: None,
+                    stderr_path: None,
+                    attempted_capabilities: Vec::new(),
+                    exit_code: Some(0),
+                },
+            }),
+            mainline: Arc::new(StubMainline),
+            web_search: web_search.clone(),
+            planner,
+            approval_bus,
+            event_log: event_log.clone(),
+            clock: Arc::new(DeterministicClock::new(1000)),
+        }));
+
+        let output = runtime
+            .orchestrate_planner_turn(PlannerRunRequest {
+                run_id: RunId("run-brave".to_string()),
+                cwd: "/tmp".to_string(),
+                user_message: "search rust channels".to_string(),
+                allowed_tools: vec!["brave_search".to_string()],
+                previous_events: Vec::new(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("planner turn should pass");
+
+        assert_eq!(output.tool_results.len(), 1);
+        match &output.tool_results[0] {
+            PlannerToolResult::BraveSearch {
+                request,
+                disposition: WebSearchDisposition::Executed(response),
+            } => {
+                assert_eq!(request.query, "rust tokio channels");
+                assert_eq!(request.count, 2);
+                assert_eq!(response.query, "rust tokio channels");
+                assert_eq!(response.results.len(), 1);
+            }
+            other => panic!("expected brave search execution, got {other:?}"),
+        }
+
+        let requests = web_search.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].query, "rust tokio channels");
+        assert_eq!(requests[0].count, 2);
+
+        let policy_events: Vec<PolicyEvaluatedEvent> = event_log
+            .snapshot()
+            .into_iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::PolicyEvaluated(event) => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(policy_events.len(), 1);
+        assert_eq!(policy_events[0].decision.kind, PolicyDecisionKind::Allow);
+    }
+
+    #[tokio::test]
+    async fn orchestrate_planner_turn_denies_brave_search_without_allowed_capability() {
+        let mut args = BTreeMap::new();
+        args.insert("query".to_string(), json!("rust policy engine"));
+        let planner_output = PlannerTurnOutput {
+            thoughts: None,
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "brave_search".to_string(),
+                args,
+            }],
+        };
+
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(VecEventLog::default());
+        let planner = Arc::new(CapturingPlanner::new(planner_output));
+        let web_search = Arc::new(CapturingWebSearch::default());
+        let policy = TomlPolicyEngine::from_toml_str("").expect("policy parse");
+        let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+            shell: Arc::new(StubShell {
+                analysis: ShellAnalysis {
+                    knowledge: CommandKnowledge::Known,
+                    segments: vec![CommandSegment {
+                        argv: vec!["echo".to_string(), "unused".to_string()],
+                        operator_before: None,
+                    }],
+                    unsupported_constructs: Vec::new(),
+                },
+            }),
+            summaries: Arc::new(StubSummaries {
+                outcome: SummaryOutcome {
+                    knowledge: CommandKnowledge::Known,
+                    summary: Some(stub_summary()),
+                    reason: None,
+                },
+            }),
+            policy: Arc::new(policy),
+            quarantine: Arc::new(StubQuarantine {
+                report: QuarantineReport {
+                    run_id: RunId("run-1".to_string()),
+                    trace_path: "/tmp/sieve/trace".to_string(),
+                    stdout_path: None,
+                    stderr_path: None,
+                    attempted_capabilities: Vec::new(),
+                    exit_code: Some(0),
+                },
+            }),
+            mainline: Arc::new(StubMainline),
+            web_search: web_search.clone(),
+            planner,
+            approval_bus,
+            event_log: event_log.clone(),
+            clock: Arc::new(DeterministicClock::new(1000)),
+        }));
+
+        let output = runtime
+            .orchestrate_planner_turn(PlannerRunRequest {
+                run_id: RunId("run-brave-deny".to_string()),
+                cwd: "/tmp".to_string(),
+                user_message: "search rust policy".to_string(),
+                allowed_tools: vec!["brave_search".to_string()],
+                previous_events: Vec::new(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("planner turn should return deny disposition");
+
+        assert_eq!(output.tool_results.len(), 1);
+        match &output.tool_results[0] {
+            PlannerToolResult::BraveSearch {
+                request,
+                disposition: WebSearchDisposition::Denied { reason },
+            } => {
+                assert_eq!(request.query, "rust policy engine");
+                assert_eq!(request.count, 5);
+                assert!(reason.contains("missing capability"));
+            }
+            other => panic!("expected brave search deny, got {other:?}"),
+        }
+
+        assert!(web_search.requests().is_empty());
+        let policy_events: Vec<PolicyEvaluatedEvent> = event_log
+            .snapshot()
+            .into_iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::PolicyEvaluated(event) => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(policy_events.len(), 1);
+        assert_eq!(policy_events[0].decision.kind, PolicyDecisionKind::Deny);
     }
 
     #[tokio::test]
