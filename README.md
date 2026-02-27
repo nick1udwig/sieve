@@ -61,6 +61,13 @@ Approval responses in Telegram:
 - React `👍` (approve once) or `👎` (deny) on the approval message.
 - Existing explicit commands still work: `/approve_once <request_id>` and `/deny <request_id>`.
 
+Telegram 409 troubleshooting:
+- If app logs show `telegram poll failed ... error: 409`, another process is already calling
+  `getUpdates` for the same bot token.
+- Stop other bot pollers (other `sieve-app`/manual smoke runs/bot clients), then rerun.
+- Quick check:
+  - `ps -ef | rg 'sieve-app|manual-smoke|getUpdates|telegram'`
+
 Runtime JSONL logs now include both runtime events and conversation records, defaulting to
 `$SIEVE_HOME/logs/runtime-events.jsonl` (same base dir as trace logs).
 

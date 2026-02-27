@@ -40,3 +40,11 @@ Behavior:
 Config knobs:
 - `TelegramAdapterConfig.chat_id`
 - `TelegramAdapterConfig.poll_timeout_secs`
+
+## Troubleshooting
+
+`telegram ... 409` errors mean another process is consuming `getUpdates` for the same bot token.
+
+Fix:
+- stop other long-poll clients using that token
+- rerun this adapter/app
