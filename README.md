@@ -39,6 +39,13 @@ Expected result includes:
 - current working directory printed by `pwd`
 - `run-1 -> [Bash { command: "pwd", disposition: ExecuteMainline(...) }]`
 
+Approval smoke scripts:
+
+```bash
+./scripts/smoke-approval-expected.sh
+./scripts/smoke-requires-approval-expected.sh
+```
+
 Modes:
 - Single command mode: pass a CLI prompt (`cargo run -p sieve-app -- "review workspace status"`).
 - Long-running agent mode: omit CLI prompt. The app stays up, accepts prompts from stdin and
