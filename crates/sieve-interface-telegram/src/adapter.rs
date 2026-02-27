@@ -462,9 +462,9 @@ mod tests {
 
         let sent_messages = &adapter.poll.sent_messages;
         assert_eq!(sent_messages.len(), 1);
-        assert!(sent_messages[0].1.contains("command: rm -rf /tmp/scratch"));
-        assert!(sent_messages[0].1.contains("blocked_rule_id: deny-rm-rf"));
-        assert!(sent_messages[0].1.contains("reason: mutating command"));
+        assert!(sent_messages[0].1.contains("approval needed to run:"));
+        assert!(sent_messages[0].1.contains("`rm -rf /tmp/scratch`"));
+        assert!(sent_messages[0].1.contains("because mutating command"));
         assert!(sent_messages[0].1.contains("reply yes/y or react"));
     }
 

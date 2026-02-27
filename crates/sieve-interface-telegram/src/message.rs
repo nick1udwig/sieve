@@ -62,33 +62,20 @@ pub(crate) fn format_approval_requested(event: &ApprovalRequestedEvent) -> Strin
         .collect::<Vec<_>>()
         .join(" ; ");
 
-    let capabilities = if event.inferred_capabilities.is_empty() {
-        "none".to_string()
-    } else {
-        event
-            .inferred_capabilities
-            .iter()
-            .map(|cap| format!("{:?}.{:?} {}", cap.resource, cap.action, cap.scope))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-
     format!(
-        "approval needed\nrequest_id: {}\nrun_id: {}\ncommand: {}\ncapabilities: {}\nblocked_rule_id: {}\nreason: {}\n\napprove: reply yes/y or react 👍\nreject: reply no/n or react 👎\nalt: /approve_once {} or /deny {}",
-        event.request_id.0,
-        event.run_id.0,
+        "approval needed to run:\n`{}`\nbecause {}\n\napprove: reply yes/y or react 👍\nreject: reply no/n or react 👎",
         segments,
-        capabilities,
-        event.blocked_rule_id,
         event.reason,
-        event.request_id.0,
-        event.request_id.0
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sieve_types::{
+        Action, ApprovalRequestId, ApprovalRequestedEvent, Capability, CommandSegment, Resource,
+        RunId,
+    };
 
     #[test]
     fn parse_command_accepts_bot_mention_suffix() {
@@ -131,5 +118,38 @@ mod tests {
             Some(TelegramApprovalAction::ApproveOnce)
         );
         assert_eq!(parse_reaction_action(&["✨".to_string()]), None);
+    }
+
+    #[test]
+    fn format_approval_requested_uses_minimal_human_copy() {
+        let message = format_approval_requested(&ApprovalRequestedEvent {
+            schema_version: 1,
+            request_id: ApprovalRequestId("approval-1".to_string()),
+            run_id: RunId("run-1".to_string()),
+            command_segments: vec![CommandSegment {
+                argv: vec![
+                    "rm".to_string(),
+                    "-rf".to_string(),
+                    "/tmp/sieve-live-deny-target".to_string(),
+                ],
+                operator_before: None,
+            }],
+            inferred_capabilities: vec![Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "/tmp/sieve-live-deny-target".to_string(),
+            }],
+            blocked_rule_id: "deny-rm-rf".to_string(),
+            reason: "rm -rf requires explicit approval".to_string(),
+            created_at_ms: 1,
+        });
+
+        assert!(message.contains("approval needed to run:"));
+        assert!(message.contains("`rm -rf /tmp/sieve-live-deny-target`"));
+        assert!(message.contains("because rm -rf requires explicit approval"));
+        assert!(message.contains("approve: reply yes/y or react 👍"));
+        assert!(message.contains("reject: reply no/n or react 👎"));
+        assert!(!message.contains("request_id:"));
+        assert!(!message.contains("blocked_rule_id:"));
     }
 }
