@@ -33,6 +33,9 @@ impl<E> TelegramBotApiLongPoll<E>
 where
     E: CommandExecutor,
 {
+    const ALLOWED_UPDATES_QUERY: &'static str =
+        "allowed_updates=%5B%22message%22%2C%22message_reaction%22%5D";
+
     #[cfg(test)]
     fn with_executor(token: impl Into<String>, base_url: impl Into<String>, executor: E) -> Self {
         Self {
@@ -44,8 +47,11 @@ where
 
     fn get_updates_url(&self, offset: Option<i64>, timeout_secs: u16) -> String {
         let mut url = format!(
-            "{}/bot{}/getUpdates?timeout={}",
-            self.base_url, self.token, timeout_secs
+            "{}/bot{}/getUpdates?timeout={}&{}",
+            self.base_url,
+            self.token,
+            timeout_secs,
+            Self::ALLOWED_UPDATES_QUERY
         );
         if let Some(offset) = offset {
             url.push_str(&format!("&offset={offset}"));
@@ -296,7 +302,32 @@ mod tests {
         assert_eq!(commands[0].0, "curl");
         assert_eq!(commands[0].1[0], "-sS");
         assert_eq!(commands[0].1[1], "--fail");
-        assert!(commands[0].1[2].contains("/bottoken_abc/getUpdates?timeout=30&offset=9"));
+        let url = &commands[0].1[2];
+        assert!(url.contains("/bottoken_abc/getUpdates?"));
+        assert!(url.contains("timeout=30"));
+        assert!(url.contains("offset=9"));
+        assert!(url.contains("allowed_updates=%5B%22message%22%2C%22message_reaction%22%5D"));
+    }
+
+    #[test]
+    fn get_updates_requests_message_reaction_update_type() {
+        let mut poller = TelegramBotApiLongPoll::with_executor(
+            "token_abc",
+            "https://example.test",
+            TestExecutor::new(vec![Ok("{\"ok\":true,\"result\":[]}".to_string())]),
+        );
+
+        poller
+            .get_updates(Some(1), 30)
+            .expect("get updates must succeed");
+
+        let commands = &poller.executor.commands;
+        assert_eq!(commands.len(), 1);
+        let url = &commands[0].1[2];
+        assert!(
+            url.contains("allowed_updates=%5B%22message%22%2C%22message_reaction%22%5D"),
+            "expected encoded allowed_updates with message_reaction in {url}"
+        );
     }
 
     #[test]

@@ -60,6 +60,8 @@ Approval responses in Telegram:
 - `yes` or `y` (approve once), `no` or `n` (deny) when replying to the approval message.
 - React `👍` (approve once) or `👎` (deny) on the approval message.
 - Existing explicit commands still work: `/approve_once <request_id>` and `/deny <request_id>`.
+- Reaction approvals require Telegram `message_reaction` updates; `sieve-app` now requests these via
+  `getUpdates allowed_updates`, and Telegram requires the bot to be an admin in group chats.
 
 Telegram 409 troubleshooting:
 - If app logs show `telegram poll failed ... error: 409`, another process is already calling

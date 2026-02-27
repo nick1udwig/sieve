@@ -36,6 +36,8 @@ Behavior:
   - `/deny apr_manual_smoke`
   - `yes`/`y` approve and `no`/`n` deny when replying to the approval message.
   - `👍` approve and `👎` deny when reacting to the approval message.
+  - Reaction handling depends on Telegram `message_reaction` updates; this adapter requests them
+    via `allowed_updates`, and Telegram requires bot admin permissions in group chats.
 
 Config knobs:
 - `TelegramAdapterConfig.chat_id`
