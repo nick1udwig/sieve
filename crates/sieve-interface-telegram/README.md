@@ -34,6 +34,8 @@ Behavior:
 - Map commands to approval result:
   - `/approve_once apr_manual_smoke` (or `/approve`)
   - `/deny apr_manual_smoke`
+  - `yes`/`y` approve and `no`/`n` deny when replying to the approval message.
+  - `👍` approve and `👎` deny when reacting to the approval message.
 
 Config knobs:
 - `TelegramAdapterConfig.chat_id`

@@ -20,13 +20,23 @@ Inspired by:
    - `TELEGRAM_CHAT_ID`
    - optional: `SIEVE_POLICY_PATH` (defaults to `docs/policy/baseline-policy.toml`)
    - optional: `SIEVE_HOME` (defaults to `~/.sieve`)
+   - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
 2. Start the app:
 
 ```bash
 cargo run -p sieve-app -- "review workspace status"
 ```
 
-If no CLI prompt is passed, `sieve-app` reads prompts from stdin (one line per turn).
+Modes:
+- Single command mode: pass a CLI prompt (`cargo run -p sieve-app -- "review workspace status"`).
+- Long-running agent mode: omit CLI prompt. The app stays up, accepts prompts from stdin and
+  Telegram chat, and executes turns concurrently (bounded by `SIEVE_MAX_CONCURRENT_TURNS`).
+
+Approval responses in Telegram:
+- `yes` or `y` (approve once), `no` or `n` (deny) when replying to the approval message.
+- React `👍` (approve once) or `👎` (deny) on the approval message.
+- Existing explicit commands still work: `/approve_once <request_id>` and `/deny <request_id>`.
+
 Runtime JSONL logs now include both runtime events and conversation records, defaulting to
 `$SIEVE_HOME/logs/runtime-events.jsonl` (same base dir as trace logs).
 

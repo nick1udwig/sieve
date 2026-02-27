@@ -5,7 +5,7 @@ use serde::Serialize;
 use sieve_command_summaries::DefaultCommandSummarizer;
 use sieve_interface_telegram::{
     SystemClock as TelegramClock, TelegramAdapter, TelegramAdapterConfig, TelegramBotApiLongPoll,
-    TelegramEventBridge,
+    TelegramEventBridge, TelegramPrompt,
 };
 use sieve_llm::OpenAiPlannerModel;
 use sieve_policy::TomlPolicyEngine;
@@ -22,11 +22,14 @@ use std::env;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc as tokio_mpsc, Semaphore};
 
+#[derive(Clone)]
 struct AppConfig {
     telegram_bot_token: String,
     telegram_chat_id: i64,
@@ -37,6 +40,7 @@ struct AppConfig {
     allowed_tools: Vec<String>,
     unknown_mode: UnknownMode,
     uncertain_mode: UncertainMode,
+    max_concurrent_turns: usize,
 }
 
 const DEFAULT_POLICY_PATH: &str = "docs/policy/baseline-policy.toml";
@@ -60,6 +64,10 @@ impl AppConfig {
         if allowed_tools.is_empty() {
             return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
         }
+        let max_concurrent_turns = parse_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
+        if max_concurrent_turns == 0 {
+            return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
+        }
 
         Ok(Self {
             telegram_bot_token,
@@ -71,6 +79,7 @@ impl AppConfig {
             allowed_tools,
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
             uncertain_mode: parse_uncertain_mode(env::var("SIEVE_UNCERTAIN_MODE").ok())?,
+            max_concurrent_turns,
         })
     }
 }
@@ -104,6 +113,15 @@ fn parse_u16_env(key: &str, default: u16) -> Result<u16, String> {
     match env::var(key) {
         Ok(raw) => raw
             .parse::<u16>()
+            .map_err(|err| format!("invalid {key}: {err}")),
+        Err(_) => Ok(default),
+    }
+}
+
+fn parse_usize_env(key: &str, default: usize) -> Result<usize, String> {
+    match env::var(key) {
+        Ok(raw) => raw
+            .parse::<usize>()
             .map_err(|err| format!("invalid {key}: {err}")),
         Err(_) => Ok(default),
     }
@@ -186,13 +204,48 @@ fn parse_uncertain_mode(raw: Option<String>) -> Result<UncertainMode, String> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptSource {
+    Stdin,
+    Telegram,
+}
+
+impl PromptSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            PromptSource::Stdin => "stdin",
+            PromptSource::Telegram => "telegram",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IngressPrompt {
+    source: PromptSource,
+    text: String,
+}
+
 struct RuntimeBridge {
     approval_bus: Arc<InProcessApprovalBus>,
+    prompt_tx: Option<tokio_mpsc::UnboundedSender<IngressPrompt>>,
 }
 
 impl RuntimeBridge {
     fn new(approval_bus: Arc<InProcessApprovalBus>) -> Self {
-        Self { approval_bus }
+        Self {
+            approval_bus,
+            prompt_tx: None,
+        }
+    }
+
+    fn with_prompt_tx(
+        approval_bus: Arc<InProcessApprovalBus>,
+        prompt_tx: tokio_mpsc::UnboundedSender<IngressPrompt>,
+    ) -> Self {
+        Self {
+            approval_bus,
+            prompt_tx: Some(prompt_tx),
+        }
     }
 }
 
@@ -205,6 +258,21 @@ impl TelegramEventBridge for RuntimeBridge {
                 "telegram bridge failed to resolve approval: {}",
                 format_approval_bus_error(&err)
             );
+        }
+    }
+
+    fn submit_prompt(&self, prompt: TelegramPrompt) {
+        let text = prompt.text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        if let Some(prompt_tx) = &self.prompt_tx {
+            if let Err(err) = prompt_tx.send(IngressPrompt {
+                source: PromptSource::Telegram,
+                text,
+            }) {
+                eprintln!("failed to enqueue telegram prompt: {err}");
+            }
         }
     }
 }
@@ -269,7 +337,7 @@ impl RuntimeEventLog for FanoutRuntimeEventLog {
 
 fn spawn_telegram_loop(
     cfg: &AppConfig,
-    approval_bus: Arc<InProcessApprovalBus>,
+    bridge: RuntimeBridge,
     event_rx: Receiver<RuntimeEvent>,
 ) -> thread::JoinHandle<()> {
     let bot_token = cfg.telegram_bot_token.clone();
@@ -282,7 +350,7 @@ fn spawn_telegram_loop(
                 chat_id,
                 poll_timeout_secs,
             },
-            RuntimeBridge::new(approval_bus),
+            bridge,
             TelegramBotApiLongPoll::new(bot_token),
             TelegramClock,
         );
@@ -311,6 +379,35 @@ fn spawn_telegram_loop(
             if let Err(err) = adapter.poll_once() {
                 eprintln!("telegram poll failed: {err:?}");
                 thread::sleep(Duration::from_secs(1));
+            }
+        }
+    })
+}
+
+fn spawn_stdin_prompt_loop(
+    prompt_tx: tokio_mpsc::UnboundedSender<IngressPrompt>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(line) => {
+                    let prompt = line.trim();
+                    if prompt.is_empty() {
+                        continue;
+                    }
+                    if let Err(err) = prompt_tx.send(IngressPrompt {
+                        source: PromptSource::Stdin,
+                        text: prompt.to_string(),
+                    }) {
+                        eprintln!("stdin prompt loop stopped: {err}");
+                        break;
+                    }
+                }
+                Err(err) => {
+                    eprintln!("stdin read failed: {err}");
+                    break;
+                }
             }
         }
     })
@@ -389,8 +486,47 @@ async fn run_turn(
     Ok(())
 }
 
+async fn run_agent_loop(
+    runtime: Arc<RuntimeOrchestrator>,
+    event_log: Arc<FanoutRuntimeEventLog>,
+    cfg: AppConfig,
+    mut prompt_rx: tokio_mpsc::UnboundedReceiver<IngressPrompt>,
+) {
+    let semaphore = Arc::new(Semaphore::new(cfg.max_concurrent_turns));
+    let next_run_id = Arc::new(AtomicU64::new(1));
+
+    eprintln!(
+        "sieve-app agent mode ready; prompts accepted from stdin + Telegram chat {}",
+        cfg.telegram_chat_id
+    );
+
+    while let Some(prompt) = prompt_rx.recv().await {
+        let permit = match semaphore.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => break,
+        };
+
+        let runtime = runtime.clone();
+        let event_log = event_log.clone();
+        let cfg = cfg.clone();
+        let source = prompt.source;
+        let text = prompt.text;
+        let run_index = next_run_id.fetch_add(1, Ordering::Relaxed);
+
+        tokio::spawn(async move {
+            let _permit = permit;
+            if let Err(err) = run_turn(&runtime, &event_log, &cfg, run_index, text).await {
+                eprintln!("run-{run_index} ({}) failed: {err}", source.as_str());
+            }
+        });
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli_prompt = env::args().skip(1).collect::<Vec<String>>().join(" ");
+    let single_command_mode = !cli_prompt.trim().is_empty();
+
     let cfg =
         AppConfig::from_env().map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
     let policy_toml = fs::read_to_string(&cfg.policy_path)?;
@@ -399,13 +535,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let planner = OpenAiPlannerModel::from_env()?;
     let approval_bus = Arc::new(InProcessApprovalBus::new());
     let (event_tx, event_rx) = mpsc::channel();
-    let telegram_thread = spawn_telegram_loop(&cfg, approval_bus.clone(), event_rx);
+    let (prompt_rx, _stdin_thread, bridge) = if single_command_mode {
+        (None, None, RuntimeBridge::new(approval_bus.clone()))
+    } else {
+        let (prompt_tx, prompt_rx) = tokio_mpsc::unbounded_channel();
+        let stdin_thread = spawn_stdin_prompt_loop(prompt_tx.clone());
+        (
+            Some(prompt_rx),
+            Some(stdin_thread),
+            RuntimeBridge::with_prompt_tx(approval_bus.clone(), prompt_tx),
+        )
+    };
+    let telegram_thread = spawn_telegram_loop(&cfg, bridge, event_rx);
     let event_log = Arc::new(FanoutRuntimeEventLog::new(
         cfg.event_log_path.clone(),
         event_tx,
     )?);
 
-    let runtime = RuntimeOrchestrator::new(RuntimeDeps {
+    let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
         shell: Arc::new(BasicShellAnalyzer),
         summaries: Arc::new(DefaultCommandSummarizer),
         policy: Arc::new(policy),
@@ -415,29 +562,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         approval_bus,
         event_log: event_log.clone(),
         clock: Arc::new(RuntimeClock),
-    });
+    }));
 
-    let cli_prompt = env::args().skip(1).collect::<Vec<String>>().join(" ");
-    if !cli_prompt.trim().is_empty() {
+    if single_command_mode {
         run_turn(&runtime, &event_log, &cfg, 1, cli_prompt).await?;
+        drop(runtime);
+        drop(event_log);
+        let _ = telegram_thread.join();
     } else {
-        eprintln!("sieve-app ready; enter one prompt per line");
-        let stdin = io::stdin();
-        let mut run_index = 1_u64;
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let prompt = line.trim();
-            if prompt.is_empty() {
-                continue;
-            }
-            run_turn(&runtime, &event_log, &cfg, run_index, prompt.to_string()).await?;
-            run_index += 1;
-        }
+        run_agent_loop(
+            runtime.clone(),
+            event_log.clone(),
+            cfg.clone(),
+            prompt_rx.expect("agent mode prompt receiver missing"),
+        )
+        .await;
     }
 
-    drop(runtime);
-    drop(event_log);
-    let _ = telegram_thread.join();
     Ok(())
 }
 
@@ -489,6 +630,22 @@ mod tests {
             .await
             .expect("wait resolved");
         assert_eq!(resolved.action, ApprovalAction::ApproveOnce);
+    }
+
+    #[tokio::test]
+    async fn runtime_bridge_submit_prompt_enqueues_telegram_input() {
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let (tx, mut rx) = tokio_mpsc::unbounded_channel();
+        let bridge = RuntimeBridge::with_prompt_tx(approval_bus, tx);
+
+        bridge.submit_prompt(TelegramPrompt {
+            chat_id: 42,
+            text: "  check logs  ".to_string(),
+        });
+
+        let prompt = rx.recv().await.expect("expected prompt");
+        assert_eq!(prompt.source, PromptSource::Telegram);
+        assert_eq!(prompt.text, "check logs");
     }
 
     #[tokio::test]

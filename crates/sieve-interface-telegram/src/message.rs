@@ -33,6 +33,25 @@ pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
     Some(TelegramApprovalCommand { action, request_id })
 }
 
+pub(crate) fn parse_short_action(text: &str) -> Option<TelegramApprovalAction> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "yes" | "y" => Some(TelegramApprovalAction::ApproveOnce),
+        "no" | "n" => Some(TelegramApprovalAction::Deny),
+        _ => None,
+    }
+}
+
+pub(crate) fn parse_reaction_action(emoji: &[String]) -> Option<TelegramApprovalAction> {
+    for entry in emoji {
+        match entry.as_str() {
+            "👍" => return Some(TelegramApprovalAction::ApproveOnce),
+            "👎" => return Some(TelegramApprovalAction::Deny),
+            _ => {}
+        }
+    }
+    None
+}
+
 pub(crate) fn format_approval_requested(event: &ApprovalRequestedEvent) -> String {
     let segments = event
         .command_segments
@@ -53,13 +72,15 @@ pub(crate) fn format_approval_requested(event: &ApprovalRequestedEvent) -> Strin
     };
 
     format!(
-        "approval requested\nrequest_id: {}\nrun_id: {}\nargv: {}\ncapabilities: {}\nblocked_rule_id: {}\nreason: {}",
+        "approval needed\nrequest_id: {}\nrun_id: {}\ncommand: {}\ncapabilities: {}\nblocked_rule_id: {}\nreason: {}\n\napprove: reply yes/y or react 👍\nreject: reply no/n or react 👎\nalt: /approve_once {} or /deny {}",
         event.request_id.0,
         event.run_id.0,
         segments,
         capabilities,
         event.blocked_rule_id,
-        event.reason
+        event.reason,
+        event.request_id.0,
+        event.request_id.0
     )
 }
 
@@ -81,4 +102,40 @@ pub(crate) fn format_quarantine_completed(event: &QuarantineCompletedEvent) -> S
         "quarantine completed\nrun_id: {}\ntrace_path: {}\nexit_code: {:?}",
         event.run_id.0, event.report.trace_path, event.report.exit_code
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_short_action_supports_yes_and_no() {
+        assert_eq!(
+            parse_short_action("yes"),
+            Some(TelegramApprovalAction::ApproveOnce)
+        );
+        assert_eq!(
+            parse_short_action("Y"),
+            Some(TelegramApprovalAction::ApproveOnce)
+        );
+        assert_eq!(parse_short_action("n"), Some(TelegramApprovalAction::Deny));
+        assert_eq!(parse_short_action("maybe"), None);
+    }
+
+    #[test]
+    fn parse_reaction_action_supports_thumb_reactions() {
+        assert_eq!(
+            parse_reaction_action(&["👍".to_string()]),
+            Some(TelegramApprovalAction::ApproveOnce)
+        );
+        assert_eq!(
+            parse_reaction_action(&["👎".to_string()]),
+            Some(TelegramApprovalAction::Deny)
+        );
+        assert_eq!(
+            parse_reaction_action(&["✨".to_string(), "👍".to_string()]),
+            Some(TelegramApprovalAction::ApproveOnce)
+        );
+        assert_eq!(parse_reaction_action(&["✨".to_string()]), None);
+    }
 }

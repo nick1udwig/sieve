@@ -1,4 +1,5 @@
 /target/
 .env
 .env.local
+.sieve/
 *.swp

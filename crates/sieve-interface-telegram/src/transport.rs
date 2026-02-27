@@ -1,4 +1,4 @@
-use crate::{TelegramLongPoll, TelegramMessage, TelegramUpdate};
+use crate::{TelegramLongPoll, TelegramMessage, TelegramMessageReaction, TelegramUpdate};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -82,7 +82,7 @@ where
             .collect()
     }
 
-    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<(), String> {
+    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String> {
         let payload = serde_json::to_string(&TelegramSendMessageRequest { chat_id, text })
             .map_err(|err| format!("telegram sendMessage encode failed: {err}"))?;
 
@@ -104,8 +104,8 @@ where
         let response: TelegramApiResponse<serde_json::Value> = serde_json::from_str(&raw)
             .map_err(|err| format!("telegram sendMessage decode failed: {err}"))?;
 
-        response.into_result("sendMessage")?;
-        Ok(())
+        let value = response.into_result("sendMessage")?;
+        Ok(value.get("message_id").and_then(serde_json::Value::as_i64))
     }
 }
 
@@ -143,13 +143,30 @@ fn map_update(item: TelegramGetUpdatesItem) -> Result<TelegramUpdate, String> {
     let message = item.message.and_then(|message| {
         message.text.map(|text| TelegramMessage {
             chat_id: message.chat.id,
+            message_id: message.message_id,
+            reply_to_message_id: message.reply_to_message.map(|reply| reply.message_id),
             text,
         })
     });
+    let message_reaction = item
+        .message_reaction
+        .map(|reaction| TelegramMessageReaction {
+            chat_id: reaction.chat.id,
+            message_id: reaction.message_id,
+            emoji: reaction
+                .new_reaction
+                .into_iter()
+                .filter_map(|reaction| match reaction.kind.as_str() {
+                    "emoji" => reaction.emoji,
+                    _ => None,
+                })
+                .collect(),
+        });
 
     Ok(TelegramUpdate {
         update_id: item.update_id,
         message,
+        message_reaction,
     })
 }
 
@@ -180,17 +197,40 @@ impl<T> TelegramApiResponse<T> {
 struct TelegramGetUpdatesItem {
     update_id: i64,
     message: Option<TelegramIncomingMessage>,
+    message_reaction: Option<TelegramIncomingMessageReaction>,
 }
 
 #[derive(Debug, Deserialize)]
 struct TelegramIncomingMessage {
+    message_id: i64,
     chat: TelegramIncomingChat,
     text: Option<String>,
+    reply_to_message: Option<TelegramIncomingMessageReply>,
 }
 
 #[derive(Debug, Deserialize)]
 struct TelegramIncomingChat {
     id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramIncomingMessageReply {
+    message_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramIncomingMessageReaction {
+    chat: TelegramIncomingChat,
+    message_id: i64,
+    #[serde(default)]
+    new_reaction: Vec<TelegramIncomingReactionType>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramIncomingReactionType {
+    #[serde(rename = "type")]
+    kind: String,
+    emoji: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,7 +276,7 @@ mod tests {
             "token_abc",
             "https://example.test",
             TestExecutor::new(vec![Ok(
-                "{\"ok\":true,\"result\":[{\"update_id\":5,\"message\":{\"chat\":{\"id\":42},\"text\":\"/approve apr_1\"}}]}"
+                "{\"ok\":true,\"result\":[{\"update_id\":5,\"message\":{\"message_id\":77,\"chat\":{\"id\":42},\"text\":\"/approve apr_1\"}}]}"
                     .to_string(),
             )]),
         );
@@ -248,6 +288,8 @@ mod tests {
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].update_id, 5);
         assert_eq!(updates[0].message.as_ref().expect("msg").chat_id, 42);
+        assert_eq!(updates[0].message.as_ref().expect("msg").message_id, 77);
+        assert!(updates[0].message_reaction.is_none());
 
         let commands = &poller.executor.commands;
         assert_eq!(commands.len(), 1);
@@ -262,12 +304,15 @@ mod tests {
         let mut poller = TelegramBotApiLongPoll::with_executor(
             "token_abc",
             "https://example.test",
-            TestExecutor::new(vec![Ok("{\"ok\":true,\"result\":{}}".to_string())]),
+            TestExecutor::new(vec![Ok(
+                "{\"ok\":true,\"result\":{\"message_id\":123}}".to_string()
+            )]),
         );
 
-        poller
+        let message_id = poller
             .send_message(42, "hi")
             .expect("send message must succeed");
+        assert_eq!(message_id, Some(123));
 
         let commands = &poller.executor.commands;
         assert_eq!(commands.len(), 1);
@@ -293,5 +338,31 @@ mod tests {
 
         let err = poller.get_updates(None, 5).expect_err("must fail");
         assert!(err.contains("Forbidden"));
+    }
+
+    #[test]
+    fn maps_message_reaction_updates() {
+        let mut poller = TelegramBotApiLongPoll::with_executor(
+            "token_abc",
+            "https://example.test",
+            TestExecutor::new(vec![Ok(
+                "{\"ok\":true,\"result\":[{\"update_id\":6,\"message_reaction\":{\"chat\":{\"id\":42},\"message_id\":991,\"new_reaction\":[{\"type\":\"emoji\",\"emoji\":\"👍\"}]}}]}"
+                    .to_string(),
+            )]),
+        );
+
+        let updates = poller
+            .get_updates(None, 30)
+            .expect("get updates must succeed");
+        assert_eq!(updates.len(), 1);
+        assert!(updates[0].message.is_none());
+        assert_eq!(
+            updates[0]
+                .message_reaction
+                .as_ref()
+                .expect("reaction")
+                .emoji,
+            vec!["👍".to_string()]
+        );
     }
 }

@@ -28,6 +28,8 @@ pub trait TelegramEventBridge: Send + Sync {
     fn publish_runtime_event(&self, event: &RuntimeEvent);
 
     fn submit_approval(&self, approval: ApprovalResolvedEvent);
+
+    fn submit_prompt(&self, _prompt: TelegramPrompt) {}
 }
 
 pub trait TelegramLongPoll: Send {
@@ -37,7 +39,7 @@ pub trait TelegramLongPoll: Send {
         timeout_secs: u16,
     ) -> Result<Vec<TelegramUpdate>, String>;
 
-    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<(), String>;
+    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String>;
 }
 
 pub trait Clock: Send + Sync {
@@ -59,6 +61,8 @@ impl Clock for SystemClock {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TelegramMessage {
     pub chat_id: i64,
+    pub message_id: i64,
+    pub reply_to_message_id: Option<i64>,
     pub text: String,
 }
 
@@ -66,6 +70,20 @@ pub struct TelegramMessage {
 pub struct TelegramUpdate {
     pub update_id: i64,
     pub message: Option<TelegramMessage>,
+    pub message_reaction: Option<TelegramMessageReaction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramMessageReaction {
+    pub chat_id: i64,
+    pub message_id: i64,
+    pub emoji: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramPrompt {
+    pub chat_id: i64,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

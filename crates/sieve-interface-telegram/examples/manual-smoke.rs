@@ -65,7 +65,9 @@ fn main() {
         .expect("failed to publish approval request");
 
     println!("sent sample approval request to Telegram");
-    println!("reply in chat with '/approve_once apr_manual_smoke' or '/deny apr_manual_smoke'");
+    println!(
+        "approve: reply yes/y, react 👍, or /approve_once apr_manual_smoke; deny: reply no/n, react 👎, or /deny apr_manual_smoke"
+    );
 
     loop {
         adapter.poll_once().expect("telegram poll failed");
