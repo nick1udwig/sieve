@@ -149,6 +149,7 @@ fn map_update(item: TelegramGetUpdatesItem) -> Result<TelegramUpdate, String> {
     let message = item.message.and_then(|message| {
         message.text.map(|text| TelegramMessage {
             chat_id: message.chat.id,
+            sender_user_id: message.from.map(|user| user.id),
             message_id: message.message_id,
             reply_to_message_id: message.reply_to_message.map(|reply| reply.message_id),
             text,
@@ -158,6 +159,7 @@ fn map_update(item: TelegramGetUpdatesItem) -> Result<TelegramUpdate, String> {
         .message_reaction
         .map(|reaction| TelegramMessageReaction {
             chat_id: reaction.chat.id,
+            sender_user_id: reaction.user.map(|user| user.id),
             message_id: reaction.message_id,
             emoji: reaction
                 .new_reaction
@@ -210,6 +212,7 @@ struct TelegramGetUpdatesItem {
 struct TelegramIncomingMessage {
     message_id: i64,
     chat: TelegramIncomingChat,
+    from: Option<TelegramIncomingUser>,
     text: Option<String>,
     reply_to_message: Option<TelegramIncomingMessageReply>,
 }
@@ -228,8 +231,14 @@ struct TelegramIncomingMessageReply {
 struct TelegramIncomingMessageReaction {
     chat: TelegramIncomingChat,
     message_id: i64,
+    user: Option<TelegramIncomingUser>,
     #[serde(default)]
     new_reaction: Vec<TelegramIncomingReactionType>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramIncomingUser {
+    id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,7 +291,7 @@ mod tests {
             "token_abc",
             "https://example.test",
             TestExecutor::new(vec![Ok(
-                "{\"ok\":true,\"result\":[{\"update_id\":5,\"message\":{\"message_id\":77,\"chat\":{\"id\":42},\"text\":\"/approve apr_1\"}}]}"
+                "{\"ok\":true,\"result\":[{\"update_id\":5,\"message\":{\"message_id\":77,\"chat\":{\"id\":42},\"from\":{\"id\":1001},\"text\":\"/approve apr_1\"}}]}"
                     .to_string(),
             )]),
         );
@@ -294,6 +303,10 @@ mod tests {
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].update_id, 5);
         assert_eq!(updates[0].message.as_ref().expect("msg").chat_id, 42);
+        assert_eq!(
+            updates[0].message.as_ref().expect("msg").sender_user_id,
+            Some(1001)
+        );
         assert_eq!(updates[0].message.as_ref().expect("msg").message_id, 77);
         assert!(updates[0].message_reaction.is_none());
 
@@ -377,7 +390,7 @@ mod tests {
             "token_abc",
             "https://example.test",
             TestExecutor::new(vec![Ok(
-                "{\"ok\":true,\"result\":[{\"update_id\":6,\"message_reaction\":{\"chat\":{\"id\":42},\"message_id\":991,\"new_reaction\":[{\"type\":\"emoji\",\"emoji\":\"👍\"}]}}]}"
+                "{\"ok\":true,\"result\":[{\"update_id\":6,\"message_reaction\":{\"chat\":{\"id\":42},\"message_id\":991,\"user\":{\"id\":1002},\"new_reaction\":[{\"type\":\"emoji\",\"emoji\":\"👍\"}]}}]}"
                     .to_string(),
             )]),
         );
@@ -387,6 +400,14 @@ mod tests {
             .expect("get updates must succeed");
         assert_eq!(updates.len(), 1);
         assert!(updates[0].message.is_none());
+        assert_eq!(
+            updates[0]
+                .message_reaction
+                .as_ref()
+                .expect("reaction")
+                .sender_user_id,
+            Some(1002)
+        );
         assert_eq!(
             updates[0]
                 .message_reaction

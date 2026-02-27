@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use sieve_types::{ApprovalResolvedEvent, RuntimeEvent, UnixMillis};
+use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod adapter;
@@ -13,6 +14,7 @@ pub use transport::TelegramBotApiLongPoll;
 pub struct TelegramAdapterConfig {
     pub chat_id: i64,
     pub poll_timeout_secs: u16,
+    pub allowed_sender_user_ids: Option<BTreeSet<i64>>,
 }
 
 impl Default for TelegramAdapterConfig {
@@ -20,6 +22,7 @@ impl Default for TelegramAdapterConfig {
         Self {
             chat_id: 0,
             poll_timeout_secs: 30,
+            allowed_sender_user_ids: None,
         }
     }
 }
@@ -61,6 +64,7 @@ impl Clock for SystemClock {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TelegramMessage {
     pub chat_id: i64,
+    pub sender_user_id: Option<i64>,
     pub message_id: i64,
     pub reply_to_message_id: Option<i64>,
     pub text: String,
@@ -76,6 +80,7 @@ pub struct TelegramUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TelegramMessageReaction {
     pub chat_id: i64,
+    pub sender_user_id: Option<i64>,
     pub message_id: i64,
     pub emoji: Vec<String>,
 }

@@ -18,6 +18,7 @@ Inspired by:
    - `SIEVE_PLANNER_MODEL`
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
+   - optional: `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` (CSV Telegram user IDs allowed to prompt/approve)
    - optional: `SIEVE_POLICY_PATH` (defaults to `docs/policy/baseline-policy.toml`)
    - optional: `SIEVE_HOME` (defaults to `~/.sieve`)
    - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
@@ -60,6 +61,7 @@ Approval responses in Telegram:
 - `yes` or `y` (approve once), `no` or `n` (deny) when replying to the approval message.
 - React `👍` (approve once) or `👎` (deny) on the approval message.
 - Existing explicit commands still work: `/approve_once <request_id>` and `/deny <request_id>`.
+- Optional sender lock-down: set `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` to restrict prompts and approvals to listed Telegram user IDs.
 - Reaction approvals require Telegram `message_reaction` updates; `sieve-app` now requests these via
   `getUpdates allowed_updates`, and Telegram requires the bot to be an admin in group chats.
 
@@ -74,3 +76,16 @@ Runtime JSONL logs now include both runtime events and conversation records, def
 `$SIEVE_HOME/logs/runtime-events.jsonl` (same base dir as trace logs).
 
 Baseline policy file: `docs/policy/baseline-policy.toml`.
+
+## Live LLM Runtime Tests
+
+Runtime now has live OpenAI planner integration tests that exercise full planner->runtime tool flows (`bash`, `endorse`, `declassify`), including approval handling.
+
+```bash
+SIEVE_RUN_OPENAI_LIVE=1 OPENAI_API_KEY=... cargo test -p sieve-runtime --test e2e_live_llm_openai -- --nocapture
+```
+
+Optional env overrides:
+- `SIEVE_PLANNER_MODEL` (default: `gpt-4o-mini`)
+- `SIEVE_PLANNER_API_BASE`
+- `SIEVE_PLANNER_OPENAI_API_KEY` (takes precedence over `OPENAI_API_KEY`)

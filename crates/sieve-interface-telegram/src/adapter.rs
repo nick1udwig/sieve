@@ -94,6 +94,9 @@ where
             if message.chat_id != self.config.chat_id {
                 return Ok(());
             }
+            if !self.sender_allowed(message.sender_user_id) {
+                return Ok(());
+            }
 
             if let Some(command) = parse_command(&message.text) {
                 self.resolve_approval(command.action, command.request_id)?;
@@ -131,6 +134,9 @@ where
             if reaction.chat_id != self.config.chat_id {
                 return Ok(());
             }
+            if !self.sender_allowed(reaction.sender_user_id) {
+                return Ok(());
+            }
             let Some(action) = parse_reaction_action(&reaction.emoji) else {
                 return Ok(());
             };
@@ -145,6 +151,15 @@ where
         }
 
         Ok(())
+    }
+
+    fn sender_allowed(&self, sender_user_id: Option<i64>) -> bool {
+        match &self.config.allowed_sender_user_ids {
+            Some(allowed_sender_user_ids) => sender_user_id
+                .map(|user_id| allowed_sender_user_ids.contains(&user_id))
+                .unwrap_or(false),
+            None => true,
+        }
     }
 
     fn select_request_for_implicit_action(
@@ -336,6 +351,7 @@ mod tests {
             update_id: 9,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 501,
                 reply_to_message_id: None,
                 text: "/approve_once apr_1".into(),
@@ -347,6 +363,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -378,6 +395,7 @@ mod tests {
             update_id: 11,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 502,
                 reply_to_message_id: None,
                 text: "/deny apr_1".into(),
@@ -389,6 +407,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -419,6 +438,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -475,6 +495,7 @@ mod tests {
             update_id: 3,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 503,
                 reply_to_message_id: None,
                 text: "approve apr_1".into(),
@@ -486,6 +507,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -514,6 +536,7 @@ mod tests {
             update_id: 4,
             message: Some(TelegramMessage {
                 chat_id: 7,
+                sender_user_id: Some(1001),
                 message_id: 504,
                 reply_to_message_id: None,
                 text: "/deny apr_1".into(),
@@ -525,6 +548,88 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
+            },
+            bridge,
+            poller,
+            clock,
+        );
+
+        adapter
+            .publish_runtime_event(RuntimeEvent::ApprovalRequested(sample_approval_requested()))
+            .expect("publish runtime event");
+        adapter.poll_once().expect("poll once");
+
+        let approvals = adapter
+            .bridge
+            .approvals
+            .lock()
+            .expect("approvals mutex poisoned")
+            .clone();
+        assert!(approvals.is_empty());
+    }
+
+    #[test]
+    fn allowlisted_sender_message_command_is_processed() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(vec![vec![TelegramUpdate {
+            update_id: 4_101,
+            message: Some(TelegramMessage {
+                chat_id: 42,
+                sender_user_id: Some(1001),
+                message_id: 5_101,
+                reply_to_message_id: None,
+                text: "/approve_once apr_1".into(),
+            }),
+            message_reaction: None,
+        }]]);
+        let clock = FixedClock { now: 2_021 };
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+                allowed_sender_user_ids: Some(BTreeSet::from([1001])),
+            },
+            bridge,
+            poller,
+            clock,
+        );
+
+        adapter
+            .publish_runtime_event(RuntimeEvent::ApprovalRequested(sample_approval_requested()))
+            .expect("publish runtime event");
+        adapter.poll_once().expect("poll once");
+
+        let approvals = adapter
+            .bridge
+            .approvals
+            .lock()
+            .expect("approvals mutex poisoned")
+            .clone();
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0].action, ApprovalAction::ApproveOnce);
+    }
+
+    #[test]
+    fn non_allowlisted_sender_message_command_is_ignored() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(vec![vec![TelegramUpdate {
+            update_id: 4_102,
+            message: Some(TelegramMessage {
+                chat_id: 42,
+                sender_user_id: Some(2002),
+                message_id: 5_102,
+                reply_to_message_id: None,
+                text: "/deny apr_1".into(),
+            }),
+            message_reaction: None,
+        }]]);
+        let clock = FixedClock { now: 2_022 };
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+                allowed_sender_user_ids: Some(BTreeSet::from([1001])),
             },
             bridge,
             poller,
@@ -552,6 +657,7 @@ mod tests {
             update_id: 5,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 505,
                 reply_to_message_id: None,
                 text: "/deny apr_missing".into(),
@@ -563,6 +669,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -593,6 +700,7 @@ mod tests {
             update_id: 6,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 506,
                 reply_to_message_id: Some(1),
                 text: "yes".into(),
@@ -604,6 +712,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -633,6 +742,7 @@ mod tests {
             message: None,
             message_reaction: Some(TelegramMessageReaction {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 1,
                 emoji: vec!["👍".into()],
             }),
@@ -642,6 +752,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -671,6 +782,7 @@ mod tests {
             message: None,
             message_reaction: Some(TelegramMessageReaction {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 1,
                 emoji: vec!["👎".into()],
             }),
@@ -680,6 +792,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -702,12 +815,92 @@ mod tests {
     }
 
     #[test]
+    fn allowlisted_sender_reaction_is_processed() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(vec![vec![TelegramUpdate {
+            update_id: 8_101,
+            message: None,
+            message_reaction: Some(TelegramMessageReaction {
+                chat_id: 42,
+                sender_user_id: Some(1001),
+                message_id: 1,
+                emoji: vec!["👍".into()],
+            }),
+        }]]);
+        let clock = FixedClock { now: 6_061 };
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+                allowed_sender_user_ids: Some(BTreeSet::from([1001])),
+            },
+            bridge,
+            poller,
+            clock,
+        );
+
+        adapter
+            .publish_runtime_event(RuntimeEvent::ApprovalRequested(sample_approval_requested()))
+            .expect("publish runtime event");
+        adapter.poll_once().expect("poll once");
+
+        let approvals = adapter
+            .bridge
+            .approvals
+            .lock()
+            .expect("approvals mutex poisoned")
+            .clone();
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0].action, ApprovalAction::ApproveOnce);
+    }
+
+    #[test]
+    fn non_allowlisted_sender_reaction_is_ignored() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(vec![vec![TelegramUpdate {
+            update_id: 8_102,
+            message: None,
+            message_reaction: Some(TelegramMessageReaction {
+                chat_id: 42,
+                sender_user_id: Some(2002),
+                message_id: 1,
+                emoji: vec!["👎".into()],
+            }),
+        }]]);
+        let clock = FixedClock { now: 6_062 };
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+                allowed_sender_user_ids: Some(BTreeSet::from([1001])),
+            },
+            bridge,
+            poller,
+            clock,
+        );
+
+        adapter
+            .publish_runtime_event(RuntimeEvent::ApprovalRequested(sample_approval_requested()))
+            .expect("publish runtime event");
+        adapter.poll_once().expect("poll once");
+
+        let approvals = adapter
+            .bridge
+            .approvals
+            .lock()
+            .expect("approvals mutex poisoned")
+            .clone();
+        assert!(approvals.is_empty());
+    }
+
+    #[test]
     fn non_approval_message_is_forwarded_as_prompt() {
         let bridge = TestBridge::new();
         let poller = TestPoller::new(vec![vec![TelegramUpdate {
             update_id: 9,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 507,
                 reply_to_message_id: None,
                 text: "show git status".into(),
@@ -719,6 +912,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -744,6 +938,7 @@ mod tests {
             update_id: 9_001,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 509,
                 reply_to_message_id: None,
                 text: "yes".into(),
@@ -755,6 +950,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -779,6 +975,7 @@ mod tests {
             update_id: 10,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 508,
                 reply_to_message_id: None,
                 text: "y".into(),
@@ -790,6 +987,7 @@ mod tests {
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             bridge,
             poller,
@@ -1053,6 +1251,7 @@ reason = "rm -rf requires approval"
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             RuntimeBridge::new(approval_bus.clone()),
             poller.clone(),
@@ -1100,6 +1299,7 @@ reason = "rm -rf requires approval"
             update_id: 1,
             message: Some(TelegramMessage {
                 chat_id: 42,
+                sender_user_id: Some(1001),
                 message_id: 1_001,
                 reply_to_message_id: None,
                 text: format!("/approve_once {request_id}"),
@@ -1164,6 +1364,7 @@ reason = "rm -rf requires approval"
             TelegramAdapterConfig {
                 chat_id: 42,
                 poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
             },
             RuntimeBridge::new(approval_bus),
             poller.clone(),

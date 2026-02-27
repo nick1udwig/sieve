@@ -34,6 +34,7 @@ struct AppConfig {
     telegram_bot_token: String,
     telegram_chat_id: i64,
     telegram_poll_timeout_secs: u16,
+    telegram_allowed_sender_user_ids: Option<BTreeSet<i64>>,
     policy_path: PathBuf,
     event_log_path: PathBuf,
     runtime_cwd: String,
@@ -53,6 +54,9 @@ impl AppConfig {
             .parse::<i64>()
             .map_err(|err| format!("invalid TELEGRAM_CHAT_ID: {err}"))?;
         let telegram_poll_timeout_secs = parse_u16_env("SIEVE_TELEGRAM_POLL_TIMEOUT_SECS", 1)?;
+        let telegram_allowed_sender_user_ids = parse_telegram_allowed_sender_user_ids(
+            env::var("SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS").ok(),
+        )?;
         let policy_path = parse_policy_path(env::var("SIEVE_POLICY_PATH").ok());
         let sieve_home = parse_sieve_home(env::var("SIEVE_HOME").ok(), env::var("HOME").ok());
         let event_log_path = runtime_event_log_path(&sieve_home);
@@ -73,6 +77,7 @@ impl AppConfig {
             telegram_bot_token,
             telegram_chat_id,
             telegram_poll_timeout_secs,
+            telegram_allowed_sender_user_ids,
             policy_path,
             event_log_path,
             runtime_cwd,
@@ -124,6 +129,36 @@ fn parse_usize_env(key: &str, default: usize) -> Result<usize, String> {
             .parse::<usize>()
             .map_err(|err| format!("invalid {key}: {err}")),
         Err(_) => Ok(default),
+    }
+}
+
+fn parse_telegram_allowed_sender_user_ids(
+    raw: Option<String>,
+) -> Result<Option<BTreeSet<i64>>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let mut parsed = BTreeSet::new();
+    for entry in trimmed
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let id = entry.parse::<i64>().map_err(|err| {
+            format!("invalid SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS entry `{entry}`: {err}")
+        })?;
+        parsed.insert(id);
+    }
+
+    if parsed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(parsed))
     }
 }
 
@@ -355,12 +390,14 @@ fn spawn_telegram_loop(
     let bot_token = cfg.telegram_bot_token.clone();
     let chat_id = cfg.telegram_chat_id;
     let poll_timeout_secs = cfg.telegram_poll_timeout_secs;
+    let allowed_sender_user_ids = cfg.telegram_allowed_sender_user_ids.clone();
 
     thread::spawn(move || {
         let mut adapter = TelegramAdapter::new(
             TelegramAdapterConfig {
                 chat_id,
                 poll_timeout_secs,
+                allowed_sender_user_ids,
             },
             bridge,
             TelegramBotApiLongPoll::new(bot_token),
@@ -752,6 +789,29 @@ mod tests {
             )),
             PathBuf::from("/var/sieve/logs/runtime-events.jsonl")
         );
+    }
+
+    #[test]
+    fn parse_telegram_allowed_sender_user_ids_supports_missing_and_blank() {
+        assert_eq!(parse_telegram_allowed_sender_user_ids(None), Ok(None));
+        assert_eq!(
+            parse_telegram_allowed_sender_user_ids(Some("   ".to_string())),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn parse_telegram_allowed_sender_user_ids_parses_csv() {
+        let parsed = parse_telegram_allowed_sender_user_ids(Some("1001,-42,1001".to_string()))
+            .expect("parse ids");
+        assert_eq!(parsed, Some(BTreeSet::from([1001, -42])));
+    }
+
+    #[test]
+    fn parse_telegram_allowed_sender_user_ids_rejects_invalid_entry() {
+        let err = parse_telegram_allowed_sender_user_ids(Some("1001,nope".to_string()))
+            .expect_err("must reject invalid user id");
+        assert!(err.contains("invalid SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS entry `nope`"));
     }
 
     #[test]
