@@ -16,9 +16,26 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
+- None.
+
 ## Claimed
 
 ## Done
+
+- [x] `Y` Modality Parity Contract (Reply In Same Mode As Input)
+: Owner: `codex` | Branch: `master` | PR: `5f1d5cd` | Scope: define and enforce a modality contract so input modality is tracked (`text|audio|image|...`) and response defaults to same modality unless explicitly overridden by policy/tool failure. Apply this across Telegram ingress, runtime turn context, and response delivery. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs), [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [adapter.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/src/adapter.rs), [README.md](/root/git/sieve-v3/README.md). Done when: modality parity is explicit in types/docs and covered by integration tests.
+
+- [x] `X` Image Input Pipeline (Vision/OCR -> Act)
+: Owner: `codex` | Branch: `master` | PR: `4b6a461` | Scope: support Telegram image/photo input, run OCR/recognition through configured vision path (vLLM-compatible), and feed results into normal agent flow without exposing unsafe raw strings across planner boundary. Prefer non-hardcoded behavior via tool/ref architecture (emergent handling), with documented dependencies/config and tests. Files: [adapter.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/src/adapter.rs), [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-llm/src/lib.rs), [README.md](/root/git/sieve-v3/README.md), [`.env.example`](/root/git/sieve-v3/.env.example). Done when: image-origin turns are processed end-to-end with policy-safe handling and documented setup.
+
+- [x] `W` Audio I/O Pipeline (Voice Note -> STT -> Act -> TTS)
+: Owner: `codex` | Branch: `master` | PR: `69b9c65` | Scope: support Telegram voice-note input, convert to text via STT, run normal agent flow, then reply in audio (TTS) for audio-origin turns. Preserve trust semantics: transcription inherits trust level of source voice note (trusted for approved sender in current model). Prefer non-hardcoded implementation where modality handling emerges from available bash tools + refs; document required host tools (for example `ffmpeg`, STT CLI/runtime, TTS CLI/runtime) and fallback behavior. Files: [adapter.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/src/adapter.rs), [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [README.md](/root/git/sieve-v3/README.md), [`.env.example`](/root/git/sieve-v3/.env.example). Done when: voice-note turn works end-to-end and response mode matches input mode.
+
+- [x] `V` Telegram Typing Indicator During Turn Execution
+: Owner: `codex` | Branch: `master` | PR: `e5fc882` | Scope: while a turn is being processed, emit Telegram `typing` chat action and reliably stop on success, model/tool failure, or cancellation so typing does not get stuck. Include tests around lifecycle behavior. Files: [adapter.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/src/adapter.rs), [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs). Done when: typing is visible during active work and always stops/cleans up correctly.
+
+- [x] `U` Brave Web Search Tool Integration
+: Owner: `codex` | Branch: `master` | PR: `2319db5` | Scope: add a planner-callable Brave web search tool (OpenAI planner compatible) with typed/structured tool output, policy enforcement, and response-writer integration. Include env/docs wiring for Brave credentials/config and tests for allow/deny + execution path. Files: [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-runtime/src/lib.rs), [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs), [README.md](/root/git/sieve-v3/README.md), [`.env.example`](/root/git/sieve-v3/.env.example). Done when: planner can invoke Brave search end-to-end under policy, and tests/docs/env are updated.
 
 - [x] `R` Live End-to-End Smoke (Real OpenAI + Telegram + Execution)
 : Owner: `codex` | Branch: `master` | PR: `bd19e85` | Scope: run one full live flow with real credentials and policy via `sieve-app` (planner call, approval over Telegram, and real mainline command execution). Files: [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [README.md](/root/git/sieve-v3/README.md), [`.env.example`](/root/git/sieve-v3/.env.example). Done when: run evidence is recorded (input command, approval action, resulting command exit/report, and event log path). Evidence: input prompt `Use bash to run exactly: mkdir -p /tmp/sieve-r-live-smoke`; approval command `/approve_once approval-1`; result `ExecuteMainline` with exit `0`; event log `.sieve/logs/runtime-events-r-20260226-231218.jsonl`. Rerun (2026-02-26): input prompt `Use bash to run exactly: mkdir -p /tmp/sieve-r-live-smoke-rerun`; approval command `/approve_once approval-1`; result `ExecuteMainline` with exit `0`; event log `/tmp/sieve-e2e-20260226-234424/logs/runtime-events.jsonl` with `conversation` + runtime events.
