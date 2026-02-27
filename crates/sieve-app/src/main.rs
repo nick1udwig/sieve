@@ -54,6 +54,7 @@ struct AppConfig {
     brave_api_base: String,
     audio_stt_cmd: Option<String>,
     audio_tts_cmd: Option<String>,
+    image_ocr_cmd: Option<String>,
     unknown_mode: UnknownMode,
     uncertain_mode: UncertainMode,
     max_concurrent_turns: usize,
@@ -92,6 +93,7 @@ impl AppConfig {
             .unwrap_or_else(|| DEFAULT_BRAVE_API_BASE.to_string());
         let audio_stt_cmd = optional_env("SIEVE_AUDIO_STT_CMD");
         let audio_tts_cmd = optional_env("SIEVE_AUDIO_TTS_CMD");
+        let image_ocr_cmd = optional_env("SIEVE_IMAGE_OCR_CMD");
         let max_concurrent_turns = parse_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
         if max_concurrent_turns == 0 {
             return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
@@ -111,6 +113,7 @@ impl AppConfig {
             brave_api_base,
             audio_stt_cmd,
             audio_tts_cmd,
+            image_ocr_cmd,
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
             uncertain_mode: parse_uncertain_mode(env::var("SIEVE_UNCERTAIN_MODE").ok())?,
             max_concurrent_turns,
@@ -1206,6 +1209,44 @@ async fn transcribe_audio_prompt(
     Ok(transcript)
 }
 
+async fn extract_image_prompt(
+    cfg: &AppConfig,
+    run_id: &RunId,
+    file_id: &str,
+) -> Result<String, String> {
+    let ocr_cmd = cfg
+        .image_ocr_cmd
+        .clone()
+        .ok_or_else(|| "image input requires SIEVE_IMAGE_OCR_CMD".to_string())?;
+    let file_path = fetch_telegram_file_path(&cfg.telegram_bot_token, file_id).await?;
+    let media_dir = cfg.sieve_home.join("media").join(&run_id.0);
+    tokio::fs::create_dir_all(&media_dir)
+        .await
+        .map_err(|err| format!("failed to create media dir: {err}"))?;
+    let ext = std::path::Path::new(&file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or("jpg");
+    let input_path = media_dir.join(format!("image-input.{ext}"));
+    download_telegram_file(&cfg.telegram_bot_token, &file_path, &input_path).await?;
+
+    let extracted = run_shell_template_capture_stdout(
+        &ocr_cmd,
+        &[
+            ("input_path", input_path.to_string_lossy().to_string()),
+            ("run_id", run_id.0.clone()),
+        ],
+        "image ocr command",
+    )
+    .await?;
+    let extracted = extracted.trim().to_string();
+    if extracted.is_empty() {
+        return Err("image ocr command produced empty output".to_string());
+    }
+    Ok(extracted)
+}
+
 async fn synthesize_audio_reply(
     cfg: &AppConfig,
     run_id: &RunId,
@@ -1306,8 +1347,31 @@ async fn run_turn(
                     return Ok(());
                 }
             }
-        } else if telegram_image_file_id_from_prompt(&user_message).is_some() {
-            (user_message.clone(), InputModality::Image)
+        } else if let Some(file_id) = telegram_image_file_id_from_prompt(&user_message) {
+            match extract_image_prompt(cfg, &run_id, file_id).await {
+                Ok(extracted) => (extracted, InputModality::Image),
+                Err(err) => {
+                    let assistant_message = format!("image input unavailable: {err}");
+                    println!("{}: {}", run_id.0, assistant_message);
+                    event_log
+                        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+                            schema_version: 1,
+                            run_id: run_id.clone(),
+                            message: assistant_message.clone(),
+                            created_at_ms: now_ms(),
+                        }))
+                        .await?;
+                    event_log
+                        .append_conversation(ConversationLogRecord::new(
+                            run_id.clone(),
+                            ConversationRole::Assistant,
+                            assistant_message.clone(),
+                            now_ms(),
+                        ))
+                        .await?;
+                    return Ok(());
+                }
+            }
         } else {
             (user_message.clone(), InputModality::Text)
         }

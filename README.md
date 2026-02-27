@@ -26,6 +26,7 @@ Inspired by:
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
    - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (required only when using `brave_search`)
    - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
+   - optional: `SIEVE_IMAGE_OCR_CMD` (required for Telegram photo/image input)
 2. Start the app:
 
 ```bash
@@ -102,6 +103,12 @@ Telegram voice-note notes:
   - TTS: `{{text_path}}`, `{{output_path}}`, `{{run_id}}`
 - recommended host dependencies: `ffmpeg` plus your chosen STT/TTS CLIs (for example Whisper/Faster-Whisper and Piper/espeak)
 - when audio synthesis/delivery fails, the app falls back to text reply
+
+Telegram image notes:
+- photo/image input is converted to text by executing `SIEVE_IMAGE_OCR_CMD`
+- placeholders: `{{input_path}}`, `{{run_id}}`
+- the command can wrap any OCR/vision stack (including vLLM/OpenAI-compatible vision endpoints)
+- when OCR extraction fails, the app replies with a text error message
 
 ## Live LLM Runtime Tests
 
