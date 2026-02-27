@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use sieve_types::{ApprovalResolvedEvent, RuntimeEvent, UnixMillis};
+use sieve_types::{ApprovalResolvedEvent, InteractionModality, RuntimeEvent, UnixMillis};
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -94,6 +94,8 @@ pub struct TelegramMessageReaction {
 pub struct TelegramPrompt {
     pub chat_id: i64,
     pub text: String,
+    pub modality: InteractionModality,
+    pub media_file_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

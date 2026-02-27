@@ -111,6 +111,32 @@ pub enum TypedValue {
     Enum { registry: String, variant: String },
 }
 
+/// Turn-level modality for ingress and delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionModality {
+    Text,
+    Audio,
+    Image,
+}
+
+/// Reason why response modality differs from input modality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModalityOverrideReason {
+    NotSupported,
+    ToolFailure,
+    Policy,
+}
+
+/// Explicit modality contract for one turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModalityContract {
+    pub input: InteractionModality,
+    pub response: InteractionModality,
+    pub override_reason: Option<ModalityOverrideReason>,
+}
+
 /// Policy mode for commands parsed but not summarized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -600,5 +626,18 @@ mod tests {
 
         assert_eq!(request_decoded, request);
         assert_eq!(response_decoded, response);
+    }
+
+    #[test]
+    fn modality_contract_json_round_trip() {
+        let contract = ModalityContract {
+            input: InteractionModality::Audio,
+            response: InteractionModality::Text,
+            override_reason: Some(ModalityOverrideReason::ToolFailure),
+        };
+
+        let encoded = serde_json::to_string(&contract).expect("serialize");
+        let decoded: ModalityContract = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, contract);
     }
 }

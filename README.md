@@ -110,6 +110,13 @@ Telegram image notes:
 - the command can wrap any OCR/vision stack (including vLLM/OpenAI-compatible vision endpoints)
 - when OCR extraction fails, the app replies with a text error message
 
+Modality contract:
+- ingress modality is explicit (`text`, `audio`, `image`)
+- response defaults to the same modality as ingress
+- explicit overrides currently supported:
+  - `image -> text` (`not_supported`, no image-generation path yet)
+  - `audio -> text` (`tool_failure`, when TTS synthesis/delivery fails)
+
 ## Live LLM Runtime Tests
 
 Runtime now has live OpenAI planner integration tests that exercise full planner->runtime tool flows (`bash`, `endorse`, `declassify`), including approval handling.

@@ -4,9 +4,12 @@ use crate::{
         TelegramApprovalAction,
     },
     Clock, TelegramAdapterConfig, TelegramAdapterError, TelegramEventBridge, TelegramLongPoll,
-    TelegramPrompt, TelegramUpdate,
+    TelegramPrompt, TelegramUpdate, TELEGRAM_IMAGE_PROMPT_PREFIX, TELEGRAM_VOICE_PROMPT_PREFIX,
 };
-use sieve_types::{ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, RuntimeEvent};
+use sieve_types::{
+    ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, InteractionModality,
+    RuntimeEvent,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct TelegramAdapter<B, P, C>
@@ -125,6 +128,37 @@ where
                 return Ok(());
             }
 
+            if let Some(file_id) = message
+                .text
+                .trim()
+                .strip_prefix(TELEGRAM_VOICE_PROMPT_PREFIX)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                self.bridge.submit_prompt(TelegramPrompt {
+                    chat_id: message.chat_id,
+                    text: String::new(),
+                    modality: InteractionModality::Audio,
+                    media_file_id: Some(file_id.to_string()),
+                });
+                return Ok(());
+            }
+            if let Some(file_id) = message
+                .text
+                .trim()
+                .strip_prefix(TELEGRAM_IMAGE_PROMPT_PREFIX)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                self.bridge.submit_prompt(TelegramPrompt {
+                    chat_id: message.chat_id,
+                    text: String::new(),
+                    modality: InteractionModality::Image,
+                    media_file_id: Some(file_id.to_string()),
+                });
+                return Ok(());
+            }
+
             if let Some(command) = parse_command(&message.text) {
                 self.resolve_approval(command.action, command.request_id)?;
                 return Ok(());
@@ -135,6 +169,8 @@ where
                     self.bridge.submit_prompt(TelegramPrompt {
                         chat_id: message.chat_id,
                         text: message.text,
+                        modality: InteractionModality::Text,
+                        media_file_id: None,
                     });
                     return Ok(());
                 }
@@ -153,6 +189,8 @@ where
             self.bridge.submit_prompt(TelegramPrompt {
                 chat_id: message.chat_id,
                 text: message.text,
+                modality: InteractionModality::Text,
+                media_file_id: None,
             });
             return Ok(());
         }
@@ -1035,6 +1073,86 @@ mod tests {
         assert_eq!(prompts.len(), 1);
         assert_eq!(prompts[0].chat_id, 42);
         assert_eq!(prompts[0].text, "show git status");
+        assert_eq!(prompts[0].modality, InteractionModality::Text);
+        assert!(prompts[0].media_file_id.is_none());
+    }
+
+    #[test]
+    fn voice_marker_message_is_forwarded_as_audio_prompt() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(vec![vec![TelegramUpdate {
+            update_id: 9_101,
+            message: Some(TelegramMessage {
+                chat_id: 42,
+                sender_user_id: Some(1001),
+                message_id: 5_701,
+                reply_to_message_id: None,
+                text: format!("{TELEGRAM_VOICE_PROMPT_PREFIX}voice-file-1"),
+            }),
+            message_reaction: None,
+        }]]);
+        let clock = FixedClock { now: 7_171 };
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
+            },
+            bridge,
+            poller,
+            clock,
+        );
+
+        adapter.poll_once().expect("poll once");
+        let prompts = adapter
+            .bridge
+            .prompts
+            .lock()
+            .expect("prompts mutex poisoned")
+            .clone();
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].modality, InteractionModality::Audio);
+        assert_eq!(prompts[0].media_file_id.as_deref(), Some("voice-file-1"));
+        assert_eq!(prompts[0].text, "");
+    }
+
+    #[test]
+    fn image_marker_message_is_forwarded_as_image_prompt() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(vec![vec![TelegramUpdate {
+            update_id: 9_102,
+            message: Some(TelegramMessage {
+                chat_id: 42,
+                sender_user_id: Some(1001),
+                message_id: 5_702,
+                reply_to_message_id: None,
+                text: format!("{TELEGRAM_IMAGE_PROMPT_PREFIX}photo-file-1"),
+            }),
+            message_reaction: None,
+        }]]);
+        let clock = FixedClock { now: 7_172 };
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
+            },
+            bridge,
+            poller,
+            clock,
+        );
+
+        adapter.poll_once().expect("poll once");
+        let prompts = adapter
+            .bridge
+            .prompts
+            .lock()
+            .expect("prompts mutex poisoned")
+            .clone();
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].modality, InteractionModality::Image);
+        assert_eq!(prompts[0].media_file_id.as_deref(), Some("photo-file-1"));
+        assert_eq!(prompts[0].text, "");
     }
 
     #[test]

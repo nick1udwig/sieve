@@ -5,8 +5,7 @@ use serde::Serialize;
 use sieve_command_summaries::DefaultCommandSummarizer;
 use sieve_interface_telegram::{
     SystemClock as TelegramClock, TelegramAdapter, TelegramAdapterConfig, TelegramBotApiLongPoll,
-    TelegramEventBridge, TelegramPrompt, TELEGRAM_IMAGE_PROMPT_PREFIX,
-    TELEGRAM_VOICE_PROMPT_PREFIX,
+    TelegramEventBridge, TelegramPrompt,
 };
 use sieve_llm::{
     OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel, ResponseModel,
@@ -24,7 +23,8 @@ use sieve_runtime::{
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
     ApprovalResolvedEvent, AssistantMessageEvent, BraveSearchRequest, BraveSearchResponse,
-    BraveSearchResult, Integrity, RunId, RuntimeEvent, UncertainMode, UnknownMode,
+    BraveSearchResult, Integrity, InteractionModality, ModalityContract, ModalityOverrideReason,
+    RunId, RuntimeEvent, UncertainMode, UnknownMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -305,23 +305,12 @@ impl PromptSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InputModality {
-    Text,
-    Audio,
-    Image,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResponseModality {
-    Text,
-    Audio,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IngressPrompt {
     source: PromptSource,
     text: String,
+    modality: InteractionModality,
+    media_file_id: Option<String>,
 }
 
 struct RuntimeBridge {
@@ -362,13 +351,15 @@ impl TelegramEventBridge for RuntimeBridge {
 
     fn submit_prompt(&self, prompt: TelegramPrompt) {
         let text = prompt.text.trim().to_string();
-        if text.is_empty() {
+        if prompt.modality == InteractionModality::Text && text.is_empty() {
             return;
         }
         if let Some(prompt_tx) = &self.prompt_tx {
             if let Err(err) = prompt_tx.send(IngressPrompt {
                 source: PromptSource::Telegram,
                 text,
+                modality: prompt.modality,
+                media_file_id: prompt.media_file_id,
             }) {
                 eprintln!("failed to enqueue telegram prompt: {err}");
             }
@@ -698,6 +689,8 @@ fn spawn_stdin_prompt_loop(
                     if let Err(err) = prompt_tx.send(IngressPrompt {
                         source: PromptSource::Stdin,
                         text: prompt.to_string(),
+                        modality: InteractionModality::Text,
+                        media_file_id: None,
                     }) {
                         eprintln!("stdin prompt loop stopped: {err}");
                         break;
@@ -1045,18 +1038,21 @@ async fn read_artifact_as_string(path: &std::path::Path) -> Result<String, io::E
     Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
-fn telegram_voice_file_id_from_prompt(text: &str) -> Option<&str> {
-    text.trim()
-        .strip_prefix(TELEGRAM_VOICE_PROMPT_PREFIX)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+fn default_modality_contract(input: InteractionModality) -> ModalityContract {
+    ModalityContract {
+        input,
+        response: input,
+        override_reason: None,
+    }
 }
 
-fn telegram_image_file_id_from_prompt(text: &str) -> Option<&str> {
-    text.trim()
-        .strip_prefix(TELEGRAM_IMAGE_PROMPT_PREFIX)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+fn override_modality_contract(
+    contract: &mut ModalityContract,
+    response: InteractionModality,
+    reason: ModalityOverrideReason,
+) {
+    contract.response = response;
+    contract.override_reason = Some(reason);
 }
 
 fn shell_escape_single_quoted(value: &str) -> String {
@@ -1318,71 +1314,68 @@ async fn run_turn(
     cfg: &AppConfig,
     run_index: u64,
     source: PromptSource,
+    input_modality: InteractionModality,
+    media_file_id: Option<String>,
     user_message: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_id = RunId(format!("run-{run_index}"));
-    let (trusted_user_message, input_modality) = if source == PromptSource::Telegram {
-        if let Some(file_id) = telegram_voice_file_id_from_prompt(&user_message) {
-            match transcribe_audio_prompt(cfg, &run_id, file_id).await {
-                Ok(transcript) => (transcript, InputModality::Audio),
-                Err(err) => {
-                    let assistant_message = format!("audio input unavailable: {err}");
-                    println!("{}: {}", run_id.0, assistant_message);
-                    event_log
-                        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
-                            schema_version: 1,
-                            run_id: run_id.clone(),
-                            message: assistant_message.clone(),
-                            created_at_ms: now_ms(),
-                        }))
-                        .await?;
-                    event_log
-                        .append_conversation(ConversationLogRecord::new(
-                            run_id.clone(),
-                            ConversationRole::Assistant,
-                            assistant_message.clone(),
-                            now_ms(),
-                        ))
-                        .await?;
-                    return Ok(());
-                }
-            }
-        } else if let Some(file_id) = telegram_image_file_id_from_prompt(&user_message) {
-            match extract_image_prompt(cfg, &run_id, file_id).await {
-                Ok(extracted) => (extracted, InputModality::Image),
-                Err(err) => {
-                    let assistant_message = format!("image input unavailable: {err}");
-                    println!("{}: {}", run_id.0, assistant_message);
-                    event_log
-                        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
-                            schema_version: 1,
-                            run_id: run_id.clone(),
-                            message: assistant_message.clone(),
-                            created_at_ms: now_ms(),
-                        }))
-                        .await?;
-                    event_log
-                        .append_conversation(ConversationLogRecord::new(
-                            run_id.clone(),
-                            ConversationRole::Assistant,
-                            assistant_message.clone(),
-                            now_ms(),
-                        ))
-                        .await?;
-                    return Ok(());
-                }
-            }
-        } else {
-            (user_message.clone(), InputModality::Text)
-        }
-    } else {
-        (user_message.clone(), InputModality::Text)
+    let mut modality_contract = default_modality_contract(input_modality);
+    if modality_contract.response == InteractionModality::Image {
+        override_modality_contract(
+            &mut modality_contract,
+            InteractionModality::Text,
+            ModalityOverrideReason::NotSupported,
+        );
+    }
+    let (trusted_user_message, input_error) = match input_modality {
+        InteractionModality::Text => (user_message.clone(), None),
+        InteractionModality::Audio => match media_file_id.as_deref() {
+            Some(file_id) => match transcribe_audio_prompt(cfg, &run_id, file_id).await {
+                Ok(transcript) => (transcript, None),
+                Err(err) => (
+                    String::new(),
+                    Some(format!("audio input unavailable: {err}")),
+                ),
+            },
+            None => (
+                String::new(),
+                Some("audio input missing media file id".to_string()),
+            ),
+        },
+        InteractionModality::Image => match media_file_id.as_deref() {
+            Some(file_id) => match extract_image_prompt(cfg, &run_id, file_id).await {
+                Ok(extracted) => (extracted, None),
+                Err(err) => (
+                    String::new(),
+                    Some(format!("image input unavailable: {err}")),
+                ),
+            },
+            None => (
+                String::new(),
+                Some("image input missing media file id".to_string()),
+            ),
+        },
     };
-    let response_modality = if input_modality == InputModality::Audio {
-        ResponseModality::Audio
-    } else {
-        ResponseModality::Text
-    };
+    if let Some(error_message) = input_error {
+        println!("{}: {}", run_id.0, error_message);
+        event_log
+            .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+                schema_version: 1,
+                run_id: run_id.clone(),
+                message: error_message.clone(),
+                created_at_ms: now_ms(),
+            }))
+            .await?;
+        event_log
+            .append_conversation(ConversationLogRecord::new(
+                run_id.clone(),
+                ConversationRole::Assistant,
+                error_message,
+                now_ms(),
+            ))
+            .await?;
+        return Ok(());
+    }
 
     event_log
         .append_conversation(ConversationLogRecord::new(
@@ -1511,7 +1504,8 @@ async fn run_turn(
     println!("{}: {}", run_id.0, assistant_message);
 
     let mut delivered_audio = false;
-    if source == PromptSource::Telegram && response_modality == ResponseModality::Audio {
+    if source == PromptSource::Telegram && modality_contract.response == InteractionModality::Audio
+    {
         match synthesize_audio_reply(cfg, &run_id, &assistant_message).await {
             Ok(audio_path) => {
                 if let Err(err) =
@@ -1519,12 +1513,22 @@ async fn run_turn(
                         .await
                 {
                     eprintln!("audio reply delivery failed for {}: {}", run_id.0, err);
+                    override_modality_contract(
+                        &mut modality_contract,
+                        InteractionModality::Text,
+                        ModalityOverrideReason::ToolFailure,
+                    );
                 } else {
                     delivered_audio = true;
                 }
             }
             Err(err) => {
                 eprintln!("audio synthesis failed for {}: {}", run_id.0, err);
+                override_modality_contract(
+                    &mut modality_contract,
+                    InteractionModality::Text,
+                    ModalityOverrideReason::ToolFailure,
+                );
             }
         }
     }
@@ -1610,6 +1614,8 @@ async fn run_agent_loop(
         let telegram_tx = telegram_tx.clone();
         let source = prompt.source;
         let text = prompt.text;
+        let modality = prompt.modality;
+        let media_file_id = prompt.media_file_id;
         let run_index = next_run_id.fetch_add(1, Ordering::Relaxed);
 
         tokio::spawn(async move {
@@ -1629,6 +1635,8 @@ async fn run_agent_loop(
                 &cfg,
                 run_index,
                 source,
+                modality,
+                media_file_id,
                 text,
             )
             .await
@@ -1700,6 +1708,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &cfg,
             1,
             PromptSource::Stdin,
+            InteractionModality::Text,
+            None,
             cli_prompt,
         )
         .await?;
@@ -1809,11 +1819,15 @@ mod tests {
         bridge.submit_prompt(TelegramPrompt {
             chat_id: 42,
             text: "  check logs  ".to_string(),
+            modality: InteractionModality::Text,
+            media_file_id: None,
         });
 
         let prompt = rx.recv().await.expect("expected prompt");
         assert_eq!(prompt.source, PromptSource::Telegram);
         assert_eq!(prompt.text, "check logs");
+        assert_eq!(prompt.modality, InteractionModality::Text);
+        assert!(prompt.media_file_id.is_none());
     }
 
     #[tokio::test]
@@ -1884,20 +1898,6 @@ mod tests {
     }
 
     #[test]
-    fn telegram_prompt_marker_extractors_work() {
-        assert_eq!(
-            telegram_voice_file_id_from_prompt("__sieve_voice_file_id:voice-123"),
-            Some("voice-123")
-        );
-        assert_eq!(
-            telegram_image_file_id_from_prompt("__sieve_photo_file_id:photo-456"),
-            Some("photo-456")
-        );
-        assert_eq!(telegram_voice_file_id_from_prompt("hello"), None);
-        assert_eq!(telegram_image_file_id_from_prompt("hello"), None);
-    }
-
-    #[test]
     fn render_shell_template_quotes_replacements() {
         let rendered = render_shell_template(
             "tool --input {{input_path}} --run {{run_id}}",
@@ -1908,6 +1908,25 @@ mod tests {
         );
         assert!(rendered.contains("--input '/tmp/it'\\''s ok.wav'"));
         assert!(rendered.contains("--run 'run-1'"));
+    }
+
+    #[test]
+    fn modality_contract_defaults_and_overrides() {
+        let mut contract = default_modality_contract(InteractionModality::Audio);
+        assert_eq!(contract.input, InteractionModality::Audio);
+        assert_eq!(contract.response, InteractionModality::Audio);
+        assert!(contract.override_reason.is_none());
+
+        override_modality_contract(
+            &mut contract,
+            InteractionModality::Text,
+            ModalityOverrideReason::ToolFailure,
+        );
+        assert_eq!(contract.response, InteractionModality::Text);
+        assert_eq!(
+            contract.override_reason,
+            Some(ModalityOverrideReason::ToolFailure)
+        );
     }
 
     #[test]
