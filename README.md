@@ -64,6 +64,8 @@ Approval responses in Telegram:
 - `yes` or `y` (approve once), `no` or `n` (deny) when replying to the approval message.
 - React `👍` (approve once) or `👎` (deny) on the approval message.
 - Existing explicit commands still work: `/approve_once <request_id>` and `/deny <request_id>`.
+- While a turn is processing, the bot emits Telegram `typing` and stops automatically on success,
+  failure, or cancellation.
 - Optional sender lock-down: set `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` to restrict prompts and approvals to listed Telegram user IDs.
 - Reaction approvals require Telegram `message_reaction` updates; `sieve-app` now requests these via
   `getUpdates allowed_updates`, and Telegram requires the bot to be an admin in group chats.

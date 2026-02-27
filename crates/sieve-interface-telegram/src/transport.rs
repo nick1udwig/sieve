@@ -62,6 +62,10 @@ where
     fn send_message_url(&self) -> String {
         format!("{}/bot{}/sendMessage", self.base_url, self.token)
     }
+
+    fn send_chat_action_url(&self) -> String {
+        format!("{}/bot{}/sendChatAction", self.base_url, self.token)
+    }
 }
 
 impl<E> TelegramLongPoll for TelegramBotApiLongPoll<E>
@@ -112,6 +116,31 @@ where
 
         let value = response.into_result("sendMessage")?;
         Ok(value.get("message_id").and_then(serde_json::Value::as_i64))
+    }
+
+    fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {
+        let payload = serde_json::to_string(&TelegramSendChatActionRequest { chat_id, action })
+            .map_err(|err| format!("telegram sendChatAction encode failed: {err}"))?;
+
+        let raw = self.executor.run(
+            "curl",
+            &[
+                "-sS",
+                "--fail",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                &payload,
+                &self.send_chat_action_url(),
+            ],
+        )?;
+
+        let response: TelegramApiResponse<serde_json::Value> = serde_json::from_str(&raw)
+            .map_err(|err| format!("telegram sendChatAction decode failed: {err}"))?;
+        let _ = response.into_result("sendChatAction")?;
+        Ok(())
     }
 }
 
@@ -254,6 +283,12 @@ struct TelegramSendMessageRequest<'a> {
     text: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+struct TelegramSendChatActionRequest<'a> {
+    chat_id: i64,
+    action: &'a str,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +403,31 @@ mod tests {
         assert_eq!(commands[0].1[6], "-d");
         assert!(commands[0].1[7].contains("\"chat_id\":42"));
         assert!(commands[0].1[8].contains("/bottoken_abc/sendMessage"));
+    }
+
+    #[test]
+    fn send_chat_action_posts_json_payload() {
+        let mut poller = TelegramBotApiLongPoll::with_executor(
+            "token_abc",
+            "https://example.test",
+            TestExecutor::new(vec![Ok("{\"ok\":true,\"result\":true}".to_string())]),
+        );
+
+        poller
+            .send_chat_action(42, "typing")
+            .expect("send chat action must succeed");
+
+        let commands = &poller.executor.commands;
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].0, "curl");
+        assert_eq!(commands[0].1[2], "-X");
+        assert_eq!(commands[0].1[3], "POST");
+        assert_eq!(commands[0].1[4], "-H");
+        assert_eq!(commands[0].1[5], "Content-Type: application/json");
+        assert_eq!(commands[0].1[6], "-d");
+        assert!(commands[0].1[7].contains("\"chat_id\":42"));
+        assert!(commands[0].1[7].contains("\"action\":\"typing\""));
+        assert!(commands[0].1[8].contains("/bottoken_abc/sendChatAction"));
     }
 
     #[test]

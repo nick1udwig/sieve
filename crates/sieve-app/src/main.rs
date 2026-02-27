@@ -540,16 +540,23 @@ fn decode_brave_search_response(
     Ok(BraveSearchResponse { query, results })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TelegramLoopEvent {
+    Runtime(RuntimeEvent),
+    TypingStart { run_id: String },
+    TypingStop { run_id: String },
+}
+
 struct FanoutRuntimeEventLog {
     jsonl: JsonlRuntimeEventLog,
     history: Mutex<Vec<RuntimeEvent>>,
-    telegram_tx: Mutex<Sender<RuntimeEvent>>,
+    telegram_tx: Mutex<Sender<TelegramLoopEvent>>,
 }
 
 impl FanoutRuntimeEventLog {
     fn new(
         path: impl Into<PathBuf>,
-        telegram_tx: Sender<RuntimeEvent>,
+        telegram_tx: Sender<TelegramLoopEvent>,
     ) -> Result<Self, EventLogError> {
         Ok(Self {
             jsonl: JsonlRuntimeEventLog::new(path.into())?,
@@ -586,7 +593,7 @@ impl RuntimeEventLog for FanoutRuntimeEventLog {
         self.telegram_tx
             .lock()
             .map_err(|_| EventLogError::Append("telegram event sender lock poisoned".to_string()))?
-            .send(event)
+            .send(TelegramLoopEvent::Runtime(event))
             .map_err(|err| {
                 EventLogError::Append(format!("failed to forward runtime event: {err}"))
             })?;
@@ -597,7 +604,7 @@ impl RuntimeEventLog for FanoutRuntimeEventLog {
 fn spawn_telegram_loop(
     cfg: &AppConfig,
     bridge: RuntimeBridge,
-    event_rx: Receiver<RuntimeEvent>,
+    event_rx: Receiver<TelegramLoopEvent>,
 ) -> thread::JoinHandle<()> {
     let bot_token = cfg.telegram_bot_token.clone();
     let chat_id = cfg.telegram_chat_id;
@@ -620,10 +627,18 @@ fn spawn_telegram_loop(
             let mut disconnected = false;
             loop {
                 match event_rx.try_recv() {
-                    Ok(event) => {
+                    Ok(TelegramLoopEvent::Runtime(event)) => {
                         if let Err(err) = adapter.publish_runtime_event(event) {
                             eprintln!("telegram publish runtime event failed: {err:?}");
                         }
+                    }
+                    Ok(TelegramLoopEvent::TypingStart { run_id }) => {
+                        if let Err(err) = adapter.start_typing(run_id) {
+                            eprintln!("telegram typing start failed: {err:?}");
+                        }
+                    }
+                    Ok(TelegramLoopEvent::TypingStop { run_id }) => {
+                        adapter.stop_typing(&run_id);
                     }
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
@@ -1164,12 +1179,41 @@ async fn run_turn(
     Ok(())
 }
 
+struct TypingGuard {
+    telegram_tx: Sender<TelegramLoopEvent>,
+    run_id: String,
+}
+
+impl TypingGuard {
+    fn start(
+        telegram_tx: Sender<TelegramLoopEvent>,
+        run_id: String,
+    ) -> Result<Self, mpsc::SendError<TelegramLoopEvent>> {
+        telegram_tx.send(TelegramLoopEvent::TypingStart {
+            run_id: run_id.clone(),
+        })?;
+        Ok(Self {
+            telegram_tx,
+            run_id,
+        })
+    }
+}
+
+impl Drop for TypingGuard {
+    fn drop(&mut self) {
+        let _ = self.telegram_tx.send(TelegramLoopEvent::TypingStop {
+            run_id: self.run_id.clone(),
+        });
+    }
+}
+
 async fn run_agent_loop(
     runtime: Arc<RuntimeOrchestrator>,
     response_model: Arc<dyn ResponseModel>,
     summary_model: Arc<dyn SummaryModel>,
     event_log: Arc<FanoutRuntimeEventLog>,
     cfg: AppConfig,
+    telegram_tx: Sender<TelegramLoopEvent>,
     mut prompt_rx: tokio_mpsc::UnboundedReceiver<IngressPrompt>,
 ) {
     let semaphore = Arc::new(Semaphore::new(cfg.max_concurrent_turns));
@@ -1191,12 +1235,20 @@ async fn run_agent_loop(
         let summary_model = summary_model.clone();
         let event_log = event_log.clone();
         let cfg = cfg.clone();
+        let telegram_tx = telegram_tx.clone();
         let source = prompt.source;
         let text = prompt.text;
         let run_index = next_run_id.fetch_add(1, Ordering::Relaxed);
 
         tokio::spawn(async move {
             let _permit = permit;
+            let typing_guard = if source == PromptSource::Telegram {
+                TypingGuard::start(telegram_tx, format!("run-{run_index}"))
+                    .map(Some)
+                    .unwrap_or(None)
+            } else {
+                None
+            };
             if let Err(err) = run_turn(
                 &runtime,
                 response_model.as_ref(),
@@ -1210,6 +1262,7 @@ async fn run_agent_loop(
             {
                 eprintln!("run-{run_index} ({}) failed: {err}", source.as_str());
             }
+            drop(typing_guard);
         });
     }
 }
@@ -1243,6 +1296,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
     let telegram_thread = spawn_telegram_loop(&cfg, bridge, event_rx);
+    let typing_tx = event_tx.clone();
     let event_log = Arc::new(FanoutRuntimeEventLog::new(
         cfg.event_log_path.clone(),
         event_tx,
@@ -1285,6 +1339,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             summary_model.clone(),
             event_log.clone(),
             cfg.clone(),
+            typing_tx,
             prompt_rx.expect("agent mode prompt receiver missing"),
         )
         .await;
@@ -1412,7 +1467,7 @@ mod tests {
         assert_eq!(
             rx.recv_timeout(Duration::from_millis(50))
                 .expect("forwarded event"),
-            event
+            TelegramLoopEvent::Runtime(event.clone())
         );
         let body = fs::read_to_string(&path).expect("read jsonl log");
         assert!(body.contains("policy_evaluated"));
@@ -1428,6 +1483,30 @@ mod tests {
         assert!(body.contains("\"event\":\"conversation\""));
         assert!(body.contains("\"message\":\"hello\""));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn typing_guard_emits_start_and_stop_events() {
+        let (tx, rx) = mpsc::channel();
+        {
+            let _guard =
+                TypingGuard::start(tx.clone(), "run-typing".to_string()).expect("start typing");
+            assert_eq!(
+                rx.recv_timeout(Duration::from_millis(50))
+                    .expect("typing start event"),
+                TelegramLoopEvent::TypingStart {
+                    run_id: "run-typing".to_string()
+                }
+            );
+        }
+
+        assert_eq!(
+            rx.recv_timeout(Duration::from_millis(50))
+                .expect("typing stop event"),
+            TelegramLoopEvent::TypingStop {
+                run_id: "run-typing".to_string()
+            }
+        );
     }
 
     #[test]

@@ -43,6 +43,8 @@ pub trait TelegramLongPoll: Send {
     ) -> Result<Vec<TelegramUpdate>, String>;
 
     fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String>;
+
+    fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String>;
 }
 
 pub trait Clock: Send + Sync {

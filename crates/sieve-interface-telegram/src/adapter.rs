@@ -7,7 +7,7 @@ use crate::{
     TelegramPrompt, TelegramUpdate,
 };
 use sieve_types::{ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, RuntimeEvent};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct TelegramAdapter<B, P, C>
 where
@@ -22,6 +22,8 @@ where
     next_update_offset: Option<i64>,
     pending_approvals: BTreeMap<String, ApprovalRequestedEvent>,
     pending_approval_message_ids: BTreeMap<i64, String>,
+    active_typing_runs: BTreeSet<String>,
+    last_typing_sent_ms: Option<u64>,
 }
 
 impl<B, P, C> TelegramAdapter<B, P, C>
@@ -39,7 +41,22 @@ where
             next_update_offset: None,
             pending_approvals: BTreeMap::new(),
             pending_approval_message_ids: BTreeMap::new(),
+            active_typing_runs: BTreeSet::new(),
+            last_typing_sent_ms: None,
         }
+    }
+
+    const TYPING_REFRESH_MS: u64 = 4_000;
+
+    pub fn start_typing(&mut self, run_id: impl Into<String>) -> Result<(), TelegramAdapterError> {
+        self.active_typing_runs.insert(run_id.into());
+        self.last_typing_sent_ms = None;
+        self.refresh_typing()?;
+        Ok(())
+    }
+
+    pub fn stop_typing(&mut self, run_id: &str) {
+        self.active_typing_runs.remove(run_id);
     }
 
     pub fn publish_runtime_event(
@@ -60,6 +77,7 @@ where
             RuntimeEvent::PolicyEvaluated(_) => {}
             RuntimeEvent::QuarantineCompleted(_) => {}
             RuntimeEvent::AssistantMessage(event) => {
+                self.stop_typing(&event.run_id.0);
                 self.send_to_chat(&event.message)?;
             }
             RuntimeEvent::ApprovalResolved(event) => {
@@ -73,9 +91,15 @@ where
     }
 
     pub fn poll_once(&mut self) -> Result<(), TelegramAdapterError> {
+        self.refresh_typing()?;
+        let timeout_secs = if self.active_typing_runs.is_empty() {
+            self.config.poll_timeout_secs
+        } else {
+            self.config.poll_timeout_secs.min(1)
+        };
         let updates = self
             .poll
-            .get_updates(self.next_update_offset, self.config.poll_timeout_secs)
+            .get_updates(self.next_update_offset, timeout_secs)
             .map_err(TelegramAdapterError::Transport)?;
 
         for update in updates {
@@ -212,6 +236,26 @@ where
             .send_message(self.config.chat_id, text)
             .map_err(TelegramAdapterError::Transport)
     }
+
+    fn refresh_typing(&mut self) -> Result<(), TelegramAdapterError> {
+        if self.active_typing_runs.is_empty() {
+            return Ok(());
+        }
+        let now = self.clock.now_ms();
+        let due = self
+            .last_typing_sent_ms
+            .map(|last| now.saturating_sub(last) >= Self::TYPING_REFRESH_MS)
+            .unwrap_or(true);
+        if !due {
+            return Ok(());
+        }
+
+        self.poll
+            .send_chat_action(self.config.chat_id, "typing")
+            .map_err(TelegramAdapterError::Transport)?;
+        self.last_typing_sent_ms = Some(now);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -284,6 +328,7 @@ mod tests {
     struct TestPoller {
         updates: VecDeque<Vec<TelegramUpdate>>,
         sent_messages: Vec<(i64, String)>,
+        sent_chat_actions: Vec<(i64, String)>,
         next_message_id: i64,
     }
 
@@ -292,6 +337,7 @@ mod tests {
             Self {
                 updates: updates.into(),
                 sent_messages: Vec::new(),
+                sent_chat_actions: Vec::new(),
                 next_message_id: 1,
             }
         }
@@ -312,6 +358,11 @@ mod tests {
             self.next_message_id += 1;
             Ok(Some(message_id))
         }
+
+        fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {
+            self.sent_chat_actions.push((chat_id, action.to_string()));
+            Ok(())
+        }
     }
 
     struct FixedClock {
@@ -321,6 +372,27 @@ mod tests {
     impl Clock for FixedClock {
         fn now_ms(&self) -> UnixMillis {
             self.now
+        }
+    }
+
+    struct StepClock {
+        now: std::sync::atomic::AtomicU64,
+        step: u64,
+    }
+
+    impl StepClock {
+        fn new(start: u64, step: u64) -> Self {
+            Self {
+                now: std::sync::atomic::AtomicU64::new(start),
+                step,
+            }
+        }
+    }
+
+    impl Clock for StepClock {
+        fn now_ms(&self) -> UnixMillis {
+            self.now
+                .fetch_add(self.step, std::sync::atomic::Ordering::Relaxed)
         }
     }
 
@@ -1052,10 +1124,40 @@ mod tests {
         assert!(last.1.contains("approval target unclear"));
     }
 
+    #[test]
+    fn typing_indicator_starts_and_stops_cleanly() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(vec![Vec::new(), Vec::new(), Vec::new()]);
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 30,
+                allowed_sender_user_ids: None,
+            },
+            bridge,
+            poller,
+            StepClock::new(1_000, 5_000),
+        );
+
+        adapter.start_typing("run-1").expect("start typing");
+        assert_eq!(adapter.poll.sent_chat_actions.len(), 1);
+        assert_eq!(
+            adapter.poll.sent_chat_actions[0],
+            (42, "typing".to_string())
+        );
+
+        adapter.poll_once().expect("poll with typing");
+        assert_eq!(adapter.poll.sent_chat_actions.len(), 2);
+        adapter.stop_typing("run-1");
+        adapter.poll_once().expect("poll after stop");
+        assert_eq!(adapter.poll.sent_chat_actions.len(), 2);
+    }
+
     #[derive(Clone, Default)]
     struct SharedPoller {
         updates: Arc<Mutex<VecDeque<Vec<TelegramUpdate>>>>,
         sent_messages: Arc<Mutex<Vec<(i64, String)>>>,
+        sent_chat_actions: Arc<Mutex<Vec<(i64, String)>>>,
         next_message_id: Arc<Mutex<i64>>,
     }
 
@@ -1101,6 +1203,14 @@ mod tests {
             let message_id = *next_id;
             *next_id += 1;
             Ok(Some(message_id))
+        }
+
+        fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {
+            self.sent_chat_actions
+                .lock()
+                .expect("shared chat actions mutex poisoned")
+                .push((chat_id, action.to_string()));
+            Ok(())
         }
     }
 
