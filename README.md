@@ -46,6 +46,11 @@ Approval smoke scripts:
 ./scripts/smoke-requires-approval-expected.sh
 ```
 
+These are live Telegram flows (not unit tests): each script runs `sieve-app`, waits for a real
+`approval_requested` event, and verifies live gate behavior.
+- `smoke-approval-expected.sh`: waits for you to approve in Telegram, then verifies execution.
+- `smoke-requires-approval-expected.sh`: verifies command stays blocked pending approval.
+
 Modes:
 - Single command mode: pass a CLI prompt (`cargo run -p sieve-app -- "review workspace status"`).
 - Long-running agent mode: omit CLI prompt. The app stays up, accepts prompts from stdin and

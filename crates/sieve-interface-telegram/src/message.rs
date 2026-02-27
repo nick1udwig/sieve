@@ -14,7 +14,11 @@ pub(crate) struct TelegramApprovalCommand {
 
 pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
     let mut parts = text.split_whitespace();
-    let command = parts.next()?;
+    let command_raw = parts.next()?;
+    let command = command_raw
+        .split_once('@')
+        .map(|(base, _)| base)
+        .unwrap_or(command_raw);
     let request_id = parts.next()?.to_string();
     if parts.next().is_some() {
         return None;
@@ -33,8 +37,8 @@ pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
 
 pub(crate) fn parse_short_action(text: &str) -> Option<TelegramApprovalAction> {
     match text.trim().to_ascii_lowercase().as_str() {
-        "yes" | "y" => Some(TelegramApprovalAction::ApproveOnce),
-        "no" | "n" => Some(TelegramApprovalAction::Deny),
+        "yes" | "y" | "👍" => Some(TelegramApprovalAction::ApproveOnce),
+        "no" | "n" | "👎" => Some(TelegramApprovalAction::Deny),
         _ => None,
     }
 }
@@ -87,6 +91,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parse_command_accepts_bot_mention_suffix() {
+        let parsed = parse_command("/approve_once@my_bot approval-1").expect("command parse");
+        assert_eq!(parsed.action, TelegramApprovalAction::ApproveOnce);
+        assert_eq!(parsed.request_id, "approval-1");
+    }
+
+    #[test]
     fn parse_short_action_supports_yes_and_no() {
         assert_eq!(
             parse_short_action("yes"),
@@ -96,7 +107,12 @@ mod tests {
             parse_short_action("Y"),
             Some(TelegramApprovalAction::ApproveOnce)
         );
+        assert_eq!(
+            parse_short_action("👍"),
+            Some(TelegramApprovalAction::ApproveOnce)
+        );
         assert_eq!(parse_short_action("n"), Some(TelegramApprovalAction::Deny));
+        assert_eq!(parse_short_action("👎"), Some(TelegramApprovalAction::Deny));
         assert_eq!(parse_short_action("maybe"), None);
     }
 
