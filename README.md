@@ -25,6 +25,7 @@ Inspired by:
    - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
    - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (required only when using `brave_search`)
+   - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
 2. Start the app:
 
 ```bash
@@ -92,6 +93,15 @@ Baseline policy file: `docs/policy/baseline-policy.toml`.
 - provide `BRAVE_API_KEY`
 - policy still gates execution; the tool precheck requires net connect capability to the configured
   Brave endpoint (`SIEVE_BRAVE_API_BASE`)
+
+Telegram voice-note notes:
+- voice input is converted to text by executing `SIEVE_AUDIO_STT_CMD` (must print transcript to stdout)
+- audio replies are synthesized by executing `SIEVE_AUDIO_TTS_CMD` (must write audio to `{{output_path}}`)
+- placeholder variables:
+  - STT: `{{input_path}}`, `{{run_id}}`
+  - TTS: `{{text_path}}`, `{{output_path}}`, `{{run_id}}`
+- recommended host dependencies: `ffmpeg` plus your chosen STT/TTS CLIs (for example Whisper/Faster-Whisper and Piper/espeak)
+- when audio synthesis/delivery fails, the app falls back to text reply
 
 ## Live LLM Runtime Tests
 

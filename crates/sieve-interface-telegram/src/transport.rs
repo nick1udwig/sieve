@@ -1,4 +1,7 @@
-use crate::{TelegramLongPoll, TelegramMessage, TelegramMessageReaction, TelegramUpdate};
+use crate::{
+    TelegramLongPoll, TelegramMessage, TelegramMessageReaction, TelegramUpdate,
+    TELEGRAM_IMAGE_PROMPT_PREFIX, TELEGRAM_VOICE_PROMPT_PREFIX,
+};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -176,7 +179,19 @@ impl CommandExecutor for SystemCommandExecutor {
 
 fn map_update(item: TelegramGetUpdatesItem) -> Result<TelegramUpdate, String> {
     let message = item.message.and_then(|message| {
-        message.text.map(|text| TelegramMessage {
+        let text = if let Some(text) = message.text {
+            Some(text)
+        } else if let Some(voice) = message.voice {
+            Some(format!("{TELEGRAM_VOICE_PROMPT_PREFIX}{}", voice.file_id))
+        } else if let Some(photo_sizes) = message.photo {
+            photo_sizes
+                .last()
+                .map(|photo| format!("{TELEGRAM_IMAGE_PROMPT_PREFIX}{}", photo.file_id))
+        } else {
+            message.caption
+        };
+
+        text.map(|text| TelegramMessage {
             chat_id: message.chat.id,
             sender_user_id: message.from.map(|user| user.id),
             message_id: message.message_id,
@@ -243,6 +258,9 @@ struct TelegramIncomingMessage {
     chat: TelegramIncomingChat,
     from: Option<TelegramIncomingUser>,
     text: Option<String>,
+    caption: Option<String>,
+    voice: Option<TelegramIncomingVoice>,
+    photo: Option<Vec<TelegramIncomingPhotoSize>>,
     reply_to_message: Option<TelegramIncomingMessageReply>,
 }
 
@@ -254,6 +272,16 @@ struct TelegramIncomingChat {
 #[derive(Debug, Deserialize)]
 struct TelegramIncomingMessageReply {
     message_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramIncomingVoice {
+    file_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramIncomingPhotoSize {
+    file_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -476,5 +504,46 @@ mod tests {
                 .emoji,
             vec!["👍".to_string()]
         );
+    }
+
+    #[test]
+    fn maps_voice_message_to_internal_prompt_marker() {
+        let mut poller = TelegramBotApiLongPoll::with_executor(
+            "token_abc",
+            "https://example.test",
+            TestExecutor::new(vec![Ok(
+                "{\"ok\":true,\"result\":[{\"update_id\":10,\"message\":{\"message_id\":99,\"chat\":{\"id\":42},\"from\":{\"id\":1002},\"voice\":{\"file_id\":\"voice-file-1\"}}}]}"
+                    .to_string(),
+            )]),
+        );
+
+        let updates = poller
+            .get_updates(None, 30)
+            .expect("get updates must succeed");
+        assert_eq!(updates.len(), 1);
+        let message = updates[0].message.as_ref().expect("voice marker message");
+        assert_eq!(
+            message.text,
+            format!("{TELEGRAM_VOICE_PROMPT_PREFIX}voice-file-1")
+        );
+    }
+
+    #[test]
+    fn maps_photo_message_to_internal_prompt_marker() {
+        let mut poller = TelegramBotApiLongPoll::with_executor(
+            "token_abc",
+            "https://example.test",
+            TestExecutor::new(vec![Ok(
+                "{\"ok\":true,\"result\":[{\"update_id\":11,\"message\":{\"message_id\":100,\"chat\":{\"id\":42},\"from\":{\"id\":1002},\"photo\":[{\"file_id\":\"small\"},{\"file_id\":\"large\"}]}}]}"
+                    .to_string(),
+            )]),
+        );
+
+        let updates = poller
+            .get_updates(None, 30)
+            .expect("get updates must succeed");
+        assert_eq!(updates.len(), 1);
+        let message = updates[0].message.as_ref().expect("photo marker message");
+        assert_eq!(message.text, format!("{TELEGRAM_IMAGE_PROMPT_PREFIX}large"));
     }
 }

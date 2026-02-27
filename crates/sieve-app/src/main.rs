@@ -5,7 +5,8 @@ use serde::Serialize;
 use sieve_command_summaries::DefaultCommandSummarizer;
 use sieve_interface_telegram::{
     SystemClock as TelegramClock, TelegramAdapter, TelegramAdapterConfig, TelegramBotApiLongPoll,
-    TelegramEventBridge, TelegramPrompt,
+    TelegramEventBridge, TelegramPrompt, TELEGRAM_IMAGE_PROMPT_PREFIX,
+    TELEGRAM_VOICE_PROMPT_PREFIX,
 };
 use sieve_llm::{
     OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel, ResponseModel,
@@ -51,6 +52,8 @@ struct AppConfig {
     allowed_tools: Vec<String>,
     brave_api_key: Option<String>,
     brave_api_base: String,
+    audio_stt_cmd: Option<String>,
+    audio_tts_cmd: Option<String>,
     unknown_mode: UnknownMode,
     uncertain_mode: UncertainMode,
     max_concurrent_turns: usize,
@@ -87,6 +90,8 @@ impl AppConfig {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| DEFAULT_BRAVE_API_BASE.to_string());
+        let audio_stt_cmd = optional_env("SIEVE_AUDIO_STT_CMD");
+        let audio_tts_cmd = optional_env("SIEVE_AUDIO_TTS_CMD");
         let max_concurrent_turns = parse_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
         if max_concurrent_turns == 0 {
             return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
@@ -104,6 +109,8 @@ impl AppConfig {
             allowed_tools,
             brave_api_key,
             brave_api_base,
+            audio_stt_cmd,
+            audio_tts_cmd,
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
             uncertain_mode: parse_uncertain_mode(env::var("SIEVE_UNCERTAIN_MODE").ok())?,
             max_concurrent_turns,
@@ -293,6 +300,19 @@ impl PromptSource {
             PromptSource::Telegram => "telegram",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputModality {
+    Text,
+    Audio,
+    Image,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseModality {
+    Text,
+    Audio,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1022,6 +1042,233 @@ async fn read_artifact_as_string(path: &std::path::Path) -> Result<String, io::E
     Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
+fn telegram_voice_file_id_from_prompt(text: &str) -> Option<&str> {
+    text.trim()
+        .strip_prefix(TELEGRAM_VOICE_PROMPT_PREFIX)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn telegram_image_file_id_from_prompt(text: &str) -> Option<&str> {
+    text.trim()
+        .strip_prefix(TELEGRAM_IMAGE_PROMPT_PREFIX)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn shell_escape_single_quoted(value: &str) -> String {
+    let mut escaped = String::from("'");
+    for ch in value.chars() {
+        if ch == '\'' {
+            escaped.push_str("'\\''");
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped.push('\'');
+    escaped
+}
+
+fn render_shell_template(template: &str, replacements: &[(&str, String)]) -> String {
+    let mut out = template.to_string();
+    for (key, value) in replacements {
+        let placeholder = format!("{{{{{key}}}}}");
+        out = out.replace(&placeholder, &shell_escape_single_quoted(value));
+    }
+    out
+}
+
+fn command_error_from_output(context: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        format!("{context} failed")
+    } else {
+        format!("{context} failed: {stderr}")
+    }
+}
+
+async fn run_shell_template_capture_stdout(
+    template: &str,
+    replacements: &[(&str, String)],
+    context: &str,
+) -> Result<String, String> {
+    let script = render_shell_template(template, replacements);
+    let output = TokioCommand::new("bash")
+        .arg("-lc")
+        .arg(script)
+        .output()
+        .await
+        .map_err(|err| format!("{context} spawn failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output(context, &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn run_shell_template(
+    template: &str,
+    replacements: &[(&str, String)],
+    context: &str,
+) -> Result<(), String> {
+    let script = render_shell_template(template, replacements);
+    let output = TokioCommand::new("bash")
+        .arg("-lc")
+        .arg(script)
+        .output()
+        .await
+        .map_err(|err| format!("{context} spawn failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output(context, &output));
+    }
+    Ok(())
+}
+
+async fn fetch_telegram_file_path(bot_token: &str, file_id: &str) -> Result<String, String> {
+    let url = format!("https://api.telegram.org/bot{bot_token}/getFile");
+    let output = TokioCommand::new("curl")
+        .arg("-sS")
+        .arg("--fail")
+        .arg("--get")
+        .arg("--data-urlencode")
+        .arg(format!("file_id={file_id}"))
+        .arg(url)
+        .output()
+        .await
+        .map_err(|err| format!("failed to fetch telegram file metadata: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output("telegram getFile", &output));
+    }
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("invalid telegram getFile response: {err}"))?;
+    payload
+        .pointer("/result/file_path")
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| "telegram getFile response missing result.file_path".to_string())
+}
+
+async fn download_telegram_file(
+    bot_token: &str,
+    file_path: &str,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    let url = format!("https://api.telegram.org/file/bot{bot_token}/{file_path}");
+    let output = TokioCommand::new("curl")
+        .arg("-sS")
+        .arg("--fail")
+        .arg("-o")
+        .arg(destination)
+        .arg(url)
+        .output()
+        .await
+        .map_err(|err| format!("failed to download telegram file: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output("telegram file download", &output));
+    }
+    Ok(())
+}
+
+async fn transcribe_audio_prompt(
+    cfg: &AppConfig,
+    run_id: &RunId,
+    file_id: &str,
+) -> Result<String, String> {
+    let stt_cmd = cfg
+        .audio_stt_cmd
+        .clone()
+        .ok_or_else(|| "audio input requires SIEVE_AUDIO_STT_CMD".to_string())?;
+    let file_path = fetch_telegram_file_path(&cfg.telegram_bot_token, file_id).await?;
+    let media_dir = cfg.sieve_home.join("media").join(&run_id.0);
+    tokio::fs::create_dir_all(&media_dir)
+        .await
+        .map_err(|err| format!("failed to create media dir: {err}"))?;
+    let ext = std::path::Path::new(&file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or("ogg");
+    let input_path = media_dir.join(format!("voice-input.{ext}"));
+    download_telegram_file(&cfg.telegram_bot_token, &file_path, &input_path).await?;
+
+    let transcript = run_shell_template_capture_stdout(
+        &stt_cmd,
+        &[
+            ("input_path", input_path.to_string_lossy().to_string()),
+            ("run_id", run_id.0.clone()),
+        ],
+        "audio stt command",
+    )
+    .await?;
+    let transcript = transcript.trim().to_string();
+    if transcript.is_empty() {
+        return Err("audio stt command produced empty transcript".to_string());
+    }
+    Ok(transcript)
+}
+
+async fn synthesize_audio_reply(
+    cfg: &AppConfig,
+    run_id: &RunId,
+    assistant_message: &str,
+) -> Result<PathBuf, String> {
+    let tts_cmd = cfg
+        .audio_tts_cmd
+        .clone()
+        .ok_or_else(|| "audio reply requires SIEVE_AUDIO_TTS_CMD".to_string())?;
+    let media_dir = cfg.sieve_home.join("media").join(&run_id.0);
+    tokio::fs::create_dir_all(&media_dir)
+        .await
+        .map_err(|err| format!("failed to create media dir: {err}"))?;
+    let text_path = media_dir.join("tts-input.txt");
+    let output_path = media_dir.join("tts-output.ogg");
+    tokio::fs::write(&text_path, assistant_message)
+        .await
+        .map_err(|err| format!("failed to write tts input text: {err}"))?;
+    run_shell_template(
+        &tts_cmd,
+        &[
+            ("text_path", text_path.to_string_lossy().to_string()),
+            ("output_path", output_path.to_string_lossy().to_string()),
+            ("run_id", run_id.0.clone()),
+        ],
+        "audio tts command",
+    )
+    .await?;
+    let metadata = tokio::fs::metadata(&output_path)
+        .await
+        .map_err(|err| format!("audio tts output missing: {err}"))?;
+    if metadata.len() == 0 {
+        return Err("audio tts output file is empty".to_string());
+    }
+    Ok(output_path)
+}
+
+async fn send_telegram_voice(
+    bot_token: &str,
+    chat_id: i64,
+    audio_path: &std::path::Path,
+) -> Result<(), String> {
+    let endpoint = format!("https://api.telegram.org/bot{bot_token}/sendVoice");
+    let voice_arg = format!("voice=@{}", audio_path.to_string_lossy());
+    let output = TokioCommand::new("curl")
+        .arg("-sS")
+        .arg("--fail")
+        .arg("-X")
+        .arg("POST")
+        .arg("-F")
+        .arg(format!("chat_id={chat_id}"))
+        .arg("-F")
+        .arg(voice_arg)
+        .arg(endpoint)
+        .output()
+        .await
+        .map_err(|err| format!("failed to send telegram voice message: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output("telegram sendVoice", &output));
+    }
+    Ok(())
+}
+
 async fn run_turn(
     runtime: &RuntimeOrchestrator,
     response_model: &dyn ResponseModel,
@@ -1029,15 +1276,55 @@ async fn run_turn(
     event_log: &FanoutRuntimeEventLog,
     cfg: &AppConfig,
     run_index: u64,
+    source: PromptSource,
     user_message: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_id = RunId(format!("run-{run_index}"));
-    let trusted_user_message = user_message.clone();
+    let (trusted_user_message, input_modality) = if source == PromptSource::Telegram {
+        if let Some(file_id) = telegram_voice_file_id_from_prompt(&user_message) {
+            match transcribe_audio_prompt(cfg, &run_id, file_id).await {
+                Ok(transcript) => (transcript, InputModality::Audio),
+                Err(err) => {
+                    let assistant_message = format!("audio input unavailable: {err}");
+                    println!("{}: {}", run_id.0, assistant_message);
+                    event_log
+                        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+                            schema_version: 1,
+                            run_id: run_id.clone(),
+                            message: assistant_message.clone(),
+                            created_at_ms: now_ms(),
+                        }))
+                        .await?;
+                    event_log
+                        .append_conversation(ConversationLogRecord::new(
+                            run_id.clone(),
+                            ConversationRole::Assistant,
+                            assistant_message.clone(),
+                            now_ms(),
+                        ))
+                        .await?;
+                    return Ok(());
+                }
+            }
+        } else if telegram_image_file_id_from_prompt(&user_message).is_some() {
+            (user_message.clone(), InputModality::Image)
+        } else {
+            (user_message.clone(), InputModality::Text)
+        }
+    } else {
+        (user_message.clone(), InputModality::Text)
+    };
+    let response_modality = if input_modality == InputModality::Audio {
+        ResponseModality::Audio
+    } else {
+        ResponseModality::Text
+    };
+
     event_log
         .append_conversation(ConversationLogRecord::new(
             run_id.clone(),
             ConversationRole::User,
-            user_message.clone(),
+            trusted_user_message.clone(),
             now_ms(),
         ))
         .await?;
@@ -1159,14 +1446,35 @@ async fn run_turn(
     .await;
     println!("{}: {}", run_id.0, assistant_message);
 
-    event_log
-        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
-            schema_version: 1,
-            run_id: run_id.clone(),
-            message: assistant_message.clone(),
-            created_at_ms: now_ms(),
-        }))
-        .await?;
+    let mut delivered_audio = false;
+    if source == PromptSource::Telegram && response_modality == ResponseModality::Audio {
+        match synthesize_audio_reply(cfg, &run_id, &assistant_message).await {
+            Ok(audio_path) => {
+                if let Err(err) =
+                    send_telegram_voice(&cfg.telegram_bot_token, cfg.telegram_chat_id, &audio_path)
+                        .await
+                {
+                    eprintln!("audio reply delivery failed for {}: {}", run_id.0, err);
+                } else {
+                    delivered_audio = true;
+                }
+            }
+            Err(err) => {
+                eprintln!("audio synthesis failed for {}: {}", run_id.0, err);
+            }
+        }
+    }
+
+    if !delivered_audio {
+        event_log
+            .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+                schema_version: 1,
+                run_id: run_id.clone(),
+                message: assistant_message.clone(),
+                created_at_ms: now_ms(),
+            }))
+            .await?;
+    }
 
     event_log
         .append_conversation(ConversationLogRecord::new(
@@ -1256,6 +1564,7 @@ async fn run_agent_loop(
                 &event_log,
                 &cfg,
                 run_index,
+                source,
                 text,
             )
             .await
@@ -1326,6 +1635,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &event_log,
             &cfg,
             1,
+            PromptSource::Stdin,
             cli_prompt,
         )
         .await?;
@@ -1507,6 +1817,33 @@ mod tests {
                 run_id: "run-typing".to_string()
             }
         );
+    }
+
+    #[test]
+    fn telegram_prompt_marker_extractors_work() {
+        assert_eq!(
+            telegram_voice_file_id_from_prompt("__sieve_voice_file_id:voice-123"),
+            Some("voice-123")
+        );
+        assert_eq!(
+            telegram_image_file_id_from_prompt("__sieve_photo_file_id:photo-456"),
+            Some("photo-456")
+        );
+        assert_eq!(telegram_voice_file_id_from_prompt("hello"), None);
+        assert_eq!(telegram_image_file_id_from_prompt("hello"), None);
+    }
+
+    #[test]
+    fn render_shell_template_quotes_replacements() {
+        let rendered = render_shell_template(
+            "tool --input {{input_path}} --run {{run_id}}",
+            &[
+                ("input_path", "/tmp/it's ok.wav".to_string()),
+                ("run_id", "run-1".to_string()),
+            ],
+        );
+        assert!(rendered.contains("--input '/tmp/it'\\''s ok.wav'"));
+        assert!(rendered.contains("--run 'run-1'"));
     }
 
     #[test]

@@ -11,6 +11,9 @@ mod transport;
 pub use adapter::TelegramAdapter;
 pub use transport::TelegramBotApiLongPoll;
 
+pub const TELEGRAM_VOICE_PROMPT_PREFIX: &str = "__sieve_voice_file_id:";
+pub const TELEGRAM_IMAGE_PROMPT_PREFIX: &str = "__sieve_photo_file_id:";
+
 pub struct TelegramAdapterConfig {
     pub chat_id: i64,
     pub poll_timeout_secs: u16,
