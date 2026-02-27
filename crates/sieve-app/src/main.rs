@@ -7,17 +7,24 @@ use sieve_interface_telegram::{
     SystemClock as TelegramClock, TelegramAdapter, TelegramAdapterConfig, TelegramBotApiLongPoll,
     TelegramEventBridge, TelegramPrompt,
 };
-use sieve_llm::OpenAiPlannerModel;
+use sieve_llm::{
+    OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel, ResponseModel,
+    ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput, SummaryModel, SummaryRequest,
+};
 use sieve_policy::TomlPolicyEngine;
 use sieve_quarantine::BwrapQuarantineRunner;
 use sieve_runtime::{
-    ApprovalBusError, BashMainlineRunner, EventLogError, InProcessApprovalBus,
-    JsonlRuntimeEventLog, PlannerRunRequest, RuntimeDeps, RuntimeEventLog, RuntimeOrchestrator,
-    SystemClock as RuntimeClock,
+    ApprovalBusError, EventLogError, InProcessApprovalBus, JsonlRuntimeEventLog, MainlineArtifact,
+    MainlineArtifactKind, MainlineRunError, MainlineRunReport, MainlineRunRequest, MainlineRunner,
+    PlannerRunRequest, PlannerRunResult, PlannerToolResult, RuntimeDeps, RuntimeDisposition,
+    RuntimeEventLog, RuntimeOrchestrator, SystemClock as RuntimeClock,
 };
 use sieve_shell::BasicShellAnalyzer;
-use sieve_types::{ApprovalResolvedEvent, RunId, RuntimeEvent, UncertainMode, UnknownMode};
-use std::collections::BTreeSet;
+use sieve_types::{
+    ApprovalResolvedEvent, AssistantMessageEvent, Integrity, RunId, RuntimeEvent, UncertainMode,
+    UnknownMode,
+};
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead};
@@ -27,6 +34,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc as tokio_mpsc, Semaphore};
 
 #[derive(Clone)]
@@ -35,6 +43,7 @@ struct AppConfig {
     telegram_chat_id: i64,
     telegram_poll_timeout_secs: u16,
     telegram_allowed_sender_user_ids: Option<BTreeSet<i64>>,
+    sieve_home: PathBuf,
     policy_path: PathBuf,
     event_log_path: PathBuf,
     runtime_cwd: String,
@@ -78,6 +87,7 @@ impl AppConfig {
             telegram_chat_id,
             telegram_poll_timeout_secs,
             telegram_allowed_sender_user_ids,
+            sieve_home,
             policy_path,
             event_log_path,
             runtime_cwd,
@@ -328,6 +338,95 @@ fn format_approval_bus_error(err: &ApprovalBusError) -> String {
     err.to_string()
 }
 
+struct AppMainlineRunner {
+    artifact_root: PathBuf,
+    next_artifact_id: AtomicU64,
+}
+
+impl AppMainlineRunner {
+    fn new(artifact_root: PathBuf) -> Self {
+        Self {
+            artifact_root,
+            next_artifact_id: AtomicU64::new(1),
+        }
+    }
+
+    fn next_ref_id(&self) -> String {
+        let next = self.next_artifact_id.fetch_add(1, Ordering::Relaxed);
+        format!("artifact-{}-{next}", now_ms())
+    }
+
+    async fn persist_artifact(
+        &self,
+        run_id: &RunId,
+        kind: MainlineArtifactKind,
+        bytes: &[u8],
+    ) -> Result<MainlineArtifact, MainlineRunError> {
+        let ref_id = self.next_ref_id();
+        let kind_name = match kind {
+            MainlineArtifactKind::Stdout => "stdout",
+            MainlineArtifactKind::Stderr => "stderr",
+        };
+        let run_dir = self.artifact_root.join(&run_id.0);
+        tokio::fs::create_dir_all(&run_dir)
+            .await
+            .map_err(|err| MainlineRunError::Exec(format!("create artifact dir failed: {err}")))?;
+        let path = run_dir.join(format!("{ref_id}-{kind_name}.log"));
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|err| MainlineRunError::Exec(format!("persist artifact failed: {err}")))?;
+
+        Ok(MainlineArtifact {
+            ref_id,
+            kind,
+            path: path.to_string_lossy().to_string(),
+            byte_count: bytes.len() as u64,
+            line_count: count_newlines(bytes),
+        })
+    }
+}
+
+#[async_trait]
+impl MainlineRunner for AppMainlineRunner {
+    async fn run(
+        &self,
+        request: MainlineRunRequest,
+    ) -> Result<MainlineRunReport, MainlineRunError> {
+        let output = TokioCommand::new("bash")
+            .arg("-lc")
+            .arg(&request.script)
+            .current_dir(&request.cwd)
+            .output()
+            .await
+            .map_err(|err| MainlineRunError::Exec(err.to_string()))?;
+
+        let stdout_artifact = self
+            .persist_artifact(
+                &request.run_id,
+                MainlineArtifactKind::Stdout,
+                &output.stdout,
+            )
+            .await?;
+        let stderr_artifact = self
+            .persist_artifact(
+                &request.run_id,
+                MainlineArtifactKind::Stderr,
+                &output.stderr,
+            )
+            .await?;
+
+        Ok(MainlineRunReport {
+            run_id: request.run_id,
+            exit_code: output.status.code(),
+            artifacts: vec![stdout_artifact, stderr_artifact],
+        })
+    }
+}
+
+fn count_newlines(bytes: &[u8]) -> u64 {
+    bytes.iter().filter(|byte| **byte == b'\n').count() as u64
+}
+
 struct FanoutRuntimeEventLog {
     jsonl: JsonlRuntimeEventLog,
     history: Mutex<Vec<RuntimeEvent>>,
@@ -462,14 +561,315 @@ fn spawn_stdin_prompt_loop(
     })
 }
 
+#[derive(Debug, Clone)]
+enum RenderRef {
+    Literal {
+        value: String,
+    },
+    Artifact {
+        path: PathBuf,
+        byte_count: u64,
+        line_count: u64,
+    },
+}
+
+fn build_response_turn_input(
+    run_id: &RunId,
+    trusted_user_message: &str,
+    planner_result: &PlannerRunResult,
+) -> (ResponseTurnInput, BTreeMap<String, RenderRef>) {
+    let mut render_refs = BTreeMap::new();
+    let mut tool_outcomes = Vec::with_capacity(planner_result.tool_results.len());
+    for tool_result in &planner_result.tool_results {
+        tool_outcomes.push(summarize_tool_result(tool_result, &mut render_refs));
+    }
+
+    (
+        ResponseTurnInput {
+            run_id: run_id.clone(),
+            trusted_user_message: trusted_user_message.to_string(),
+            planner_thoughts: planner_result.thoughts.clone(),
+            tool_outcomes,
+        },
+        render_refs,
+    )
+}
+
+fn requires_output_visibility(input: &ResponseTurnInput) -> bool {
+    !non_empty_output_ref_ids(input).is_empty()
+}
+
+fn non_empty_output_ref_ids(input: &ResponseTurnInput) -> BTreeSet<String> {
+    input
+        .tool_outcomes
+        .iter()
+        .flat_map(|outcome| outcome.refs.iter())
+        .filter(|ref_metadata| {
+            (ref_metadata.kind == "stdout" || ref_metadata.kind == "stderr")
+                && ref_metadata.byte_count > 0
+        })
+        .map(|ref_metadata| ref_metadata.ref_id.clone())
+        .collect()
+}
+
+fn response_has_visible_selected_output(
+    input: &ResponseTurnInput,
+    response: &sieve_llm::ResponseTurnOutput,
+) -> bool {
+    let output_ref_ids = non_empty_output_ref_ids(input);
+    response.referenced_ref_ids.iter().any(|ref_id| {
+        output_ref_ids.contains(ref_id) && response.message.contains(&format!("[[ref:{ref_id}]]"))
+    }) || response.summarized_ref_ids.iter().any(|ref_id| {
+        output_ref_ids.contains(ref_id)
+            && response
+                .message
+                .contains(&format!("[[summary:{ref_id}]]"))
+    })
+}
+
+fn summarize_tool_result(
+    result: &PlannerToolResult,
+    render_refs: &mut BTreeMap<String, RenderRef>,
+) -> ResponseToolOutcome {
+    match result {
+        PlannerToolResult::Bash {
+            disposition,
+            command: _,
+        } => match disposition {
+            RuntimeDisposition::ExecuteMainline(report) => ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: format!("executed mainline (exit_code={:?})", report.exit_code),
+                refs: report
+                    .artifacts
+                    .iter()
+                    .map(|artifact| {
+                        render_refs.insert(
+                            artifact.ref_id.clone(),
+                            RenderRef::Artifact {
+                                path: PathBuf::from(&artifact.path),
+                                byte_count: artifact.byte_count,
+                                line_count: artifact.line_count,
+                            },
+                        );
+                        ResponseRefMetadata {
+                            ref_id: artifact.ref_id.clone(),
+                            kind: mainline_artifact_kind_name(artifact.kind).to_string(),
+                            byte_count: artifact.byte_count,
+                            line_count: artifact.line_count,
+                        }
+                    })
+                    .collect(),
+            },
+            RuntimeDisposition::ExecuteQuarantine(report) => {
+                let trace_ref = format!("trace:{}", report.run_id.0);
+                render_refs.insert(
+                    trace_ref.clone(),
+                    RenderRef::Literal {
+                        value: report.trace_path.clone(),
+                    },
+                );
+                ResponseToolOutcome {
+                    tool_name: "bash".to_string(),
+                    outcome: format!(
+                        "executed in quarantine (exit_code={:?}, trace=[[ref:{}]])",
+                        report.exit_code, trace_ref
+                    ),
+                    refs: vec![ResponseRefMetadata {
+                        ref_id: trace_ref,
+                        kind: "trace_path".to_string(),
+                        byte_count: 0,
+                        line_count: 0,
+                    }],
+                }
+            }
+            RuntimeDisposition::Denied { reason } => ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: format!("denied ({reason})"),
+                refs: Vec::new(),
+            },
+        },
+        PlannerToolResult::Endorse {
+            request,
+            transition,
+        } => {
+            let value_ref_id = format!("value:{}", request.value_ref.0);
+            render_refs.insert(
+                value_ref_id.clone(),
+                RenderRef::Literal {
+                    value: request.value_ref.0.clone(),
+                },
+            );
+            let outcome = match transition {
+                Some(transition) => format!(
+                    "endorse applied for [[ref:{}]] ({} -> {})",
+                    value_ref_id,
+                    format_integrity(transition.from_integrity),
+                    format_integrity(transition.to_integrity),
+                ),
+                None => format!("endorse not applied for [[ref:{}]]", value_ref_id),
+            };
+            ResponseToolOutcome {
+                tool_name: "endorse".to_string(),
+                outcome,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: value_ref_id,
+                    kind: "value_ref".to_string(),
+                    byte_count: 0,
+                    line_count: 0,
+                }],
+            }
+        }
+        PlannerToolResult::Declassify {
+            request,
+            transition,
+        } => {
+            let value_ref_id = format!("value:{}", request.value_ref.0);
+            let sink_ref_id = format!("sink:{}", request.sink.0);
+            render_refs.insert(
+                value_ref_id.clone(),
+                RenderRef::Literal {
+                    value: request.value_ref.0.clone(),
+                },
+            );
+            render_refs.insert(
+                sink_ref_id.clone(),
+                RenderRef::Literal {
+                    value: request.sink.0.clone(),
+                },
+            );
+            let outcome = match transition {
+                Some(transition) => format!(
+                    "declassify applied for [[ref:{}]] -> [[ref:{}]] (already_allowed={})",
+                    value_ref_id, sink_ref_id, transition.sink_was_already_allowed
+                ),
+                None => format!(
+                    "declassify not applied for [[ref:{}]] -> [[ref:{}]]",
+                    value_ref_id, sink_ref_id
+                ),
+            };
+            ResponseToolOutcome {
+                tool_name: "declassify".to_string(),
+                outcome,
+                refs: vec![
+                    ResponseRefMetadata {
+                        ref_id: value_ref_id,
+                        kind: "value_ref".to_string(),
+                        byte_count: 0,
+                        line_count: 0,
+                    },
+                    ResponseRefMetadata {
+                        ref_id: sink_ref_id,
+                        kind: "sink".to_string(),
+                        byte_count: 0,
+                        line_count: 0,
+                    },
+                ],
+            }
+        }
+    }
+}
+
+fn mainline_artifact_kind_name(kind: MainlineArtifactKind) -> &'static str {
+    match kind {
+        MainlineArtifactKind::Stdout => "stdout",
+        MainlineArtifactKind::Stderr => "stderr",
+    }
+}
+
+fn format_integrity(integrity: Integrity) -> &'static str {
+    match integrity {
+        Integrity::Trusted => "trusted",
+        Integrity::Untrusted => "untrusted",
+    }
+}
+
+async fn render_assistant_message(
+    message: &str,
+    referenced_ref_ids: &BTreeSet<String>,
+    summarized_ref_ids: &BTreeSet<String>,
+    render_refs: &BTreeMap<String, RenderRef>,
+    summary_model: &dyn SummaryModel,
+    run_id: &RunId,
+) -> String {
+    let mut expanded = message.to_string();
+
+    for ref_id in referenced_ref_ids {
+        if let Some(raw_value) = resolve_raw_ref_value(ref_id, render_refs).await {
+            let token = format!("[[ref:{ref_id}]]");
+            expanded = expanded.replace(&token, &raw_value);
+        }
+    }
+
+    for ref_id in summarized_ref_ids {
+        if let Some((content, byte_count, line_count)) =
+            resolve_ref_summary_input(ref_id, render_refs).await
+        {
+            let summary = match summary_model
+                .summarize_ref(SummaryRequest {
+                    run_id: run_id.clone(),
+                    ref_id: ref_id.clone(),
+                    content,
+                    byte_count,
+                    line_count,
+                })
+                .await
+            {
+                Ok(summary) => summary,
+                Err(err) => format!("summary unavailable: {err}"),
+            };
+            let token = format!("[[summary:{ref_id}]]");
+            expanded = expanded.replace(&token, &summary);
+        }
+    }
+
+    expanded
+}
+
+async fn resolve_raw_ref_value(
+    ref_id: &str,
+    render_refs: &BTreeMap<String, RenderRef>,
+) -> Option<String> {
+    let render_ref = render_refs.get(ref_id)?;
+    match render_ref {
+        RenderRef::Literal { value } => Some(value.clone()),
+        RenderRef::Artifact { path, .. } => read_artifact_as_string(path).await.ok(),
+    }
+}
+
+async fn resolve_ref_summary_input(
+    ref_id: &str,
+    render_refs: &BTreeMap<String, RenderRef>,
+) -> Option<(String, u64, u64)> {
+    let render_ref = render_refs.get(ref_id)?;
+    match render_ref {
+        RenderRef::Literal { value } => Some((value.clone(), value.len() as u64, 0)),
+        RenderRef::Artifact {
+            path,
+            byte_count,
+            line_count,
+        } => {
+            let content = read_artifact_as_string(path).await.ok()?;
+            Some((content, *byte_count, *line_count))
+        }
+    }
+}
+
+async fn read_artifact_as_string(path: &std::path::Path) -> Result<String, io::Error> {
+    let bytes = tokio::fs::read(path).await?;
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
 async fn run_turn(
     runtime: &RuntimeOrchestrator,
+    response_model: &dyn ResponseModel,
+    summary_model: &dyn SummaryModel,
     event_log: &FanoutRuntimeEventLog,
     cfg: &AppConfig,
     run_index: u64,
     user_message: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let run_id = RunId(format!("run-{run_index}"));
+    let trusted_user_message = user_message.clone();
     event_log
         .append_conversation(ConversationLogRecord::new(
             run_id.clone(),
@@ -483,7 +883,7 @@ async fn run_turn(
         .orchestrate_planner_turn(PlannerRunRequest {
             run_id: run_id.clone(),
             cwd: cfg.runtime_cwd.clone(),
-            user_message,
+            user_message: trusted_user_message.clone(),
             allowed_tools: cfg.allowed_tools.clone(),
             previous_events: event_log.snapshot(),
             control_value_refs: BTreeSet::new(),
@@ -510,25 +910,107 @@ async fn run_turn(
         }
     };
 
-    println!("{} -> {:?}", run_id.0, result.tool_results);
-    if let Some(thoughts) = result.thoughts.as_ref() {
-        println!("{} thoughts: {}", run_id.0, thoughts);
+    let (mut response_input, render_refs) =
+        build_response_turn_input(&run_id, &trusted_user_message, &result);
+    let mut response_output = match response_model
+        .write_turn_response(response_input.clone())
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            if let Err(log_err) = event_log
+                .append_conversation(ConversationLogRecord::new(
+                    run_id.clone(),
+                    ConversationRole::Assistant,
+                    format!("error: {err}"),
+                    now_ms(),
+                ))
+                .await
+            {
+                eprintln!("failed to append assistant error conversation log: {log_err}");
+            }
+            return Err(err.into());
+        }
+    };
+
+    if requires_output_visibility(&response_input)
+        && !response_has_visible_selected_output(&response_input, &response_output)
+    {
+        // One regeneration pass: enforce that non-empty output refs are either shown raw
+        // or summarized by Q-LLM, without exposing untrusted strings to the model.
+        let diagnostics = "Non-empty stdout/stderr refs exist. Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
+        response_input.planner_thoughts = Some(match response_input.planner_thoughts.take() {
+            Some(existing) if !existing.trim().is_empty() => format!("{existing}\n{diagnostics}"),
+            _ => diagnostics.to_string(),
+        });
+
+        response_output = match response_model
+            .write_turn_response(response_input.clone())
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                if let Err(log_err) = event_log
+                    .append_conversation(ConversationLogRecord::new(
+                        run_id.clone(),
+                        ConversationRole::Assistant,
+                        format!("error: {err}"),
+                        now_ms(),
+                    ))
+                    .await
+                {
+                    eprintln!("failed to append assistant error conversation log: {log_err}");
+                }
+                return Err(err.into());
+            }
+        };
+
+        if !response_has_visible_selected_output(&response_input, &response_output) {
+            if let Some(fallback_ref_id) = non_empty_output_ref_ids(&response_input)
+                .into_iter()
+                .next()
+            {
+                response_output
+                    .summarized_ref_ids
+                    .insert(fallback_ref_id.clone());
+                let token = format!("[[summary:{fallback_ref_id}]]");
+                if !response_output.message.contains(&token) {
+                    let base = response_output.message.trim();
+                    response_output.message = if base.is_empty() {
+                        token
+                    } else {
+                        format!("{base}\n{token}")
+                    };
+                }
+            }
+        }
     }
-    let assistant_message = format!(
-        "{} -> {:?}{}",
-        run_id.0,
-        result.tool_results,
-        result
-            .thoughts
-            .as_ref()
-            .map(|thoughts| format!("; thoughts: {thoughts}"))
-            .unwrap_or_default()
-    );
+
+    let assistant_message = render_assistant_message(
+        &response_output.message,
+        &response_output.referenced_ref_ids,
+        &response_output.summarized_ref_ids,
+        &render_refs,
+        summary_model,
+        &run_id,
+    )
+    .await;
+    println!("{}: {}", run_id.0, assistant_message);
+
+    event_log
+        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+            schema_version: 1,
+            run_id: run_id.clone(),
+            message: assistant_message.clone(),
+            created_at_ms: now_ms(),
+        }))
+        .await?;
+
     event_log
         .append_conversation(ConversationLogRecord::new(
-            run_id,
+            run_id.clone(),
             ConversationRole::Assistant,
-            assistant_message,
+            assistant_message.clone(),
             now_ms(),
         ))
         .await?;
@@ -537,6 +1019,8 @@ async fn run_turn(
 
 async fn run_agent_loop(
     runtime: Arc<RuntimeOrchestrator>,
+    response_model: Arc<dyn ResponseModel>,
+    summary_model: Arc<dyn SummaryModel>,
     event_log: Arc<FanoutRuntimeEventLog>,
     cfg: AppConfig,
     mut prompt_rx: tokio_mpsc::UnboundedReceiver<IngressPrompt>,
@@ -556,6 +1040,8 @@ async fn run_agent_loop(
         };
 
         let runtime = runtime.clone();
+        let response_model = response_model.clone();
+        let summary_model = summary_model.clone();
         let event_log = event_log.clone();
         let cfg = cfg.clone();
         let source = prompt.source;
@@ -564,7 +1050,17 @@ async fn run_agent_loop(
 
         tokio::spawn(async move {
             let _permit = permit;
-            if let Err(err) = run_turn(&runtime, &event_log, &cfg, run_index, text).await {
+            if let Err(err) = run_turn(
+                &runtime,
+                response_model.as_ref(),
+                summary_model.as_ref(),
+                &event_log,
+                &cfg,
+                run_index,
+                text,
+            )
+            .await
+            {
                 eprintln!("run-{run_index} ({}) failed: {err}", source.as_str());
             }
         });
@@ -584,6 +1080,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let policy = TomlPolicyEngine::from_toml_str(&policy_toml)?;
 
     let planner = OpenAiPlannerModel::from_env()?;
+    let response_model: Arc<dyn ResponseModel> = Arc::new(OpenAiResponseModel::from_env()?);
+    let summary_model: Arc<dyn SummaryModel> = Arc::new(OpenAiSummaryModel::from_env()?);
     let approval_bus = Arc::new(InProcessApprovalBus::new());
     let (event_tx, event_rx) = mpsc::channel();
     let (prompt_rx, _stdin_thread, bridge) = if single_command_mode {
@@ -608,7 +1106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         summaries: Arc::new(DefaultCommandSummarizer),
         policy: Arc::new(policy),
         quarantine: Arc::new(BwrapQuarantineRunner::default()),
-        mainline: Arc::new(BashMainlineRunner),
+        mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
         planner: Arc::new(planner),
         approval_bus,
         event_log: event_log.clone(),
@@ -616,13 +1114,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }));
 
     if single_command_mode {
-        run_turn(&runtime, &event_log, &cfg, 1, cli_prompt).await?;
+        run_turn(
+            &runtime,
+            response_model.as_ref(),
+            summary_model.as_ref(),
+            &event_log,
+            &cfg,
+            1,
+            cli_prompt,
+        )
+        .await?;
         drop(runtime);
         drop(event_log);
         let _ = telegram_thread.join();
     } else {
         run_agent_loop(
             runtime.clone(),
+            response_model.clone(),
+            summary_model.clone(),
             event_log.clone(),
             cfg.clone(),
             prompt_rx.expect("agent mode prompt receiver missing"),
@@ -636,6 +1145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sieve_llm::LlmError;
     use sieve_runtime::ApprovalBus;
     use sieve_types::{
         ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CommandSegment, PolicyDecision,
@@ -646,6 +1156,27 @@ mod tests {
     fn env_test_lock() -> &'static StdMutex<()> {
         static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| StdMutex::new(()))
+    }
+
+    struct EchoSummaryModel;
+
+    #[async_trait]
+    impl SummaryModel for EchoSummaryModel {
+        fn config(&self) -> &sieve_types::LlmModelConfig {
+            static CONFIG: OnceLock<sieve_types::LlmModelConfig> = OnceLock::new();
+            CONFIG.get_or_init(|| sieve_types::LlmModelConfig {
+                provider: sieve_types::LlmProvider::OpenAi,
+                model: "summary-test".to_string(),
+                api_base: None,
+            })
+        }
+
+        async fn summarize_ref(&self, request: SummaryRequest) -> Result<String, LlmError> {
+            Ok(format!(
+                "summary(bytes={},lines={})",
+                request.byte_count, request.line_count
+            ))
+        }
     }
 
     #[tokio::test]
@@ -812,6 +1343,134 @@ mod tests {
         let err = parse_telegram_allowed_sender_user_ids(Some("1001,nope".to_string()))
             .expect_err("must reject invalid user id");
         assert!(err.contains("invalid SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS entry `nope`"));
+    }
+
+    #[tokio::test]
+    async fn render_assistant_message_replaces_known_tokens() {
+        let message = "trace path: [[ref:trace:run-1]]";
+        let refs = BTreeMap::from([(
+            "trace:run-1".to_string(),
+            RenderRef::Literal {
+                value: "/tmp/sieve/trace/run-1".to_string(),
+            },
+        )]);
+        let referenced_ref_ids = BTreeSet::from(["trace:run-1".to_string()]);
+        let summarized_ref_ids = BTreeSet::new();
+
+        let expanded = render_assistant_message(
+            message,
+            &referenced_ref_ids,
+            &summarized_ref_ids,
+            &refs,
+            &EchoSummaryModel,
+            &RunId("run-test".to_string()),
+        )
+        .await;
+        assert_eq!(expanded, "trace path: /tmp/sieve/trace/run-1");
+    }
+
+    #[test]
+    fn build_response_turn_input_handles_zero_tool_turn() {
+        let run_id = RunId("run-1".to_string());
+        let planner_result = PlannerRunResult {
+            thoughts: Some("chat reply".to_string()),
+            tool_results: Vec::new(),
+        };
+
+        let (input, refs) = build_response_turn_input(&run_id, "hi", &planner_result);
+        assert_eq!(input.run_id, run_id);
+        assert_eq!(input.trusted_user_message, "hi");
+        assert_eq!(input.planner_thoughts.as_deref(), Some("chat reply"));
+        assert!(input.tool_outcomes.is_empty());
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn requires_output_visibility_detects_non_empty_stdout_or_stderr_refs() {
+        let input = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "show output".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed".to_string(),
+                refs: vec![
+                    ResponseRefMetadata {
+                        ref_id: "artifact-1".to_string(),
+                        kind: "stdout".to_string(),
+                        byte_count: 42,
+                        line_count: 2,
+                    },
+                    ResponseRefMetadata {
+                        ref_id: "artifact-2".to_string(),
+                        kind: "stderr".to_string(),
+                        byte_count: 0,
+                        line_count: 0,
+                    },
+                ],
+            }],
+        };
+
+        assert!(requires_output_visibility(&input));
+    }
+
+    #[test]
+    fn response_has_visible_selected_output_requires_message_token() {
+        let input = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "show output".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed".to_string(),
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-1".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 4,
+                    line_count: 1,
+                }],
+            }],
+        };
+
+        let no_token = sieve_llm::ResponseTurnOutput {
+            message: "completed".to_string(),
+            referenced_ref_ids: BTreeSet::from(["artifact-1".to_string()]),
+            summarized_ref_ids: BTreeSet::new(),
+        };
+        assert!(!response_has_visible_selected_output(&input, &no_token));
+
+        let with_token = sieve_llm::ResponseTurnOutput {
+            message: "output: [[ref:artifact-1]]".to_string(),
+            referenced_ref_ids: BTreeSet::from(["artifact-1".to_string()]),
+            summarized_ref_ids: BTreeSet::new(),
+        };
+        assert!(response_has_visible_selected_output(&input, &with_token));
+    }
+
+    #[test]
+    fn response_has_visible_selected_output_accepts_summary_token() {
+        let input = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "summarize output".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed".to_string(),
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-2".to_string(),
+                    kind: "stderr".to_string(),
+                    byte_count: 10,
+                    line_count: 2,
+                }],
+            }],
+        };
+
+        let response = sieve_llm::ResponseTurnOutput {
+            message: "summary: [[summary:artifact-2]]".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::from(["artifact-2".to_string()]),
+        };
+        assert!(response_has_visible_selected_output(&input, &response));
     }
 
     #[test]

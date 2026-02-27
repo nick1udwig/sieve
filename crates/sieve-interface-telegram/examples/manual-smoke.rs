@@ -36,6 +36,7 @@ fn main() {
         TelegramAdapterConfig {
             chat_id,
             poll_timeout_secs: 20,
+            allowed_sender_user_ids: None,
         },
         bridge,
         poll,

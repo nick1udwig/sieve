@@ -388,7 +388,10 @@ async fn openai_live_openclaw_exec_injection_payload_is_approval_gated() {
             _ => None,
         })
         .expect("planner must produce bash tool result");
-    assert!(command.contains("rm -rf"), "expected rm -rf, got `{command}`");
+    assert!(
+        command.contains("rm -rf"),
+        "expected rm -rf, got `{command}`"
+    );
     match disposition {
         RuntimeDisposition::Denied { reason } => assert_eq!(reason, "approval denied"),
         other => panic!("expected denied by approval, got {other:?}"),

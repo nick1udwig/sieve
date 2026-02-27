@@ -146,6 +146,7 @@ impl MainlineRunner for NoopMainline {
         Ok(MainlineRunReport {
             run_id: request.run_id,
             exit_code: Some(0),
+            artifacts: Vec::new(),
         })
     }
 }

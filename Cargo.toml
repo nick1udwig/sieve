@@ -3,6 +3,7 @@ members = [
   "crates/sieve-types",
   "crates/sieve-shell",
   "crates/sieve-command-summaries",
+  "crates/sieve-captrace",
   "crates/sieve-policy",
   "crates/sieve-quarantine",
   "crates/sieve-llm",

@@ -59,6 +59,9 @@ where
             }
             RuntimeEvent::PolicyEvaluated(_) => {}
             RuntimeEvent::QuarantineCompleted(_) => {}
+            RuntimeEvent::AssistantMessage(event) => {
+                self.send_to_chat(&event.message)?;
+            }
             RuntimeEvent::ApprovalResolved(event) => {
                 self.pending_approvals.remove(&event.request_id.0);
                 self.pending_approval_message_ids
@@ -228,10 +231,11 @@ mod tests {
     };
     use sieve_shell::BasicShellAnalyzer;
     use sieve_types::{
-        Action, ApprovalRequestId, Capability, CommandSegment, LlmModelConfig, LlmProvider,
-        PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, PolicyDecisionKind,
-        PolicyEvaluatedEvent, QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest,
-        Resource, RunId, UncertainMode, UnixMillis, UnknownMode,
+        Action, ApprovalRequestId, AssistantMessageEvent, Capability, CommandSegment,
+        LlmModelConfig, LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput,
+        PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, QuarantineCompletedEvent,
+        QuarantineReport, QuarantineRunRequest, Resource, RunId, UncertainMode, UnixMillis,
+        UnknownMode,
     };
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::sync::{Arc, Mutex};
@@ -486,6 +490,36 @@ mod tests {
         assert!(sent_messages[0].1.contains("`rm -rf /tmp/scratch`"));
         assert!(sent_messages[0].1.contains("because mutating command"));
         assert!(sent_messages[0].1.contains("reply yes/y or react"));
+    }
+
+    #[test]
+    fn assistant_message_event_is_forwarded_to_chat() {
+        let bridge = TestBridge::new();
+        let poller = TestPoller::new(Vec::new());
+        let clock = FixedClock { now: 0 };
+        let mut adapter = TelegramAdapter::new(
+            TelegramAdapterConfig {
+                chat_id: 42,
+                poll_timeout_secs: 1,
+                allowed_sender_user_ids: None,
+            },
+            bridge,
+            poller,
+            clock,
+        );
+
+        adapter
+            .publish_runtime_event(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+                schema_version: 1,
+                run_id: RunId("run_1".into()),
+                message: "hello from assistant".into(),
+                created_at_ms: 111,
+            }))
+            .expect("assistant message event");
+
+        let sent_messages = &adapter.poll.sent_messages;
+        assert_eq!(sent_messages.len(), 1);
+        assert!(sent_messages[0].1.contains("hello from assistant"));
     }
 
     #[test]
@@ -1174,6 +1208,7 @@ mod tests {
             Ok(MainlineRunReport {
                 run_id: request.run_id,
                 exit_code: Some(0),
+                artifacts: Vec::new(),
             })
         }
     }

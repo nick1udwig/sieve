@@ -2944,6 +2944,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sieve-captrace"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "sieve-command-summaries",
+ "sieve-llm",
+ "sieve-quarantine",
+ "sieve-shell",
+ "sieve-tool-contracts",
+ "sieve-types",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "sieve-command-summaries"
 version = "0.1.0"
 dependencies = [

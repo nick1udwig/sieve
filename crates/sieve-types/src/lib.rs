@@ -271,6 +271,15 @@ pub struct QuarantineCompletedEvent {
     pub created_at_ms: UnixMillis,
 }
 
+/// Event emitted when assistant text is ready for user delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantMessageEvent {
+    pub schema_version: u16,
+    pub run_id: RunId,
+    pub message: String,
+    pub created_at_ms: UnixMillis,
+}
+
 /// Union of runtime audit events written to JSONL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -279,6 +288,7 @@ pub enum RuntimeEvent {
     ApprovalResolved(ApprovalResolvedEvent),
     PolicyEvaluated(PolicyEvaluatedEvent),
     QuarantineCompleted(QuarantineCompletedEvent),
+    AssistantMessage(AssistantMessageEvent),
 }
 
 /// Request payload for explicit `endorse` tool.
@@ -481,6 +491,20 @@ mod tests {
 
         let encoded = serde_json::to_string(&event).expect("serialize");
         let decoded: RuntimeEvent = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn assistant_message_event_json_round_trip() {
+        let event = AssistantMessageEvent {
+            schema_version: 1,
+            run_id: RunId("run_4".into()),
+            message: "all done".to_string(),
+            created_at_ms: 1_717_171_720_000,
+        };
+
+        let encoded = serde_json::to_string(&event).expect("serialize");
+        let decoded: AssistantMessageEvent = serde_json::from_str(&encoded).expect("deserialize");
         assert_eq!(decoded, event);
     }
 

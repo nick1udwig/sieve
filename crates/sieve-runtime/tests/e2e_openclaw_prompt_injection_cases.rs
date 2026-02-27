@@ -212,9 +212,8 @@ require_trusted_control_for_mutating = true
             label_with_sinks(Integrity::Untrusted, &[]),
         )
         .expect("seed untrusted control");
-    let control_value_refs = BTreeSet::from([ValueRef(
-        "v_openclaw_external_instruction".to_string(),
-    )]);
+    let control_value_refs =
+        BTreeSet::from([ValueRef("v_openclaw_external_instruction".to_string())]);
 
     let runtime_task = {
         let runtime = runtime.clone();

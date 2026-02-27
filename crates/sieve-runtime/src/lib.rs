@@ -320,10 +320,26 @@ pub struct MainlineRunRequest {
     pub command_segments: Vec<CommandSegment>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainlineArtifactKind {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainlineArtifact {
+    pub ref_id: String,
+    pub kind: MainlineArtifactKind,
+    pub path: String,
+    pub byte_count: u64,
+    pub line_count: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MainlineRunReport {
     pub run_id: RunId,
     pub exit_code: Option<i32>,
+    pub artifacts: Vec<MainlineArtifact>,
 }
 
 #[derive(Debug, Error)]
@@ -356,6 +372,7 @@ impl MainlineRunner for BashMainlineRunner {
         Ok(MainlineRunReport {
             run_id: request.run_id,
             exit_code: status.code(),
+            artifacts: Vec::new(),
         })
     }
 }
@@ -1322,6 +1339,7 @@ mod tests {
             Ok(MainlineRunReport {
                 run_id: request.run_id,
                 exit_code: Some(0),
+                artifacts: Vec::new(),
             })
         }
     }
@@ -1357,6 +1375,7 @@ mod tests {
             Ok(MainlineRunReport {
                 run_id: request.run_id,
                 exit_code: self.exit_code,
+                artifacts: Vec::new(),
             })
         }
     }

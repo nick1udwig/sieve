@@ -1,7 +1,8 @@
 use crate::config::{load_model_config_from_env, load_openai_api_key_from_env};
 use crate::wire::{
-    decode_planner_output, decode_quarantine_output, extract_openai_planner_output_json,
-    serialize_planner_input, PlannerDecodeOutcome,
+    decode_planner_output, decode_quarantine_output, decode_response_output,
+    extract_openai_planner_output_json, serialize_planner_input, serialize_response_input,
+    PlannerDecodeOutcome,
 };
 use crate::{LlmError, OpenAiPlannerModel, OpenAiQuarantineModel, PlannerModel, QuarantineModel};
 use serde_json::json;
@@ -206,7 +207,7 @@ fn extract_openai_planner_output_json_parses_native_tool_calls() {
 }
 
 #[test]
-fn extract_openai_planner_output_json_requires_native_tool_calls() {
+fn extract_openai_planner_output_json_allows_no_tool_calls() {
     let response = json!({
         "choices": [
             {
@@ -217,8 +218,44 @@ fn extract_openai_planner_output_json_requires_native_tool_calls() {
         ]
     });
 
-    let err = extract_openai_planner_output_json(&response).expect_err("must require tool_calls");
-    assert!(matches!(err, LlmError::Decode(_)));
+    let normalized = extract_openai_planner_output_json(&response).expect("normalize");
+    let out = decode_planner_output(normalized).expect("decode planner");
+    match out {
+        PlannerDecodeOutcome::Valid(out) => assert!(out.tool_calls.is_empty()),
+        PlannerDecodeOutcome::InvalidToolContracts(_) => panic!("expected valid planner output"),
+    }
+}
+
+#[test]
+fn response_turn_round_trip_uses_safe_shape() {
+    let payload = serialize_response_input(&crate::ResponseTurnInput {
+        run_id: RunId("run-resp".to_string()),
+        trusted_user_message: "hi".to_string(),
+        planner_thoughts: Some("none".to_string()),
+        tool_outcomes: vec![crate::ResponseToolOutcome {
+            tool_name: "bash".to_string(),
+            outcome: "execute_mainline exit_code=0".to_string(),
+            refs: vec![crate::ResponseRefMetadata {
+                ref_id: "ref-1".to_string(),
+                kind: "stdout".to_string(),
+                byte_count: 12,
+                line_count: 1,
+            }],
+        }],
+    })
+    .expect("serialize response input");
+    assert!(payload.get("tool_outcomes").is_some());
+    assert!(payload.to_string().contains("trusted_user_message"));
+
+    let out = decode_response_output(json!({
+        "message": "done [[ref:ref-1]]",
+        "referenced_ref_ids": ["ref-1"],
+        "summarized_ref_ids": []
+    }))
+    .expect("decode response");
+    assert_eq!(out.message, "done [[ref:ref-1]]");
+    assert!(out.referenced_ref_ids.contains("ref-1"));
+    assert!(out.summarized_ref_ids.is_empty());
 }
 
 #[tokio::test]
