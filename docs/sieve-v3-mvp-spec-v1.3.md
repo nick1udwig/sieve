@@ -233,7 +233,7 @@ Unknown/accepted path:
 - do not feed typed Q-LLM extraction outputs back into planner/runtime loop in MVP.
 - no policy-learning side effects in MVP.
 
-Audit events (JSONL) under `~/.sieve/logs/events/` include:
+Runtime + conversation events (JSONL) under `~/.sieve/logs/runtime-events.jsonl` include:
 - timestamp, run_id
 - command/cwd
 - inferred caps
