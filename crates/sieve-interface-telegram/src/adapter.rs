@@ -1,7 +1,7 @@
 use crate::{
     message::{
-        format_approval_requested, format_policy_evaluated, format_quarantine_completed,
-        parse_command, parse_reaction_action, parse_short_action, TelegramApprovalAction,
+        format_approval_requested, parse_command, parse_reaction_action, parse_short_action,
+        TelegramApprovalAction,
     },
     Clock, TelegramAdapterConfig, TelegramAdapterError, TelegramEventBridge, TelegramLongPoll,
     TelegramPrompt, TelegramUpdate,
@@ -57,12 +57,8 @@ where
                     self.pending_approval_message_ids.insert(message_id, key);
                 }
             }
-            RuntimeEvent::PolicyEvaluated(event) => {
-                self.send_to_chat(&format_policy_evaluated(&event))?;
-            }
-            RuntimeEvent::QuarantineCompleted(event) => {
-                self.send_to_chat(&format_quarantine_completed(&event))?;
-            }
+            RuntimeEvent::PolicyEvaluated(_) => {}
+            RuntimeEvent::QuarantineCompleted(_) => {}
             RuntimeEvent::ApprovalResolved(event) => {
                 self.pending_approvals.remove(&event.request_id.0);
                 self.pending_approval_message_ids
@@ -172,7 +168,6 @@ where
         request_id: String,
     ) -> Result<(), TelegramAdapterError> {
         let Some(approval_requested) = self.pending_approvals.remove(&request_id) else {
-            self.send_to_chat(&format!("request not found: {request_id}"))?;
             return Ok(());
         };
         self.pending_approval_message_ids
@@ -191,15 +186,6 @@ where
             created_at_ms: self.clock.now_ms(),
         };
         self.bridge.submit_approval(resolved.clone());
-
-        let action_text = match resolved.action {
-            ApprovalAction::ApproveOnce => "approve_once",
-            ApprovalAction::Deny => "deny",
-        };
-        self.send_to_chat(&format!(
-            "approval resolved: {} {}",
-            resolved.request_id.0, action_text
-        ))?;
         Ok(())
     }
 
@@ -425,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_approval_policy_and_quarantine_messages() {
+    fn approval_message_suppresses_policy_and_quarantine_chatter() {
         let bridge = TestBridge::new();
         let poller = TestPoller::new(Vec::new());
         let clock = FixedClock { now: 0 };
@@ -475,13 +461,11 @@ mod tests {
             .expect("quarantine completed event");
 
         let sent_messages = &adapter.poll.sent_messages;
-        assert_eq!(sent_messages.len(), 3);
+        assert_eq!(sent_messages.len(), 1);
         assert!(sent_messages[0].1.contains("command: rm -rf /tmp/scratch"));
         assert!(sent_messages[0].1.contains("blocked_rule_id: deny-rm-rf"));
         assert!(sent_messages[0].1.contains("reason: mutating command"));
         assert!(sent_messages[0].1.contains("reply yes/y or react"));
-        assert!(sent_messages[1].1.contains("decision: deny_with_approval"));
-        assert!(sent_messages[2].1.contains("trace_path: /tmp/trace"));
     }
 
     #[test]
@@ -562,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_request_id_reports_error_message() {
+    fn unknown_request_id_is_ignored_without_chat_noise() {
         let bridge = TestBridge::new();
         let poller = TestPoller::new(vec![vec![TelegramUpdate {
             update_id: 5,
@@ -591,8 +575,7 @@ mod tests {
         adapter.poll_once().expect("poll once");
 
         let sent_messages = &adapter.poll.sent_messages;
-        let last = sent_messages.last().expect("expected at least one message");
-        assert!(last.1.contains("request not found: apr_missing"));
+        assert_eq!(sent_messages.len(), 1);
 
         let approvals = adapter
             .bridge
@@ -1154,9 +1137,6 @@ reason = "rm -rf requires approval"
         assert!(sent_messages
             .iter()
             .any(|(_, text)| text.contains("approval needed")));
-        assert!(sent_messages.iter().any(|(_, text)| {
-            text.contains(&format!("approval resolved: {request_id} approve_once"))
-        }));
         assert!(adapter
             .bridge
             .runtime_events()

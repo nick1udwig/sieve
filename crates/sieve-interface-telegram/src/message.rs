@@ -1,6 +1,4 @@
-use sieve_types::{
-    ApprovalRequestedEvent, PolicyDecisionKind, PolicyEvaluatedEvent, QuarantineCompletedEvent,
-};
+use sieve_types::ApprovalRequestedEvent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TelegramApprovalAction {
@@ -81,26 +79,6 @@ pub(crate) fn format_approval_requested(event: &ApprovalRequestedEvent) -> Strin
         event.reason,
         event.request_id.0,
         event.request_id.0
-    )
-}
-
-pub(crate) fn format_policy_evaluated(event: &PolicyEvaluatedEvent) -> String {
-    let decision = match event.decision.kind {
-        PolicyDecisionKind::Allow => "allow",
-        PolicyDecisionKind::DenyWithApproval => "deny_with_approval",
-        PolicyDecisionKind::Deny => "deny",
-    };
-
-    format!(
-        "policy evaluated\nrun_id: {}\ndecision: {}\nreason: {}",
-        event.run_id.0, decision, event.decision.reason
-    )
-}
-
-pub(crate) fn format_quarantine_completed(event: &QuarantineCompletedEvent) -> String {
-    format!(
-        "quarantine completed\nrun_id: {}\ntrace_path: {}\nexit_code: {:?}",
-        event.run_id.0, event.report.trace_path, event.report.exit_code
     )
 }
 
