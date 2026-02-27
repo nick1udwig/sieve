@@ -27,6 +27,8 @@ Inspired by:
 cargo run -p sieve-app -- "review workspace status"
 ```
 
+`sieve-app` auto-loads `.env` from the current working directory when present.
+
 Modes:
 - Single command mode: pass a CLI prompt (`cargo run -p sieve-app -- "review workspace status"`).
 - Long-running agent mode: omit CLI prompt. The app stays up, accepts prompts from stdin and

@@ -127,6 +127,18 @@ fn parse_usize_env(key: &str, default: usize) -> Result<usize, String> {
     }
 }
 
+fn load_dotenv_if_present() -> Result<(), String> {
+    load_dotenv_from_path(PathBuf::from(".env").as_path())
+}
+
+fn load_dotenv_from_path(path: &std::path::Path) -> Result<(), String> {
+    match dotenvy::from_path(path) {
+        Ok(()) => Ok(()),
+        Err(dotenvy::Error::Io(err)) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!("failed to load {}: {err}", path.display())),
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -524,6 +536,8 @@ async fn run_agent_loop(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    load_dotenv_if_present().map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
     let cli_prompt = env::args().skip(1).collect::<Vec<String>>().join(" ");
     let single_command_mode = !cli_prompt.trim().is_empty();
 
@@ -590,6 +604,12 @@ mod tests {
         ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CommandSegment, PolicyDecision,
         PolicyDecisionKind, PolicyEvaluatedEvent, Resource,
     };
+    use std::sync::{Mutex as StdMutex, OnceLock};
+
+    fn env_test_lock() -> &'static StdMutex<()> {
+        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| StdMutex::new(()))
+    }
 
     #[tokio::test]
     async fn runtime_bridge_submit_approval_resolves_pending_request() {
@@ -732,5 +752,43 @@ mod tests {
             )),
             PathBuf::from("/var/sieve/logs/runtime-events.jsonl")
         );
+    }
+
+    #[test]
+    fn load_dotenv_from_path_missing_file_is_noop() {
+        let _guard = env_test_lock()
+            .lock()
+            .expect("dotenv env test lock poisoned");
+        let path = std::env::temp_dir().join(format!(
+            "sieve-app-missing-env-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        assert!(load_dotenv_from_path(&path).is_ok());
+    }
+
+    #[test]
+    fn load_dotenv_from_path_sets_values() {
+        let _guard = env_test_lock()
+            .lock()
+            .expect("dotenv env test lock poisoned");
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "sieve-app-dotenv-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&tmp_dir).expect("create temp test dir");
+        let env_path = tmp_dir.join(".env");
+        let key = format!("SIEVE_APP_DOTENV_TEST_{}_{}", std::process::id(), now_ms());
+        std::env::remove_var(&key);
+        fs::write(&env_path, format!("{key}=from_dotenv\n")).expect("write dotenv file");
+
+        load_dotenv_from_path(&env_path).expect("load dotenv from path");
+        let loaded = std::env::var(&key).expect("dotenv variable must be set");
+        assert_eq!(loaded, "from_dotenv");
+
+        std::env::remove_var(&key);
+        let _ = fs::remove_file(&env_path);
+        let _ = fs::remove_dir(&tmp_dir);
     }
 }
