@@ -29,6 +29,16 @@ cargo run -p sieve-app -- "review workspace status"
 
 `sieve-app` auto-loads `.env` from the current working directory when present.
 
+One-off smoke test (uses `.env` automatically):
+
+```bash
+cargo run -p sieve-app -- "Use bash to run exactly: pwd"
+```
+
+Expected result includes:
+- current working directory printed by `pwd`
+- `run-1 -> [Bash { command: "pwd", disposition: ExecuteMainline(...) }]`
+
 Modes:
 - Single command mode: pass a CLI prompt (`cargo run -p sieve-app -- "review workspace status"`).
 - Long-running agent mode: omit CLI prompt. The app stays up, accepts prompts from stdin and
