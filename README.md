@@ -130,12 +130,37 @@ Optional env overrides:
 - `SIEVE_PLANNER_API_BASE`
 - `SIEVE_PLANNER_OPENAI_API_KEY` (takes precedence over `OPENAI_API_KEY`)
 
+## App E2E Harness Tests
+
+`sieve-app` now includes an app-level E2E harness that can run with fake models (deterministic regression) or real OpenAI planner/response models (env-gated live smoke with stronger assertions).
+
+Deterministic regression coverage (fake models):
+
+```bash
+cargo test -p sieve-app e2e_fake_ -- --nocapture
+```
+
+Live app smoke suite (real planner/response, env-gated):
+
+```bash
+SIEVE_RUN_OPENAI_LIVE=1 cargo test -p sieve-app live_e2e_ -- --nocapture
+```
+
+Live assertions validate more than "it replied", including:
+- greeting/chat path stays tool-free (no policy precheck, no approval request)
+- web-search smoke emits connect precheck capability, passes policy allow path, and avoids approval
+- no assistant-side error conversation records for successful smoke turns
+
+When running the live web-search smoke, set `BRAVE_API_KEY`.
+
 ## Capability Trace Definition Generator
 
 Standalone helper crate `sieve-captrace`:
 - generates argument variants for one command (seeded + optional LLM)
 - runs each variant in quarantine (`bwrap + strace`)
 - emits a Sieve-compatible definition payload with `summary_outcome.summary.required_capabilities`
+- auto-loads `.env` when present
+- prefers Codex app-server when reachable, then falls back to OpenAI planner
 
 Run:
 
@@ -146,4 +171,7 @@ cargo run -p sieve-captrace -- mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --o
 Optional:
 - omit `--no-llm` to let planner LLM propose additional cases
 - set `SIEVE_PLANNER_MODEL` + `OPENAI_API_KEY` (or `SIEVE_PLANNER_OPENAI_API_KEY`) for LLM mode
+- app-server preference settings:
+  - `SIEVE_CODEX_APP_SERVER_WS_URL` (default `ws://127.0.0.1:4500`)
+  - `SIEVE_CODEX_MODEL` (default `gpt-5.2-codex`)
 - generated JSON now includes a `rust_snippet` field; `--rust-output` writes that snippet directly

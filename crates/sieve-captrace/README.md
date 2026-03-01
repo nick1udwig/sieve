@@ -7,10 +7,15 @@ Flow:
 - run each variant through quarantine tracing (`bwrap + strace`)
 - emit Sieve-compatible `summary_outcome.summary` definitions per variant
 
+Runtime behavior:
+- auto-load `.env` from current working directory when present
+- prefer Codex app-server for case generation when reachable
+- fall back to OpenAI planner when app-server is not reachable
+
 ## Usage
 
 ```bash
-cargo run -p sieve-captrace -- mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --output /tmp/mkdir-definition.json
+cargo run -p sieve-captrace -- mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --output /tmp/mkdir-definition.json --rust-output /tmp/mkdir-generated.rs
 ```
 
 ### Placeholders
@@ -30,3 +35,11 @@ Required env:
 
 Optional:
 - `SIEVE_PLANNER_API_BASE`
+- `SIEVE_CODEX_APP_SERVER_WS_URL` (default: `ws://127.0.0.1:4500`)
+- `SIEVE_CODEX_MODEL` (default: `gpt-5.2-codex`)
+- `SIEVE_CODEX_APP_SERVER_CONNECT_TIMEOUT_MS` (default: `500`)
+- `SIEVE_CODEX_APP_SERVER_TURN_TIMEOUT_MS` (default: `30000`)
+
+Output includes:
+- JSON artifact (`GeneratedCommandDefinition`) with per-variant summaries
+- Rust snippet string (`rust_snippet`) suitable for adapting into `sieve-command-summaries`

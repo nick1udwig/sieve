@@ -7,6 +7,7 @@ use crate::fixture::{
 use crate::planner::{argv_matches_command, CaseGenerationRequest, CaseGenerator};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sieve_command_summaries::{CommandSummarizer, DefaultCommandSummarizer};
 use sieve_quarantine::{BwrapQuarantineRunner, QuarantineRunner};
 use sieve_shell::{BasicShellAnalyzer, ShellAnalyzer};
 use sieve_types::{
@@ -86,7 +87,9 @@ pub struct GeneratedVariantDefinition {
     pub trace_path: Option<String>,
     pub exit_code: Option<i32>,
     pub attempted_capabilities: Vec<Capability>,
+    pub trace_derived_summary: Option<CommandSummary>,
     pub summary_outcome: GeneratedSummaryOutcome,
+    pub matches_existing_summary: Option<bool>,
     pub trace_error: Option<String>,
 }
 
@@ -97,12 +100,14 @@ pub struct GeneratedCommandDefinition {
     pub generated_at_ms: u64,
     pub variants: Vec<GeneratedVariantDefinition>,
     pub notes: Vec<String>,
+    pub rust_snippet: String,
 }
 
 pub struct CapTraceGenerator {
     trace_runner: Arc<dyn TraceRunner>,
     case_generator: Option<Arc<dyn CaseGenerator>>,
     shell: BasicShellAnalyzer,
+    summaries: DefaultCommandSummarizer,
 }
 
 impl CapTraceGenerator {
@@ -114,6 +119,7 @@ impl CapTraceGenerator {
             trace_runner,
             case_generator,
             shell: BasicShellAnalyzer,
+            summaries: DefaultCommandSummarizer,
         }
     }
 
@@ -130,7 +136,9 @@ impl CapTraceGenerator {
             &mut notes,
         );
 
-        cases.extend(builtin_case_templates(&request.command));
+        if cases.is_empty() {
+            cases.extend(builtin_case_templates(&request.command));
+        }
 
         if request.include_llm_cases {
             if let Some(generator) = &self.case_generator {
@@ -168,15 +176,18 @@ impl CapTraceGenerator {
                 .trace_runner
                 .trace(TraceRequest {
                     run_id: run_id.clone(),
-                    cwd: fixture.root.to_string_lossy().to_string(),
+                    cwd: "/tmp".to_string(),
                     argv: argv_effective.clone(),
                 })
                 .await;
 
             match traced {
                 Ok(report) => {
-                    let summary =
+                    let trace_derived_summary =
                         derive_summary_from_trace(&report.attempted_capabilities, &fixture);
+                    let existing = self.summaries.summarize(&argv_template);
+                    let (summary_outcome, matches_existing_summary) =
+                        choose_summary_outcome(existing, &trace_derived_summary);
                     variants.push(GeneratedVariantDefinition {
                         case_id: run_id,
                         argv_template,
@@ -184,11 +195,9 @@ impl CapTraceGenerator {
                         trace_path: Some(report.trace_path),
                         exit_code: report.exit_code,
                         attempted_capabilities: report.attempted_capabilities,
-                        summary_outcome: GeneratedSummaryOutcome {
-                            knowledge: CommandKnowledge::Known,
-                            summary: Some(summary),
-                            reason: Some("derived from quarantine trace".to_string()),
-                        },
+                        trace_derived_summary: Some(trace_derived_summary),
+                        summary_outcome,
+                        matches_existing_summary,
                         trace_error: None,
                     });
                 }
@@ -200,23 +209,27 @@ impl CapTraceGenerator {
                         trace_path: None,
                         exit_code: None,
                         attempted_capabilities: Vec::new(),
+                        trace_derived_summary: None,
                         summary_outcome: GeneratedSummaryOutcome {
                             knowledge: CommandKnowledge::Unknown,
                             summary: None,
                             reason: Some("trace failed".to_string()),
                         },
+                        matches_existing_summary: None,
                         trace_error: Some(err.to_string()),
                     });
                 }
             }
         }
 
+        let rust_snippet = render_rust_snippet(&request.command, &variants);
         Ok(GeneratedCommandDefinition {
             schema_version: 1,
             command: request.command,
             generated_at_ms: now_ms(),
             variants,
             notes,
+            rust_snippet,
         })
     }
 }
@@ -259,6 +272,99 @@ pub fn write_definition_json(
     fs::write(path, encoded).map_err(io_err)
 }
 
+pub fn render_rust_snippet(command: &str, variants: &[GeneratedVariantDefinition]) -> String {
+    let fn_name = format!(
+        "summarize_{}_trace_generated",
+        sanitize_id(command).replace('-', "_")
+    );
+    let mut out = String::new();
+    out.push_str("// Generated by sieve-captrace.\n");
+    out.push_str(
+        "// Paste into crates/sieve-command-summaries/src/lib.rs and adapt matcher logic.\n",
+    );
+    out.push_str(&format!(
+        "fn {fn_name}(argv: &[String]) -> Option<SummaryOutcome> {{\n"
+    ));
+    for variant in variants {
+        let Some(summary) = &variant.summary_outcome.summary else {
+            continue;
+        };
+        out.push_str(&format!(
+            "    // case_id: {}\n",
+            rust_string_literal(&variant.case_id)
+        ));
+        if let Some(trace_path) = &variant.trace_path {
+            out.push_str(&format!(
+                "    // trace_path: {}\n",
+                rust_string_literal(trace_path)
+            ));
+        }
+        out.push_str("    if argv == &vec![\n");
+        for arg in &variant.argv_template {
+            out.push_str(&format!(
+                "        {}.to_string(),\n",
+                rust_string_literal(arg)
+            ));
+        }
+        out.push_str("    ] {\n");
+        out.push_str("        return Some(known_outcome(CommandSummary {\n");
+        out.push_str("            required_capabilities: vec![\n");
+        for capability in &summary.required_capabilities {
+            out.push_str("                Capability {\n");
+            out.push_str(&format!(
+                "                    resource: Resource::{},\n",
+                resource_variant(capability.resource)
+            ));
+            out.push_str(&format!(
+                "                    action: Action::{},\n",
+                action_variant(capability.action)
+            ));
+            out.push_str(&format!(
+                "                    scope: {}.to_string(),\n",
+                rust_string_literal(&capability.scope)
+            ));
+            out.push_str("                },\n");
+        }
+        out.push_str("            ],\n");
+        out.push_str("            sink_checks: vec![\n");
+        for check in &summary.sink_checks {
+            out.push_str("                SinkCheck {\n");
+            out.push_str(&format!(
+                "                    argument_name: {}.to_string(),\n",
+                rust_string_literal(&check.argument_name)
+            ));
+            out.push_str(&format!(
+                "                    sink: SinkKey({}.to_string()),\n",
+                rust_string_literal(&check.sink.0)
+            ));
+            out.push_str("                    value_refs: vec![\n");
+            for value_ref in &check.value_refs {
+                out.push_str(&format!(
+                    "                        ValueRef({}.to_string()),\n",
+                    rust_string_literal(&value_ref.0)
+                ));
+            }
+            out.push_str("                    ],\n");
+            out.push_str("                },\n");
+        }
+        out.push_str("            ],\n");
+        out.push_str("            unsupported_flags: vec![\n");
+        for flag in &summary.unsupported_flags {
+            out.push_str(&format!(
+                "                {}.to_string(),\n",
+                rust_string_literal(flag)
+            ));
+        }
+        out.push_str("            ],\n");
+        out.push_str("        }));\n");
+        out.push_str("    }\n");
+        out.push('\n');
+    }
+    out.push_str("    None\n");
+    out.push_str("}\n");
+    out
+}
+
 fn should_keep_capability(capability: &Capability, fixture: &FixtureLayout) -> bool {
     match capability.resource {
         Resource::Fs => {
@@ -268,6 +374,43 @@ fn should_keep_capability(capability: &Capability, fixture: &FixtureLayout) -> b
         Resource::Net | Resource::Ipc => true,
         Resource::Proc | Resource::Env => false,
     }
+}
+
+fn choose_summary_outcome(
+    existing: sieve_command_summaries::SummaryOutcome,
+    trace_derived: &CommandSummary,
+) -> (GeneratedSummaryOutcome, Option<bool>) {
+    if existing.knowledge == CommandKnowledge::Known {
+        let matches = existing.summary.as_ref() == Some(trace_derived);
+        return (
+            GeneratedSummaryOutcome {
+                knowledge: existing.knowledge,
+                summary: existing.summary,
+                reason: Some("matched existing command summary".to_string()),
+            },
+            Some(matches),
+        );
+    }
+
+    if existing.summary.is_some() {
+        return (
+            GeneratedSummaryOutcome {
+                knowledge: existing.knowledge,
+                summary: existing.summary,
+                reason: existing.reason,
+            },
+            None,
+        );
+    }
+
+    (
+        GeneratedSummaryOutcome {
+            knowledge: CommandKnowledge::Unknown,
+            summary: Some(trace_derived.clone()),
+            reason: Some("trace-derived candidate; no existing summary".to_string()),
+        },
+        None,
+    )
 }
 
 fn collect_seed_cases(
@@ -347,6 +490,44 @@ fn sanitize_id(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn resource_variant(resource: Resource) -> &'static str {
+    match resource {
+        Resource::Fs => "Fs",
+        Resource::Net => "Net",
+        Resource::Proc => "Proc",
+        Resource::Env => "Env",
+        Resource::Ipc => "Ipc",
+    }
+}
+
+fn action_variant(action: sieve_types::Action) -> &'static str {
+    match action {
+        sieve_types::Action::Read => "Read",
+        sieve_types::Action::Write => "Write",
+        sieve_types::Action::Append => "Append",
+        sieve_types::Action::Exec => "Exec",
+        sieve_types::Action::Connect => "Connect",
+    }
+}
+
+fn rust_string_literal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn now_ms() -> u64 {

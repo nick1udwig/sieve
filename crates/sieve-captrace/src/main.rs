@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
 use sieve_captrace::{
-    write_definition_json, BwrapTraceRunner, CapTraceError, CapTraceGenerator, CaseGenerator,
-    GenerateDefinitionRequest, PlannerCaseGenerator,
+    preferred_case_generator_from_env, write_definition_json, BwrapTraceRunner, CapTraceError,
+    CapTraceGenerator, CaseGenerator, GenerateDefinitionRequest,
 };
 use std::env;
+use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ struct CliArgs {
     include_llm_cases: bool,
     max_llm_cases: usize,
     output_path: Option<PathBuf>,
+    rust_output_path: Option<PathBuf>,
     logs_root: PathBuf,
 }
 
@@ -27,12 +30,16 @@ async fn main() {
 }
 
 async fn run() -> Result<(), CapTraceError> {
+    load_dotenv_if_present()?;
     let args = parse_cli_args(env::args().skip(1))?;
     let trace_runner = Arc::new(BwrapTraceRunner::new(args.logs_root));
 
     let case_generator: Option<Arc<dyn CaseGenerator>> = if args.include_llm_cases {
-        match PlannerCaseGenerator::from_env() {
-            Ok(generator) => Some(Arc::new(generator)),
+        match preferred_case_generator_from_env().await {
+            Ok((generator, backend)) => {
+                eprintln!("info: case generation backend={}", backend.name());
+                Some(generator)
+            }
             Err(err) => {
                 eprintln!("warning: llm disabled ({err})");
                 None
@@ -61,7 +68,21 @@ async fn run() -> Result<(), CapTraceError> {
         println!("{encoded}");
     }
 
+    if let Some(rust_output_path) = args.rust_output_path {
+        fs::write(&rust_output_path, &definition.rust_snippet)
+            .map_err(|err| CapTraceError::Io(err.to_string()))?;
+        println!("{}", rust_output_path.display());
+    }
+
     Ok(())
+}
+
+fn load_dotenv_if_present() -> Result<(), CapTraceError> {
+    match dotenvy::from_filename(".env") {
+        Ok(_) => Ok(()),
+        Err(dotenvy::Error::Io(err)) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(CapTraceError::Io(format!("failed to load .env: {err}"))),
+    }
 }
 
 fn parse_cli_args<I>(iter: I) -> Result<CliArgs, CapTraceError>
@@ -74,6 +95,7 @@ where
     let mut include_llm_cases = true;
     let mut max_llm_cases = 4usize;
     let mut output_path = None;
+    let mut rust_output_path = None;
     let mut logs_root = std::env::temp_dir().join("sieve-captrace-traces");
 
     while let Some(arg) = args.next() {
@@ -103,6 +125,12 @@ where
                     .ok_or_else(|| CapTraceError::Args("missing value for --output".to_string()))?;
                 output_path = Some(PathBuf::from(raw));
             }
+            "--rust-output" => {
+                let raw = args.next().ok_or_else(|| {
+                    CapTraceError::Args("missing value for --rust-output".to_string())
+                })?;
+                rust_output_path = Some(PathBuf::from(raw));
+            }
             "--logs-root" => {
                 let raw = args.next().ok_or_else(|| {
                     CapTraceError::Args("missing value for --logs-root".to_string())
@@ -131,6 +159,7 @@ where
         include_llm_cases,
         max_llm_cases,
         output_path,
+        rust_output_path,
         logs_root,
     })
 }
@@ -139,10 +168,11 @@ fn print_usage() {
     let usage = "\
 Usage:
   sieve-captrace <command> [--seed-case '<shell cmd>']... [--no-llm]
-                [--max-llm-cases <N>] [--output <path>] [--logs-root <path>]
+                [--max-llm-cases <N>] [--output <path>]
+                [--rust-output <path>] [--logs-root <path>]
 
 Examples:
-  sieve-captrace mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs'
+  sieve-captrace mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --rust-output /tmp/mkdir.rs
   sieve-captrace cp --output /tmp/cp-definition.json
 ";
     println!("{usage}");

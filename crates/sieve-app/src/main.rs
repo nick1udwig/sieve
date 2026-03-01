@@ -743,14 +743,17 @@ fn requires_output_visibility(input: &ResponseTurnInput) -> bool {
     !non_empty_output_ref_ids(input).is_empty()
 }
 
+fn output_ref_requires_visibility(kind: &str) -> bool {
+    matches!(kind, "stdout" | "stderr" | "web_search_results_json")
+}
+
 fn non_empty_output_ref_ids(input: &ResponseTurnInput) -> BTreeSet<String> {
     input
         .tool_outcomes
         .iter()
         .flat_map(|outcome| outcome.refs.iter())
         .filter(|ref_metadata| {
-            (ref_metadata.kind == "stdout" || ref_metadata.kind == "stderr")
-                && ref_metadata.byte_count > 0
+            output_ref_requires_visibility(&ref_metadata.kind) && ref_metadata.byte_count > 0
         })
         .map(|ref_metadata| ref_metadata.ref_id.clone())
         .collect()
@@ -960,6 +963,47 @@ fn format_integrity(integrity: Integrity) -> &'static str {
         Integrity::Trusted => "trusted",
         Integrity::Untrusted => "untrusted",
     }
+}
+
+fn normalize_chat_probe(input: &str) -> String {
+    input
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['?', '!', '.', ',', ';', ':'], " ")
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+}
+
+fn is_chat_only_prompt(input: &str) -> bool {
+    let normalized = normalize_chat_probe(input);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    matches!(
+        normalized.as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "yo"
+            | "hi how are you"
+            | "hello how are you"
+            | "hey how are you"
+            | "how are you"
+            | "how are you today"
+            | "hi can you hear me"
+            | "can you hear me"
+            | "who are you"
+            | "whats your name"
+            | "what's your name"
+            | "what is your name"
+            | "what s your name"
+            | "thanks"
+            | "thank you"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+    )
 }
 
 async fn render_assistant_message(
@@ -1306,6 +1350,29 @@ async fn send_telegram_voice(
     Ok(())
 }
 
+async fn emit_assistant_error_message(
+    event_log: &FanoutRuntimeEventLog,
+    run_id: &RunId,
+    error_message: String,
+) -> Result<(), EventLogError> {
+    event_log
+        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+            schema_version: 1,
+            run_id: run_id.clone(),
+            message: error_message.clone(),
+            created_at_ms: now_ms(),
+        }))
+        .await?;
+    event_log
+        .append_conversation(ConversationLogRecord::new(
+            run_id.clone(),
+            ConversationRole::Assistant,
+            error_message,
+            now_ms(),
+        ))
+        .await
+}
+
 async fn run_turn(
     runtime: &RuntimeOrchestrator,
     response_model: &dyn ResponseModel,
@@ -1358,22 +1425,7 @@ async fn run_turn(
     };
     if let Some(error_message) = input_error {
         println!("{}: {}", run_id.0, error_message);
-        event_log
-            .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
-                schema_version: 1,
-                run_id: run_id.clone(),
-                message: error_message.clone(),
-                created_at_ms: now_ms(),
-            }))
-            .await?;
-        event_log
-            .append_conversation(ConversationLogRecord::new(
-                run_id.clone(),
-                ConversationRole::Assistant,
-                error_message,
-                now_ms(),
-            ))
-            .await?;
+        emit_assistant_error_message(event_log, &run_id, error_message).await?;
         return Ok(());
     }
 
@@ -1386,34 +1438,37 @@ async fn run_turn(
         ))
         .await?;
 
-    let result = match runtime
-        .orchestrate_planner_turn(PlannerRunRequest {
-            run_id: run_id.clone(),
-            cwd: cfg.runtime_cwd.clone(),
-            user_message: trusted_user_message.clone(),
-            allowed_tools: cfg.allowed_tools.clone(),
-            previous_events: event_log.snapshot(),
-            control_value_refs: BTreeSet::new(),
-            control_endorsed_by: None,
-            unknown_mode: cfg.unknown_mode,
-            uncertain_mode: cfg.uncertain_mode,
-        })
-        .await
+    let result = if input_modality == InteractionModality::Text
+        && is_chat_only_prompt(&trusted_user_message)
     {
-        Ok(result) => result,
-        Err(err) => {
-            if let Err(log_err) = event_log
-                .append_conversation(ConversationLogRecord::new(
-                    run_id.clone(),
-                    ConversationRole::Assistant,
-                    format!("error: {err}"),
-                    now_ms(),
-                ))
-                .await
-            {
-                eprintln!("failed to append assistant error conversation log: {log_err}");
+        PlannerRunResult {
+            thoughts: Some("chat-only turn: no tools needed".to_string()),
+            tool_results: Vec::new(),
+        }
+    } else {
+        match runtime
+            .orchestrate_planner_turn(PlannerRunRequest {
+                run_id: run_id.clone(),
+                cwd: cfg.runtime_cwd.clone(),
+                user_message: trusted_user_message.clone(),
+                allowed_tools: cfg.allowed_tools.clone(),
+                previous_events: event_log.snapshot(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: cfg.unknown_mode,
+                uncertain_mode: cfg.uncertain_mode,
+            })
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                if let Err(log_err) =
+                    emit_assistant_error_message(event_log, &run_id, format!("error: {err}")).await
+                {
+                    eprintln!("failed to append assistant error conversation log: {log_err}");
+                }
+                return Err(err.into());
             }
-            return Err(err.into());
         }
     };
 
@@ -1425,14 +1480,8 @@ async fn run_turn(
     {
         Ok(response) => response,
         Err(err) => {
-            if let Err(log_err) = event_log
-                .append_conversation(ConversationLogRecord::new(
-                    run_id.clone(),
-                    ConversationRole::Assistant,
-                    format!("error: {err}"),
-                    now_ms(),
-                ))
-                .await
+            if let Err(log_err) =
+                emit_assistant_error_message(event_log, &run_id, format!("error: {err}")).await
             {
                 eprintln!("failed to append assistant error conversation log: {log_err}");
             }
@@ -1445,7 +1494,7 @@ async fn run_turn(
     {
         // One regeneration pass: enforce that non-empty output refs are either shown raw
         // or summarized by Q-LLM, without exposing untrusted strings to the model.
-        let diagnostics = "Non-empty stdout/stderr refs exist. Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
+        let diagnostics = "Non-empty output refs exist (stdout/stderr/web search). Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
         response_input.planner_thoughts = Some(match response_input.planner_thoughts.take() {
             Some(existing) if !existing.trim().is_empty() => format!("{existing}\n{diagnostics}"),
             _ => diagnostics.to_string(),
@@ -1457,14 +1506,8 @@ async fn run_turn(
         {
             Ok(response) => response,
             Err(err) => {
-                if let Err(log_err) = event_log
-                    .append_conversation(ConversationLogRecord::new(
-                        run_id.clone(),
-                        ConversationRole::Assistant,
-                        format!("error: {err}"),
-                        now_ms(),
-                    ))
-                    .await
+                if let Err(log_err) =
+                    emit_assistant_error_message(event_log, &run_id, format!("error: {err}")).await
                 {
                     eprintln!("failed to append assistant error conversation log: {log_err}");
                 }
@@ -1735,12 +1778,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sieve_llm::LlmError;
+    use serde_json::Value;
+    use sieve_llm::{LlmError, PlannerModel};
     use sieve_runtime::ApprovalBus;
     use sieve_types::{
-        ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CommandSegment, PolicyDecision,
-        PolicyDecisionKind, PolicyEvaluatedEvent, Resource,
+        ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, BraveSearchRequest,
+        BraveSearchResponse, BraveSearchResult, CommandSegment, LlmModelConfig, LlmProvider,
+        PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, PolicyDecisionKind,
+        PolicyEvaluatedEvent, Resource,
     };
+    use std::collections::VecDeque;
+    use std::path::Path;
     use std::sync::{Mutex as StdMutex, OnceLock};
 
     fn env_test_lock() -> &'static StdMutex<()> {
@@ -1767,6 +1815,709 @@ mod tests {
                 request.byte_count, request.line_count
             ))
         }
+    }
+
+    const E2E_POLICY_ALLOW_BRAVE: &str = r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.search.brave.com/res/v1/web/search"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#;
+
+    struct QueuedPlannerModel {
+        config: LlmModelConfig,
+        outputs: StdMutex<VecDeque<Result<PlannerTurnOutput, LlmError>>>,
+        calls: AtomicU64,
+    }
+
+    impl QueuedPlannerModel {
+        fn new(outputs: Vec<Result<PlannerTurnOutput, LlmError>>) -> Self {
+            Self {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "planner-test".to_string(),
+                    api_base: None,
+                },
+                outputs: StdMutex::new(VecDeque::from(outputs)),
+                calls: AtomicU64::new(0),
+            }
+        }
+
+        fn call_count(&self) -> u64 {
+            self.calls.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl PlannerModel for QueuedPlannerModel {
+        fn config(&self) -> &LlmModelConfig {
+            &self.config
+        }
+
+        async fn plan_turn(&self, _input: PlannerTurnInput) -> Result<PlannerTurnOutput, LlmError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.outputs
+                .lock()
+                .expect("planner queue mutex poisoned")
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Err(LlmError::Backend(
+                        "planner queue exhausted with no configured output".to_string(),
+                    ))
+                })
+        }
+    }
+
+    struct QueuedResponseModel {
+        config: LlmModelConfig,
+        outputs: StdMutex<VecDeque<Result<sieve_llm::ResponseTurnOutput, LlmError>>>,
+    }
+
+    impl QueuedResponseModel {
+        fn new(outputs: Vec<Result<sieve_llm::ResponseTurnOutput, LlmError>>) -> Self {
+            Self {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "response-test".to_string(),
+                    api_base: None,
+                },
+                outputs: StdMutex::new(VecDeque::from(outputs)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ResponseModel for QueuedResponseModel {
+        fn config(&self) -> &LlmModelConfig {
+            &self.config
+        }
+
+        async fn write_turn_response(
+            &self,
+            _input: ResponseTurnInput,
+        ) -> Result<sieve_llm::ResponseTurnOutput, LlmError> {
+            self.outputs
+                .lock()
+                .expect("response queue mutex poisoned")
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Err(LlmError::Backend(
+                        "response queue exhausted with no configured output".to_string(),
+                    ))
+                })
+        }
+    }
+
+    struct RecordingWebSearchRunner {
+        scope: String,
+        result_template: Vec<BraveSearchResult>,
+        requests: StdMutex<Vec<BraveSearchRequest>>,
+    }
+
+    impl RecordingWebSearchRunner {
+        fn new(scope: impl Into<String>, result_template: Vec<BraveSearchResult>) -> Self {
+            Self {
+                scope: scope.into(),
+                result_template,
+                requests: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<BraveSearchRequest> {
+            self.requests
+                .lock()
+                .expect("web-search requests mutex poisoned")
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl sieve_runtime::WebSearchRunner for RecordingWebSearchRunner {
+        fn connect_scope(&self) -> String {
+            self.scope.clone()
+        }
+
+        async fn search(
+            &self,
+            request: BraveSearchRequest,
+        ) -> Result<BraveSearchResponse, WebSearchError> {
+            self.requests
+                .lock()
+                .expect("web-search requests mutex poisoned")
+                .push(request.clone());
+            Ok(BraveSearchResponse {
+                query: request.query,
+                results: self.result_template.clone(),
+            })
+        }
+    }
+
+    enum E2eModelMode {
+        Fake {
+            planner: Arc<dyn PlannerModel>,
+            response: Arc<dyn ResponseModel>,
+            summary: Arc<dyn SummaryModel>,
+        },
+        RealOpenAi,
+    }
+
+    struct AppE2eHarness {
+        runtime: Arc<RuntimeOrchestrator>,
+        response_model: Arc<dyn ResponseModel>,
+        summary_model: Arc<dyn SummaryModel>,
+        event_log: Arc<FanoutRuntimeEventLog>,
+        cfg: AppConfig,
+        next_run_index: AtomicU64,
+        root: PathBuf,
+        _telegram_event_rx: Receiver<TelegramLoopEvent>,
+    }
+
+    impl Drop for AppE2eHarness {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    impl AppE2eHarness {
+        fn unique_root(prefix: &str) -> PathBuf {
+            static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+            let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "{prefix}-{}-{}-{}",
+                std::process::id(),
+                now_ms(),
+                unique
+            ));
+            fs::create_dir_all(&root).expect("create e2e harness root");
+            root
+        }
+
+        fn new(
+            model_mode: E2eModelMode,
+            web_search: Arc<dyn sieve_runtime::WebSearchRunner>,
+            allowed_tools: Vec<String>,
+            policy_toml: &str,
+        ) -> Self {
+            let root = Self::unique_root("sieve-app-e2e");
+            let event_log_path = root.join("logs/runtime-events.jsonl");
+            let cfg = AppConfig {
+                telegram_bot_token: "test-token".to_string(),
+                telegram_chat_id: 42,
+                telegram_poll_timeout_secs: 1,
+                telegram_allowed_sender_user_ids: None,
+                sieve_home: root.clone(),
+                policy_path: PathBuf::from(DEFAULT_POLICY_PATH),
+                event_log_path: event_log_path.clone(),
+                runtime_cwd: root.to_string_lossy().to_string(),
+                allowed_tools,
+                brave_api_key: None,
+                brave_api_base: DEFAULT_BRAVE_API_BASE.to_string(),
+                audio_stt_cmd: None,
+                audio_tts_cmd: None,
+                image_ocr_cmd: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+                max_concurrent_turns: 1,
+            };
+
+            let (response_model, summary_model, planner): (
+                Arc<dyn ResponseModel>,
+                Arc<dyn SummaryModel>,
+                Arc<dyn PlannerModel>,
+            ) = match model_mode {
+                E2eModelMode::Fake {
+                    planner,
+                    response,
+                    summary,
+                } => (response, summary, planner),
+                E2eModelMode::RealOpenAi => (
+                    Arc::new(OpenAiResponseModel::from_env().expect("load real response model")),
+                    Arc::new(OpenAiSummaryModel::from_env().expect("load real summary model")),
+                    Arc::new(OpenAiPlannerModel::from_env().expect("load real planner model")),
+                ),
+            };
+
+            let policy =
+                TomlPolicyEngine::from_toml_str(policy_toml).expect("parse e2e harness policy");
+            let (telegram_event_tx, telegram_event_rx) = mpsc::channel();
+            let event_log = Arc::new(
+                FanoutRuntimeEventLog::new(event_log_path, telegram_event_tx)
+                    .expect("create e2e fanout event log"),
+            );
+            let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+                shell: Arc::new(BasicShellAnalyzer),
+                summaries: Arc::new(DefaultCommandSummarizer),
+                policy: Arc::new(policy),
+                quarantine: Arc::new(BwrapQuarantineRunner::default()),
+                mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
+                web_search,
+                planner,
+                approval_bus: Arc::new(InProcessApprovalBus::new()),
+                event_log: event_log.clone(),
+                clock: Arc::new(RuntimeClock),
+            }));
+
+            Self {
+                runtime,
+                response_model,
+                summary_model,
+                event_log,
+                cfg,
+                next_run_index: AtomicU64::new(1),
+                root,
+                _telegram_event_rx: telegram_event_rx,
+            }
+        }
+
+        fn live_openai_or_skip(
+            allowed_tools: Vec<String>,
+            require_brave_key: bool,
+        ) -> Option<Self> {
+            if std::env::var("SIEVE_RUN_OPENAI_LIVE").ok().as_deref() != Some("1") {
+                return None;
+            }
+
+            let brave_key = optional_env("BRAVE_API_KEY");
+            if require_brave_key && brave_key.is_none() {
+                panic!("SIEVE_RUN_OPENAI_LIVE=1 requires BRAVE_API_KEY for web-search live test");
+            }
+            let brave_api_base = std::env::var("SIEVE_BRAVE_API_BASE")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| DEFAULT_BRAVE_API_BASE.to_string());
+            let web_search: Arc<dyn sieve_runtime::WebSearchRunner> =
+                Arc::new(AppBraveSearchRunner::new(brave_key, brave_api_base));
+
+            Some(Self::new(
+                E2eModelMode::RealOpenAi,
+                web_search,
+                allowed_tools,
+                E2E_POLICY_ALLOW_BRAVE,
+            ))
+        }
+
+        async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
+            let run_index = self.next_run_index.fetch_add(1, Ordering::Relaxed);
+            run_turn(
+                &self.runtime,
+                self.response_model.as_ref(),
+                self.summary_model.as_ref(),
+                &self.event_log,
+                &self.cfg,
+                run_index,
+                PromptSource::Stdin,
+                InteractionModality::Text,
+                None,
+                prompt.to_string(),
+            )
+            .await
+            .map_err(|err| err.to_string())
+        }
+
+        fn runtime_events(&self) -> Vec<RuntimeEvent> {
+            self.event_log.snapshot()
+        }
+
+        fn jsonl_records(&self) -> Vec<Value> {
+            read_jsonl_records(&self.cfg.event_log_path)
+        }
+    }
+
+    fn read_jsonl_records(path: &Path) -> Vec<Value> {
+        let Ok(body) = fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        body.lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect()
+    }
+
+    fn conversation_messages(records: &[Value]) -> Vec<(String, String)> {
+        records
+            .iter()
+            .filter(|record| record.get("event").and_then(Value::as_str) == Some("conversation"))
+            .map(|record| {
+                (
+                    record
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    record
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn assistant_messages(events: &[RuntimeEvent]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::AssistantMessage(event) => Some(event.message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn count_approval_requested(events: &[RuntimeEvent]) -> usize {
+        events
+            .iter()
+            .filter(|event| matches!(event, RuntimeEvent::ApprovalRequested(_)))
+            .count()
+    }
+
+    fn assistant_errors_from_conversation(records: &[Value]) -> Vec<String> {
+        conversation_messages(records)
+            .into_iter()
+            .filter(|(role, message)| role == "assistant" && message.starts_with("error:"))
+            .map(|(_, message)| message)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_greeting_stays_chat_only_without_approval() {
+        let planner_output = PlannerTurnOutput {
+            thoughts: Some("chat only".to_string()),
+            tool_calls: Vec::new(),
+        };
+        let response_output = sieve_llm::ResponseTurnOutput {
+            message: "Yes, I can hear you.".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        };
+        let planner: Arc<dyn PlannerModel> =
+            Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+        let response: Arc<dyn ResponseModel> =
+            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
+            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
+        );
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                response,
+                summary,
+            },
+            web_search,
+            vec![
+                "bash".to_string(),
+                "endorse".to_string(),
+                "declassify".to_string(),
+                "brave_search".to_string(),
+            ],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("Hi can you hear me?")
+            .await
+            .expect("greeting turn should succeed");
+
+        let events = harness.runtime_events();
+        assert_eq!(count_approval_requested(&events), 0);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
+            "greeting should not trigger tool policy checks"
+        );
+        let assistant = assistant_messages(&events);
+        assert_eq!(assistant, vec!["Yes, I can hear you.".to_string()]);
+
+        let records = harness.jsonl_records();
+        let conversation = conversation_messages(&records);
+        assert_eq!(conversation.len(), 2);
+        assert_eq!(conversation[0].0, "user");
+        assert_eq!(conversation[1].0, "assistant");
+        assert_eq!(conversation[1].1, "Yes, I can hear you.");
+        assert!(
+            assistant_errors_from_conversation(&records).is_empty(),
+            "greeting flow should not emit assistant error conversation"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_chat_fast_path_skips_planner_calls() {
+        let planner = Arc::new(QueuedPlannerModel::new(Vec::new()));
+        let response_output = sieve_llm::ResponseTurnOutput {
+            message: "I'm doing well, thank you!".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        };
+        let response: Arc<dyn ResponseModel> =
+            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
+            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
+        );
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner: planner.clone(),
+                response,
+                summary,
+            },
+            web_search,
+            vec![
+                "bash".to_string(),
+                "endorse".to_string(),
+                "declassify".to_string(),
+                "brave_search".to_string(),
+            ],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("Hi how are you?")
+            .await
+            .expect("chat fast-path greeting should succeed");
+
+        assert_eq!(
+            planner.call_count(),
+            0,
+            "chat fast-path should bypass planner and tools"
+        );
+        let events = harness.runtime_events();
+        assert_eq!(count_approval_requested(&events), 0);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
+            "chat fast-path should avoid tool policy checks"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_web_search_executes_without_approval() {
+        let mut args = BTreeMap::new();
+        args.insert(
+            "query".to_string(),
+            serde_json::json!("rust tokio channels"),
+        );
+        args.insert("count".to_string(), serde_json::json!(1));
+        let planner_output = PlannerTurnOutput {
+            thoughts: Some("search".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "brave_search".to_string(),
+                args,
+            }],
+        };
+        let response_output = sieve_llm::ResponseTurnOutput {
+            message: "Search summary: [[summary:web-search:1-1]]".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
+        };
+        let planner: Arc<dyn PlannerModel> =
+            Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+        let response: Arc<dyn ResponseModel> =
+            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+        let web_search = Arc::new(RecordingWebSearchRunner::new(
+            DEFAULT_BRAVE_API_BASE,
+            vec![BraveSearchResult {
+                title: "Tokio".to_string(),
+                url: "https://tokio.rs".to_string(),
+                description: Some("Rust async runtime".to_string()),
+            }],
+        ));
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                response,
+                summary,
+            },
+            web_search.clone(),
+            vec!["brave_search".to_string()],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("Can you use web search?")
+            .await
+            .expect("web-search turn should succeed");
+
+        let events = harness.runtime_events();
+        assert_eq!(count_approval_requested(&events), 0);
+        let policy_events: Vec<&PolicyEvaluatedEvent> = events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::PolicyEvaluated(event) => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(policy_events.len(), 1);
+        assert_eq!(policy_events[0].decision.kind, PolicyDecisionKind::Allow);
+        assert_eq!(web_search.requests().len(), 1);
+        assert_eq!(web_search.requests()[0].query, "rust tokio channels");
+
+        let assistant = assistant_messages(&events);
+        assert_eq!(assistant.len(), 1);
+        assert!(
+            assistant[0].contains("summary(bytes="),
+            "assistant should include Q-LLM summary token expansion"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_planner_error_emits_assistant_error_for_user_visibility() {
+        let planner: Arc<dyn PlannerModel> = Arc::new(QueuedPlannerModel::new(vec![Err(
+            LlmError::Backend("planner boom".to_string()),
+        )]));
+        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(Vec::new()));
+        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
+            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
+        );
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                response,
+                summary,
+            },
+            web_search,
+            vec!["bash".to_string()],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        let err = harness
+            .run_text_turn("Use bash to run exactly: pwd")
+            .await
+            .expect_err("planner failure must propagate to caller");
+        assert!(err.contains("planner model failed"));
+
+        let events = harness.runtime_events();
+        let assistant = assistant_messages(&events);
+        assert_eq!(assistant.len(), 1);
+        assert!(
+            assistant[0].starts_with("error:"),
+            "assistant-visible fallback must be emitted on planner failure"
+        );
+
+        let records = harness.jsonl_records();
+        let assistant_errors = assistant_errors_from_conversation(&records);
+        assert_eq!(assistant_errors.len(), 1);
+        assert!(assistant_errors[0].contains("planner model failed"));
+    }
+
+    #[tokio::test]
+    async fn live_e2e_greeting_stays_chat_only_env_gated() {
+        let _guard = env_test_lock()
+            .lock()
+            .expect("live e2e env test lock poisoned");
+        let Some(harness) = AppE2eHarness::live_openai_or_skip(
+            vec![
+                "bash".to_string(),
+                "endorse".to_string(),
+                "declassify".to_string(),
+                "brave_search".to_string(),
+            ],
+            false,
+        ) else {
+            return;
+        };
+
+        harness
+            .run_text_turn("Hi can you hear me?")
+            .await
+            .expect("live greeting should succeed");
+
+        let events = harness.runtime_events();
+        assert_eq!(count_approval_requested(&events), 0);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
+            "greeting should remain chat-only with zero tool dispatches"
+        );
+        let assistant = assistant_messages(&events);
+        assert_eq!(assistant.len(), 1);
+        assert!(
+            !assistant[0].trim().is_empty() && !assistant[0].starts_with("error:"),
+            "live greeting must produce a non-error assistant reply"
+        );
+        let records = harness.jsonl_records();
+        assert!(
+            assistant_errors_from_conversation(&records).is_empty(),
+            "live greeting must not produce assistant error conversation entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_e2e_web_search_smoke_validates_policy_and_no_approval_env_gated() {
+        let _guard = env_test_lock()
+            .lock()
+            .expect("live e2e env test lock poisoned");
+        let Some(harness) =
+            AppE2eHarness::live_openai_or_skip(vec!["brave_search".to_string()], true)
+        else {
+            return;
+        };
+
+        harness
+            .run_text_turn(
+                "Use brave_search exactly once with query `OpenAI API docs` and count 1, then answer concisely.",
+            )
+            .await
+            .expect("live web-search smoke should succeed");
+
+        let events = harness.runtime_events();
+        assert_eq!(count_approval_requested(&events), 0);
+        let policy_events: Vec<&PolicyEvaluatedEvent> = events
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::PolicyEvaluated(event) => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !policy_events.is_empty(),
+            "live web-search smoke must emit policy precheck events"
+        );
+        assert!(
+            policy_events
+                .iter()
+                .all(|event| event.decision.kind == PolicyDecisionKind::Allow),
+            "live web-search smoke should pass policy without approval"
+        );
+        assert!(
+            policy_events.iter().any(|event| {
+                event.inferred_capabilities.iter().any(|capability| {
+                    capability.resource == Resource::Net
+                        && capability.action == sieve_types::Action::Connect
+                        && capability.scope == DEFAULT_BRAVE_API_BASE
+                })
+            }),
+            "live web-search smoke must include connect capability for Brave endpoint"
+        );
+
+        let assistant = assistant_messages(&events);
+        assert_eq!(assistant.len(), 1);
+        assert!(
+            !assistant[0].trim().is_empty() && !assistant[0].starts_with("error:"),
+            "live web-search smoke must produce non-error assistant reply"
+        );
+
+        let records = harness.jsonl_records();
+        let conversation = conversation_messages(&records);
+        assert!(
+            conversation.iter().any(|(role, _)| role == "user")
+                && conversation.iter().any(|(role, _)| role == "assistant"),
+            "live web-search smoke should persist both user and assistant conversation records"
+        );
+        assert!(
+            assistant_errors_from_conversation(&records).is_empty(),
+            "live web-search smoke must not produce assistant error conversation entries"
+        );
     }
 
     #[tokio::test]
@@ -2065,6 +2816,29 @@ mod tests {
     }
 
     #[test]
+    fn requires_output_visibility_detects_non_empty_web_search_refs() {
+        let input = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "weather".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "brave_search".to_string(),
+                outcome: "executed".to_string(),
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "web-search-1".to_string(),
+                    kind: "web_search_results_json".to_string(),
+                    byte_count: 128,
+                    line_count: 4,
+                }],
+            }],
+        };
+
+        assert!(requires_output_visibility(&input));
+        let ids = non_empty_output_ref_ids(&input);
+        assert!(ids.contains("web-search-1"));
+    }
+
+    #[test]
     fn response_has_visible_selected_output_requires_message_token() {
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
@@ -2121,6 +2895,45 @@ mod tests {
             summarized_ref_ids: BTreeSet::from(["artifact-2".to_string()]),
         };
         assert!(response_has_visible_selected_output(&input, &response));
+    }
+
+    #[test]
+    fn response_has_visible_selected_output_accepts_web_search_summary_token() {
+        let input = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "weather".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "brave_search".to_string(),
+                outcome: "executed".to_string(),
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "web-search-1".to_string(),
+                    kind: "web_search_results_json".to_string(),
+                    byte_count: 64,
+                    line_count: 2,
+                }],
+            }],
+        };
+
+        let response = sieve_llm::ResponseTurnOutput {
+            message: "weather summary: [[summary:web-search-1]]".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::from(["web-search-1".to_string()]),
+        };
+        assert!(response_has_visible_selected_output(&input, &response));
+    }
+
+    #[test]
+    fn chat_only_prompt_detection_covers_basic_small_talk() {
+        assert!(is_chat_only_prompt("Hi how are you?"));
+        assert!(is_chat_only_prompt("Can you hear me"));
+        assert!(is_chat_only_prompt("what's your name"));
+        assert!(!is_chat_only_prompt(
+            "What is the weather in Livermore ca going to be like tomorrow"
+        ));
+        assert!(!is_chat_only_prompt(
+            "What are the top 3 Mexican food restaurants in Livermore ca?"
+        ));
     }
 
     #[test]
