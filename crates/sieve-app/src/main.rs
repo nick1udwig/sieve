@@ -1093,7 +1093,6 @@ fn guidance_requests_continue(signal: PlannerGuidanceSignal) -> bool {
     )
 }
 
-#[cfg(test)]
 fn normalize_chat_probe(input: &str) -> String {
     input
         .trim()
@@ -1104,7 +1103,6 @@ fn normalize_chat_probe(input: &str) -> String {
         .join(" ")
 }
 
-#[cfg(test)]
 fn is_chat_only_prompt(input: &str) -> bool {
     let normalized = normalize_chat_probe(input);
     if normalized.is_empty() {
@@ -2070,95 +2068,100 @@ async fn run_turn(
         thoughts: None,
         tool_results: Vec::new(),
     };
-    let mut planner_guidance: Option<PlannerGuidanceFrame> = None;
-    let mut consecutive_empty_steps = 0usize;
+    if input_modality == InteractionModality::Text && is_chat_only_prompt(&trusted_user_message) {
+        aggregated_result.thoughts = Some("chat-only turn: no tools needed".to_string());
+    } else {
+        let mut planner_guidance: Option<PlannerGuidanceFrame> = None;
+        let mut consecutive_empty_steps = 0usize;
 
-    for step_index in 0..cfg.max_planner_steps {
-        let step_result = match runtime
-            .orchestrate_planner_turn(PlannerRunRequest {
-                run_id: run_id.clone(),
-                cwd: cfg.runtime_cwd.clone(),
-                user_message: trusted_user_message.clone(),
-                allowed_tools: cfg.allowed_tools.clone(),
-                previous_events: event_log.snapshot(),
-                guidance: planner_guidance.clone(),
-                control_value_refs: BTreeSet::new(),
-                control_endorsed_by: None,
-                unknown_mode: cfg.unknown_mode,
-                uncertain_mode: cfg.uncertain_mode,
-            })
-            .await
-        {
-            Ok(result) => result,
-            Err(err) => {
-                if let Err(log_err) =
-                    emit_assistant_error_message(event_log, &run_id, format!("error: {err}")).await
-                {
-                    eprintln!("failed to append assistant error conversation log: {log_err}");
+        for step_index in 0..cfg.max_planner_steps {
+            let step_result = match runtime
+                .orchestrate_planner_turn(PlannerRunRequest {
+                    run_id: run_id.clone(),
+                    cwd: cfg.runtime_cwd.clone(),
+                    user_message: trusted_user_message.clone(),
+                    allowed_tools: cfg.allowed_tools.clone(),
+                    previous_events: event_log.snapshot(),
+                    guidance: planner_guidance.clone(),
+                    control_value_refs: BTreeSet::new(),
+                    control_endorsed_by: None,
+                    unknown_mode: cfg.unknown_mode,
+                    uncertain_mode: cfg.uncertain_mode,
+                })
+                .await
+            {
+                Ok(result) => result,
+                Err(err) => {
+                    if let Err(log_err) =
+                        emit_assistant_error_message(event_log, &run_id, format!("error: {err}"))
+                            .await
+                    {
+                        eprintln!("failed to append assistant error conversation log: {log_err}");
+                    }
+                    return Err(err.into());
                 }
-                return Err(err.into());
+            };
+
+            let step_tool_count = step_result.tool_results.len();
+            if step_tool_count == 0 {
+                consecutive_empty_steps = consecutive_empty_steps.saturating_add(1);
+            } else {
+                consecutive_empty_steps = 0;
             }
-        };
+            if let Some(thoughts) = step_result.thoughts.clone() {
+                aggregated_result.thoughts = Some(thoughts);
+            }
+            let step_results = step_result.tool_results;
+            aggregated_result.tool_results.extend(step_results.clone());
 
-        let step_tool_count = step_result.tool_results.len();
-        if step_tool_count == 0 {
-            consecutive_empty_steps = consecutive_empty_steps.saturating_add(1);
-        } else {
-            consecutive_empty_steps = 0;
-        }
-        if let Some(thoughts) = step_result.thoughts.clone() {
-            aggregated_result.thoughts = Some(thoughts);
-        }
-        let step_results = step_result.tool_results;
-        aggregated_result.tool_results.extend(step_results.clone());
-
-        let guidance_prompt = build_guidance_prompt(
-            &trusted_user_message,
-            step_index + 1,
-            cfg.max_planner_steps,
-            &step_results,
-            aggregated_result.tool_results.len(),
-        );
-        let guidance_output = match guidance_model
-            .classify_guidance(PlannerGuidanceInput {
-                run_id: run_id.clone(),
-                prompt: guidance_prompt,
-            })
-            .await
-        {
-            Ok(output) => output,
-            Err(err) => {
-                eprintln!(
-                    "guidance model failed for {} at step {}: {}",
-                    run_id.0,
-                    step_index + 1,
-                    err
-                );
+            let guidance_prompt = build_guidance_prompt(
+                &trusted_user_message,
+                step_index + 1,
+                cfg.max_planner_steps,
+                &step_results,
+                aggregated_result.tool_results.len(),
+            );
+            let guidance_output = match guidance_model
+                .classify_guidance(PlannerGuidanceInput {
+                    run_id: run_id.clone(),
+                    prompt: guidance_prompt,
+                })
+                .await
+            {
+                Ok(output) => output,
+                Err(err) => {
+                    eprintln!(
+                        "guidance model failed for {} at step {}: {}",
+                        run_id.0,
+                        step_index + 1,
+                        err
+                    );
+                    break;
+                }
+            };
+            let signal = match guidance_output.guidance.signal() {
+                Ok(signal) => signal,
+                Err(err) => {
+                    eprintln!(
+                        "invalid guidance signal for {} at step {}: {}",
+                        run_id.0,
+                        step_index + 1,
+                        err
+                    );
+                    break;
+                }
+            };
+            if !guidance_requests_continue(signal) {
                 break;
             }
-        };
-        let signal = match guidance_output.guidance.signal() {
-            Ok(signal) => signal,
-            Err(err) => {
-                eprintln!(
-                    "invalid guidance signal for {} at step {}: {}",
-                    run_id.0,
-                    step_index + 1,
-                    err
-                );
+            if step_index + 1 >= cfg.max_planner_steps {
                 break;
             }
-        };
-        if !guidance_requests_continue(signal) {
-            break;
+            if consecutive_empty_steps >= 2 {
+                break;
+            }
+            planner_guidance = Some(guidance_output.guidance);
         }
-        if step_index + 1 >= cfg.max_planner_steps {
-            break;
-        }
-        if consecutive_empty_steps >= 2 {
-            break;
-        }
-        planner_guidance = Some(guidance_output.guidance);
     }
     let result = aggregated_result;
 
@@ -3095,7 +3098,7 @@ require_trusted_control_for_mutating = true
     }
 
     #[tokio::test]
-    async fn e2e_fake_greeting_runs_planner_once_with_guided_finalize() {
+    async fn e2e_fake_greeting_fast_path_skips_planner_tool_loop() {
         let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
             thoughts: Some("friendly response".to_string()),
             tool_calls: Vec::new(),
@@ -3138,8 +3141,8 @@ require_trusted_control_for_mutating = true
 
         assert_eq!(
             planner.call_count(),
-            1,
-            "greeting should execute one planner turn"
+            0,
+            "greeting fast-path should skip planner loop"
         );
         let events = harness.runtime_events();
         assert_eq!(count_approval_requested(&events), 0);
@@ -3148,6 +3151,117 @@ require_trusted_control_for_mutating = true
                 .iter()
                 .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
             "zero-tool greeting should avoid tool policy checks"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_guidance_continue_executes_multiple_planner_steps() {
+        let planner = Arc::new(QueuedPlannerModel::new(vec![
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-1".to_string()),
+                tool_calls: Vec::new(),
+            }),
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-2".to_string()),
+                tool_calls: Vec::new(),
+            }),
+        ]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![
+            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
+            Ok(guidance_output(PlannerGuidanceSignal::FinalAnswerReady)),
+        ]));
+        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+            sieve_llm::ResponseTurnOutput {
+                message: "Two-step complete.".to_string(),
+                referenced_ref_ids: BTreeSet::new(),
+                summarized_ref_ids: BTreeSet::new(),
+            },
+        )]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
+            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
+        );
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner: planner.clone(),
+                guidance,
+                response,
+                summary,
+            },
+            web_search,
+            vec!["bash".to_string(), "brave_search".to_string()],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("Gather more context and then answer.")
+            .await
+            .expect("multi-step guided turn should succeed");
+
+        assert_eq!(
+            planner.call_count(),
+            2,
+            "guidance continue should run step 2"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_guidance_continue_stops_after_two_empty_steps() {
+        let planner = Arc::new(QueuedPlannerModel::new(vec![
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-1".to_string()),
+                tool_calls: Vec::new(),
+            }),
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-2".to_string()),
+                tool_calls: Vec::new(),
+            }),
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-3".to_string()),
+                tool_calls: Vec::new(),
+            }),
+        ]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![
+            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
+            Ok(guidance_output(
+                PlannerGuidanceSignal::ContinueFetchAdditionalSource,
+            )),
+            Ok(guidance_output(
+                PlannerGuidanceSignal::ContinueFetchAdditionalSource,
+            )),
+        ]));
+        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+            sieve_llm::ResponseTurnOutput {
+                message: "Stopped early.".to_string(),
+                referenced_ref_ids: BTreeSet::new(),
+                summarized_ref_ids: BTreeSet::new(),
+            },
+        )]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
+            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
+        );
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner: planner.clone(),
+                guidance,
+                response,
+                summary,
+            },
+            web_search,
+            vec!["bash".to_string(), "brave_search".to_string()],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("Keep searching until done.")
+            .await
+            .expect("empty-step guard turn should succeed");
+
+        assert_eq!(
+            planner.call_count(),
+            2,
+            "two consecutive empty planner steps should stop loop"
         );
     }
 
@@ -3982,7 +4096,17 @@ require_trusted_control_for_mutating = true
         );
 
         let compose_log_path = harness.root.join("logs/compose-events.jsonl");
-        let compose_records = read_jsonl_records(&compose_log_path);
+        let mut compose_records = Vec::new();
+        for _ in 0..20 {
+            compose_records = read_jsonl_records(&compose_log_path);
+            if compose_records
+                .iter()
+                .any(|record| record.get("event").and_then(Value::as_str) == Some("compose_audit"))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
         assert!(
             compose_records
                 .iter()

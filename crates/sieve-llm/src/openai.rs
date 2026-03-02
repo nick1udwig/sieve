@@ -175,9 +175,9 @@ impl OpenAiGuidanceModel {
 
     pub fn from_env() -> Result<Self, LlmError> {
         let config = load_model_config_from_env("SIEVE_GUIDANCE", &env_getter)
-            .or_else(|_| load_model_config_from_env("SIEVE_QUARANTINE", &env_getter))?;
+            .or_else(|_| load_model_config_from_env("SIEVE_PLANNER", &env_getter))?;
         let api_key = load_openai_api_key_from_env("SIEVE_GUIDANCE", &env_getter)
-            .or_else(|_| load_openai_api_key_from_env("SIEVE_QUARANTINE", &env_getter))?;
+            .or_else(|_| load_openai_api_key_from_env("SIEVE_PLANNER", &env_getter))?;
         Self::new(config, api_key)
     }
 }

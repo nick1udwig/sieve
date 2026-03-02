@@ -24,7 +24,7 @@ Inspired by:
    - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
    - optional: `SIEVE_MAX_PLANNER_STEPS` (defaults to `3`)
    - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
-   - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to `SIEVE_QUARANTINE_MODEL`)
+   - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to planner model when unset)
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
    - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (required only when using `brave_search`)
    - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)

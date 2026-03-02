@@ -12,13 +12,13 @@ You are Worker 6 for Sieve v3. Own only crate `crates/sieve-llm`.
 
 ## Mission
 
-Implement real OpenAI-backed planner and quarantined extract model adapters.
+Implement real OpenAI-backed planner and typed guidance model adapters.
 
 ## Scope
 
-- Implement concrete `PlannerModel` and `QuarantineModel`.
+- Implement concrete `PlannerModel` and `GuidanceModel`.
 - OpenAI-only in MVP, but keep provider abstraction and independent P/Q configs.
-- Q model must output typed values only: bool, int, float, enum.
+- Q model must output typed planner-guidance signals only (Rust enum + numeric frame).
 - No deterministic stubs.
 - Enforce "no untrusted string to planner" boundary at API layer.
 - Handle retry and errors cleanly.
@@ -26,8 +26,8 @@ Implement real OpenAI-backed planner and quarantined extract model adapters.
 ## Required Outputs
 
 - OpenAI client integration and config loading.
-- Structured output handling for typed extraction.
-- Tests or mocks for serialization and typed decoding paths.
+- Structured output handling for planner guidance classification.
+- Tests or mocks for serialization and guidance decoding paths.
 
 ## Out Of Scope
 

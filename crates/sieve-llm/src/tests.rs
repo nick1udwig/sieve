@@ -261,7 +261,7 @@ async fn openai_live_guidance_smoke_env_gated() {
     };
 
     let model_name = env::var("SIEVE_GUIDANCE_MODEL")
-        .or_else(|_| env::var("SIEVE_QUARANTINE_MODEL"))
+        .or_else(|_| env::var("SIEVE_PLANNER_MODEL"))
         .unwrap_or_else(|_| "gpt-4o-mini".to_string());
     let model = OpenAiGuidanceModel::new(
         LlmModelConfig {
@@ -269,7 +269,7 @@ async fn openai_live_guidance_smoke_env_gated() {
             model: model_name,
             api_base: env::var("SIEVE_GUIDANCE_API_BASE")
                 .ok()
-                .or_else(|| env::var("SIEVE_QUARANTINE_API_BASE").ok()),
+                .or_else(|| env::var("SIEVE_PLANNER_API_BASE").ok()),
         },
         api_key,
     )

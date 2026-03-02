@@ -11,10 +11,10 @@ Planner config env:
 - `SIEVE_PLANNER_OPENAI_API_KEY` (optional; falls back to `OPENAI_API_KEY`)
 
 Guidance config env:
-- `SIEVE_GUIDANCE_MODEL` (optional; falls back to `SIEVE_QUARANTINE_MODEL`)
+- `SIEVE_GUIDANCE_MODEL` (optional; falls back to `SIEVE_PLANNER_MODEL`)
 - `SIEVE_GUIDANCE_PROVIDER` (optional; default `openai`)
 - `SIEVE_GUIDANCE_API_BASE` (optional)
-- `SIEVE_GUIDANCE_OPENAI_API_KEY` (optional; falls back to `SIEVE_QUARANTINE_OPENAI_API_KEY` then `OPENAI_API_KEY`)
+- `SIEVE_GUIDANCE_OPENAI_API_KEY` (optional; falls back to `SIEVE_PLANNER_OPENAI_API_KEY` then `OPENAI_API_KEY`)
 
 ## Guarantees
 

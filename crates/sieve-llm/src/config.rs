@@ -13,7 +13,7 @@ impl LlmConfigs {
         Ok(Self {
             planner: load_model_config_from_env("SIEVE_PLANNER", &env_getter)?,
             guidance: load_model_config_from_env("SIEVE_GUIDANCE", &env_getter)
-                .or_else(|_| load_model_config_from_env("SIEVE_QUARANTINE", &env_getter))?,
+                .or_else(|_| load_model_config_from_env("SIEVE_PLANNER", &env_getter))?,
         })
     }
 }
