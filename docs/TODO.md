@@ -24,7 +24,7 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 ## Done
 
 - [x] `AB` Complete CLI Search Migration (Remove Dedicated `brave_search` Tool Path)
-: Owner: `codex` | Branch: `master` | PR: `pending` | Scope: fully removed dedicated `brave_search` contracts/types/runtime/app paths; kept only backward-compatible filtering in `parse_allowed_tools`; updated tests and docs for bash/CLI-driven search.
+: Owner: `codex` | Branch: `master` | PR: `2045452` | Scope: fully removed dedicated `brave_search` contracts/types/runtime/app paths; kept only backward-compatible filtering in `parse_allowed_tools`; updated tests and docs for bash/CLI-driven search.
 
 - [x] `Y` Modality Parity Contract (Reply In Same Mode As Input)
 : Owner: `codex` | Branch: `master` | PR: `5f1d5cd` | Scope: define and enforce a modality contract so input modality is tracked (`text|audio|image|...`) and response defaults to same modality unless explicitly overridden by policy/tool failure. Apply this across Telegram ingress, runtime turn context, and response delivery. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs), [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [adapter.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/src/adapter.rs), [README.md](/root/git/sieve-v3/README.md). Done when: modality parity is explicit in types/docs and covered by integration tests.
