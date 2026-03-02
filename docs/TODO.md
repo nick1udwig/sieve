@@ -16,7 +16,11 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
-- None.
+- [ ] `AA` Telegram Full-Flow Harness (Mock Long-Poll + Outbound Assertions)
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: implement a full app/adapter harness that mocks Telegram `getUpdates`, injects user messages, and asserts outbound `sendMessage`/typing behavior through the real flow. Include deterministic and env-gated live cases from [telegram-fullflow-harness-plan.md](/root/git/sieve-v3/docs/telegram-fullflow-harness-plan.md), specifically greeting + `weather in dublin ireland today` + `weather in dublin ireland tomorrow`.
+
+- [ ] `AB` Complete CLI Search Migration (Remove Dedicated `brave_search` Tool Path)
+: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: finish migration outlined in [cli-search-migration-notes.md](/root/git/sieve-v3/docs/cli-search-migration-notes.md), including test-suite updates and decision on full codepath removal vs compatibility shim.
 
 ## Claimed
 

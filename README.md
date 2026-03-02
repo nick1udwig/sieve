@@ -27,7 +27,7 @@ Inspired by:
    - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
    - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to planner model when unset)
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
-   - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (required only when using `brave_search`)
+   - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (for bash/CLI-based Brave search commands)
    - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
    - optional: `SIEVE_IMAGE_OCR_CMD` (required for Telegram photo/image input)
 2. Start the app:
@@ -96,11 +96,11 @@ Q-LLM summary by ref (planner never receives raw output strings).
 
 Baseline policy file: `docs/policy/baseline-policy.toml`.
 
-`brave_search` tool notes:
-- enable by keeping `brave_search` in `SIEVE_ALLOWED_TOOLS` (default now includes it)
-- provide `BRAVE_API_KEY`
-- policy still gates execution; the tool precheck requires net connect capability to the configured
-  Brave endpoint (`SIEVE_BRAVE_API_BASE`)
+Web search notes:
+- `sieve-app` no longer uses a dedicated `brave_search` tool.
+- Use normal `bash` commands (for example a local Brave search CLI wrapper or `curl`) for search.
+- Keep policy capabilities aligned with the endpoint your CLI command connects to
+  (for Brave API, `SIEVE_BRAVE_API_BASE`).
 
 Telegram voice-note notes:
 - voice input is converted to text by executing `SIEVE_AUDIO_STT_CMD` (must print transcript to stdout)
@@ -158,7 +158,7 @@ Live assertions validate more than "it replied", including:
 - web-search smoke emits connect precheck capability, passes policy allow path, and avoids approval
 - no assistant-side error conversation records for successful smoke turns
 
-When running the live web-search smoke, set `BRAVE_API_KEY`.
+When running search-heavy live scenarios via bash CLI, set `BRAVE_API_KEY` as needed.
 
 ## Capability Trace Definition Generator
 

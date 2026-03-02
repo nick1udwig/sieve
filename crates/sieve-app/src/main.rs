@@ -84,7 +84,7 @@ impl AppConfig {
         let runtime_cwd = env::var("SIEVE_RUNTIME_CWD").unwrap_or_else(|_| ".".to_string());
         let allowed_tools = parse_allowed_tools(
             &env::var("SIEVE_ALLOWED_TOOLS")
-                .unwrap_or_else(|_| "bash,endorse,declassify,brave_search".to_string()),
+                .unwrap_or_else(|_| "bash,endorse,declassify".to_string()),
         );
         if allowed_tools.is_empty() {
             return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
@@ -260,11 +260,22 @@ impl ConversationLogRecord {
 }
 
 fn parse_allowed_tools(raw: &str) -> Vec<String> {
-    raw.split(',')
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for value in raw
+        .split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .collect()
+    {
+        if value.eq_ignore_ascii_case("brave_search") {
+            continue;
+        }
+        let key = value.to_ascii_lowercase();
+        if seen.insert(key) {
+            out.push(value.to_string());
+        }
+    }
+    out
 }
 
 fn parse_unknown_mode(raw: Option<String>) -> Result<UnknownMode, String> {
