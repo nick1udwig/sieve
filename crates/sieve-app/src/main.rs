@@ -2198,10 +2198,14 @@ async fn run_turn(
     let mut planner_steps_taken = 0usize;
     let mut compose_followup_cycles = 0usize;
     let max_compose_followup_cycles = cfg.max_planner_steps.max(1);
+    let planner_step_hard_limit = cfg
+        .max_planner_steps
+        .saturating_add(max_compose_followup_cycles);
+    let mut planner_step_limit = cfg.max_planner_steps.max(1);
 
     let assistant_message = loop {
         if !chat_only_turn {
-            while planner_steps_taken < cfg.max_planner_steps {
+            while planner_steps_taken < planner_step_limit {
                 let step_number = planner_steps_taken + 1;
                 let step_result = match runtime
                     .orchestrate_planner_turn(PlannerRunRequest {
@@ -2302,7 +2306,7 @@ async fn run_turn(
                     }
                 };
                 let should_continue = guidance_requests_continue(signal)
-                    && planner_steps_taken < cfg.max_planner_steps
+                    && planner_steps_taken < planner_step_limit
                     && consecutive_empty_steps < 2;
                 append_turn_controller_event(
                     &cfg.sieve_home,
@@ -2314,6 +2318,7 @@ async fn run_turn(
                         "continue": should_continue,
                         "step_tool_count": step_tool_count,
                         "planner_steps_taken": planner_steps_taken,
+                        "planner_step_limit": planner_step_limit,
                         "consecutive_empty_steps": consecutive_empty_steps,
                     }),
                 )
@@ -2435,7 +2440,7 @@ async fn run_turn(
 
         if let ComposePlannerDecision::Continue(signal) = composed.planner_decision {
             let can_continue = !chat_only_turn
-                && planner_steps_taken < cfg.max_planner_steps
+                && planner_steps_taken < planner_step_hard_limit
                 && compose_followup_cycles < max_compose_followup_cycles;
             append_turn_controller_event(
                 &cfg.sieve_home,
@@ -2445,6 +2450,8 @@ async fn run_turn(
                     "planner_decision_code": signal.code(),
                     "quality_gate_len": composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
                     "planner_steps_taken": planner_steps_taken,
+                    "planner_step_limit": planner_step_limit,
+                    "planner_step_hard_limit": planner_step_hard_limit,
                     "compose_followup_cycles": compose_followup_cycles,
                     "continue": can_continue,
                 }),
@@ -2452,6 +2459,9 @@ async fn run_turn(
             .await;
             if can_continue {
                 compose_followup_cycles = compose_followup_cycles.saturating_add(1);
+                planner_step_limit = planner_step_limit
+                    .saturating_add(1)
+                    .min(planner_step_hard_limit.max(1));
                 planner_guidance = Some(PlannerGuidanceFrame {
                     code: signal.code(),
                     confidence_bps: 9_000,
@@ -2468,6 +2478,8 @@ async fn run_turn(
             "turn_finalize",
             serde_json::json!({
                 "planner_steps_taken": planner_steps_taken,
+                "planner_step_limit": planner_step_limit,
+                "planner_step_hard_limit": planner_step_hard_limit,
                 "compose_followup_cycles": compose_followup_cycles,
                 "quality_gate_len": composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
             }),
@@ -3677,6 +3689,139 @@ require_trusted_control_for_mutating = true
         assert_eq!(
             assistant,
             vec!["second pass answer with concrete info".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_compose_followup_extends_planner_after_budget_exhaustion() {
+        let planner = Arc::new(QueuedPlannerModel::new(vec![
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-1".to_string()),
+                tool_calls: vec![PlannerToolCall {
+                    tool_name: "brave_search".to_string(),
+                    args: BTreeMap::from([
+                        (
+                            "query".to_string(),
+                            serde_json::json!("current weather livermore right now"),
+                        ),
+                        ("count".to_string(), serde_json::json!(1)),
+                    ]),
+                }],
+            }),
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-2".to_string()),
+                tool_calls: vec![PlannerToolCall {
+                    tool_name: "brave_search".to_string(),
+                    args: BTreeMap::from([
+                        (
+                            "query".to_string(),
+                            serde_json::json!("current weather livermore right now"),
+                        ),
+                        ("count".to_string(), serde_json::json!(1)),
+                    ]),
+                }],
+            }),
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-3".to_string()),
+                tool_calls: vec![PlannerToolCall {
+                    tool_name: "brave_search".to_string(),
+                    args: BTreeMap::from([
+                        (
+                            "query".to_string(),
+                            serde_json::json!("current weather livermore right now"),
+                        ),
+                        ("count".to_string(), serde_json::json!(1)),
+                    ]),
+                }],
+            }),
+            Ok(PlannerTurnOutput {
+                thoughts: Some("step-4".to_string()),
+                tool_calls: vec![PlannerToolCall {
+                    tool_name: "brave_search".to_string(),
+                    args: BTreeMap::from([
+                        (
+                            "query".to_string(),
+                            serde_json::json!("live temperature livermore station"),
+                        ),
+                        ("count".to_string(), serde_json::json!(1)),
+                    ]),
+                }],
+            }),
+        ]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![
+            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
+            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
+            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
+            Ok(guidance_output(PlannerGuidanceSignal::FinalAnswerReady)),
+        ]));
+        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![
+            Ok(sieve_llm::ResponseTurnOutput {
+                message: "first cycle [[ref:web-search:1-1]]".to_string(),
+                referenced_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
+                summarized_ref_ids: BTreeSet::new(),
+            }),
+            Ok(sieve_llm::ResponseTurnOutput {
+                message: "second cycle [[ref:web-search:1-4]]".to_string(),
+                referenced_ref_ids: BTreeSet::from(["web-search:1-4".to_string()]),
+                summarized_ref_ids: BTreeSet::new(),
+            }),
+        ]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
+            Ok("first cycle compose".to_string()),
+            Ok("REVISE: insufficient evidence; needs one more source.".to_string()),
+            Ok("first cycle retry".to_string()),
+            Ok("REVISE: still insufficient evidence; fetch additional source.".to_string()),
+            Ok("final answer with added source".to_string()),
+            Ok("PASS".to_string()),
+        ]));
+        let web_search = Arc::new(RecordingWebSearchRunner::new(
+            DEFAULT_BRAVE_API_BASE,
+            vec![BraveSearchResult {
+                title: "Result".to_string(),
+                url: "https://example.com/weather".to_string(),
+                description: Some("Sample weather source".to_string()),
+            }],
+        ));
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner: planner.clone(),
+                guidance,
+                response,
+                summary,
+            },
+            web_search.clone(),
+            vec!["brave_search".to_string()],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("What is the weather like right now in Livermore ca")
+            .await
+            .expect("turn should succeed");
+
+        assert_eq!(
+            planner.call_count(),
+            4,
+            "compose continue must extend planner budget by one extra step"
+        );
+        assert_eq!(
+            web_search.requests().len(),
+            4,
+            "extended planner step should execute extra tool call"
+        );
+        let assistant = assistant_messages(&harness.runtime_events());
+        assert_eq!(assistant.len(), 1);
+        assert!(assistant[0].contains("final answer with added source"));
+        assert!(assistant[0].contains("https://example.com/weather"));
+
+        let controller_log_path = harness.root.join("logs/turn-controller-events.jsonl");
+        let controller_records = read_jsonl_records(&controller_log_path);
+        assert!(
+            controller_records.iter().any(|record| {
+                record.get("phase").and_then(Value::as_str) == Some("compose_decision")
+                    && record.pointer("/payload/continue").and_then(Value::as_bool) == Some(true)
+            }),
+            "compose decision log must show continued planner cycle"
         );
     }
 
