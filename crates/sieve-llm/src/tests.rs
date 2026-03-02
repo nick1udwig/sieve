@@ -1,17 +1,17 @@
 use crate::config::{load_model_config_from_env, load_openai_api_key_from_env};
 use crate::wire::{
-    decode_planner_output, decode_quarantine_output, decode_response_output,
+    decode_guidance_output, decode_planner_output, decode_response_output,
     extract_openai_planner_output_json, serialize_planner_input, serialize_response_input,
     PlannerDecodeOutcome,
 };
-use crate::{LlmError, OpenAiPlannerModel, OpenAiQuarantineModel, PlannerModel, QuarantineModel};
+use crate::{GuidanceModel, LlmError, OpenAiGuidanceModel, OpenAiPlannerModel, PlannerModel};
 use serde_json::json;
 use sieve_types::{
     Action, Capability, LlmModelConfig, LlmProvider, PlannerTurnInput, PolicyDecision,
-    PolicyDecisionKind, PolicyEvaluatedEvent, QuarantineExtractInput, Resource, RunId,
-    RuntimeEvent, TypedValue, TOOL_CONTRACTS_VERSION_V1,
+    PolicyDecisionKind, PolicyEvaluatedEvent, Resource, RunId, RuntimeEvent,
+    TOOL_CONTRACTS_VERSION_V1,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 
 fn map_getter<'a>(map: &'a BTreeMap<String, String>) -> impl Fn(&str) -> Option<String> + 'a {
@@ -82,6 +82,7 @@ fn serialize_planner_input_only_sends_safe_shape() {
         user_message: "list files".to_string(),
         allowed_tools: vec!["bash".to_string()],
         previous_events: vec![event],
+        guidance: None,
     };
     let payload = serialize_planner_input(&input).unwrap();
     let payload_string = payload.to_string();
@@ -90,42 +91,32 @@ fn serialize_planner_input_only_sends_safe_shape() {
 }
 
 #[test]
-fn decode_quarantine_output_validates_enum_registry() {
-    let mut reg = BTreeMap::new();
-    reg.insert(
-        "risk".to_string(),
-        BTreeSet::from(["low".to_string(), "high".to_string()]),
-    );
+fn decode_guidance_output_accepts_known_signal_code() {
     let raw = json!({
-        "value": {
-            "type":"enum",
-            "value":{"registry":"risk","variant":"high"}
+        "guidance": {
+            "code": 200,
+            "confidence_bps": 9200,
+            "source_hit_index": null,
+            "evidence_ref_index": 1
         }
     });
-    let out = decode_quarantine_output(raw, &reg).unwrap();
-    assert_eq!(
-        out.value,
-        TypedValue::Enum {
-            registry: "risk".to_string(),
-            variant: "high".to_string()
-        }
-    );
+    let out = decode_guidance_output(raw).unwrap();
+    assert_eq!(out.guidance.code, 200);
+    assert_eq!(out.guidance.confidence_bps, 9200);
+    assert_eq!(out.guidance.evidence_ref_index, Some(1));
 }
 
 #[test]
-fn decode_quarantine_output_rejects_unknown_variant() {
-    let mut reg = BTreeMap::new();
-    reg.insert(
-        "risk".to_string(),
-        BTreeSet::from(["low".to_string(), "high".to_string()]),
-    );
+fn decode_guidance_output_rejects_unknown_signal_code() {
     let raw = json!({
-        "value": {
-            "type":"enum",
-            "value":{"registry":"risk","variant":"critical"}
+        "guidance": {
+            "code": 777,
+            "confidence_bps": 7000,
+            "source_hit_index": null,
+            "evidence_ref_index": null
         }
     });
-    let err = decode_quarantine_output(raw, &reg).unwrap_err();
+    let err = decode_guidance_output(raw).unwrap_err();
     assert!(matches!(err, LlmError::Boundary(_)));
 }
 
@@ -259,7 +250,7 @@ fn response_turn_round_trip_uses_safe_shape() {
 }
 
 #[tokio::test]
-async fn openai_live_quarantine_smoke_env_gated() {
+async fn openai_live_guidance_smoke_env_gated() {
     if env::var("SIEVE_RUN_OPENAI_LIVE").ok().as_deref() != Some("1") {
         return;
     }
@@ -269,25 +260,27 @@ async fn openai_live_quarantine_smoke_env_gated() {
         _ => return,
     };
 
-    let model_name =
-        env::var("SIEVE_QUARANTINE_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
-    let model = OpenAiQuarantineModel::new(
+    let model_name = env::var("SIEVE_GUIDANCE_MODEL")
+        .or_else(|_| env::var("SIEVE_QUARANTINE_MODEL"))
+        .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let model = OpenAiGuidanceModel::new(
         LlmModelConfig {
             provider: LlmProvider::OpenAi,
             model: model_name,
-            api_base: env::var("SIEVE_QUARANTINE_API_BASE").ok(),
+            api_base: env::var("SIEVE_GUIDANCE_API_BASE")
+                .ok()
+                .or_else(|| env::var("SIEVE_QUARANTINE_API_BASE").ok()),
         },
         api_key,
     )
     .unwrap();
 
-    let input = QuarantineExtractInput {
+    let input = sieve_types::PlannerGuidanceInput {
         run_id: RunId("live-smoke".to_string()),
-        prompt: "Return boolean true.".to_string(),
-        enum_registry: BTreeMap::new(),
+        prompt: "User said hello. No tool output exists. Prefer final answer ready.".to_string(),
     };
-    let out = model.extract_typed(input).await.unwrap();
-    assert_eq!(out.value, TypedValue::Bool(true));
+    let out = model.classify_guidance(input).await.unwrap();
+    assert!(out.guidance.code > 0);
 }
 
 #[tokio::test]
@@ -318,6 +311,7 @@ async fn openai_live_planner_smoke_env_gated() {
             user_message: "Use bash to print hello world.".to_string(),
             allowed_tools: vec!["bash".to_string()],
             previous_events: vec![],
+            guidance: None,
         })
         .await
         .unwrap();

@@ -22,7 +22,9 @@ Inspired by:
    - optional: `SIEVE_POLICY_PATH` (defaults to `docs/policy/baseline-policy.toml`)
    - optional: `SIEVE_HOME` (defaults to `~/.sieve`)
    - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
+   - optional: `SIEVE_MAX_PLANNER_STEPS` (defaults to `3`)
    - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
+   - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to `SIEVE_QUARANTINE_MODEL`)
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
    - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (required only when using `brave_search`)
    - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
@@ -81,8 +83,9 @@ Telegram 409 troubleshooting:
 
 Runtime JSONL logs now include both runtime events and conversation records, defaulting to
 `$SIEVE_HOME/logs/runtime-events.jsonl` (same base dir as trace logs).
-Turns run in two phases: planner tool calls (can be zero for chat/no-op turns), then assistant
-response generation.
+Turns run in a planner act-observe loop bounded by `SIEVE_MAX_PLANNER_STEPS`, with typed
+Q-LLM guidance signals controlling whether to continue tool actions or finalize. Planner never sees
+raw untrusted stdout/stderr strings.
 Mainline `bash` execution now stores stdout/stderr as untrusted artifacts under
 `$SIEVE_HOME/artifacts`, and the response writer decides whether to inline raw refs or request a
 Q-LLM summary by ref (planner never receives raw output strings).

@@ -1661,6 +1661,7 @@ reason = "rm -rf requires approval"
                 user_message: "dangerous".to_string(),
                 allowed_tools: vec!["bash".to_string()],
                 previous_events: Vec::new(),
+                guidance: None,
                 control_value_refs: BTreeSet::new(),
                 control_endorsed_by: None,
                 unknown_mode: UnknownMode::Deny,

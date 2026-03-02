@@ -101,14 +101,64 @@ pub struct ValueLabel {
     pub capacity_type: CapacityType,
 }
 
-/// Typed value that can flow from quarantine to planner.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value", rename_all = "snake_case")]
-pub enum TypedValue {
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    Enum { registry: String, variant: String },
+/// Typed control signal emitted by Q-LLM and consumed by planner/runtime loop logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u16)]
+pub enum PlannerGuidanceSignal {
+    ContinueNeedEvidence = 100,
+    ContinueFetchPrimarySource = 101,
+    ContinueFetchAdditionalSource = 102,
+    ContinueRefineApproach = 103,
+    FinalAnswerReady = 200,
+    FinalAnswerPartial = 201,
+    FinalInsufficientEvidence = 202,
+    StopPolicyBlocked = 300,
+    StopBudgetExhausted = 301,
+    ErrorContractViolation = 900,
+}
+
+impl PlannerGuidanceSignal {
+    pub const fn code(self) -> u16 {
+        self as u16
+    }
+}
+
+impl TryFrom<u16> for PlannerGuidanceSignal {
+    type Error = String;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            100 => Ok(Self::ContinueNeedEvidence),
+            101 => Ok(Self::ContinueFetchPrimarySource),
+            102 => Ok(Self::ContinueFetchAdditionalSource),
+            103 => Ok(Self::ContinueRefineApproach),
+            200 => Ok(Self::FinalAnswerReady),
+            201 => Ok(Self::FinalAnswerPartial),
+            202 => Ok(Self::FinalInsufficientEvidence),
+            300 => Ok(Self::StopPolicyBlocked),
+            301 => Ok(Self::StopBudgetExhausted),
+            900 => Ok(Self::ErrorContractViolation),
+            _ => Err(format!("unknown planner guidance signal code `{value}`")),
+        }
+    }
+}
+
+/// Numeric wire-safe envelope for Q-LLM -> planner guidance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerGuidanceFrame {
+    pub code: u16,
+    #[serde(default)]
+    pub confidence_bps: u16,
+    #[serde(default)]
+    pub source_hit_index: Option<u16>,
+    #[serde(default)]
+    pub evidence_ref_index: Option<u16>,
+}
+
+impl PlannerGuidanceFrame {
+    pub fn signal(&self) -> Result<PlannerGuidanceSignal, String> {
+        PlannerGuidanceSignal::try_from(self.code)
+    }
 }
 
 /// Turn-level modality for ingress and delivery.
@@ -391,6 +441,8 @@ pub struct PlannerTurnInput {
     pub user_message: String,
     pub allowed_tools: Vec<String>,
     pub previous_events: Vec<RuntimeEvent>,
+    #[serde(default)]
+    pub guidance: Option<PlannerGuidanceFrame>,
 }
 
 /// One tool call selected by planner.
@@ -407,18 +459,17 @@ pub struct PlannerTurnOutput {
     pub tool_calls: Vec<PlannerToolCall>,
 }
 
-/// Input payload for quarantine extraction model.
+/// Input payload for Q-LLM planner-guidance classification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuarantineExtractInput {
+pub struct PlannerGuidanceInput {
     pub run_id: RunId,
     pub prompt: String,
-    pub enum_registry: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// Output payload for quarantine extraction model.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct QuarantineExtractOutput {
-    pub value: TypedValue,
+/// Output payload for Q-LLM planner-guidance classification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerGuidanceOutput {
+    pub guidance: PlannerGuidanceFrame,
 }
 
 #[cfg(test)]

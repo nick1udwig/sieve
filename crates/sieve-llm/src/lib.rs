@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use sieve_types::{
-    LlmModelConfig, PlannerTurnInput, PlannerTurnOutput, QuarantineExtractInput,
-    QuarantineExtractOutput, RunId,
+    LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerTurnInput,
+    PlannerTurnOutput, RunId,
 };
 use std::collections::BTreeSet;
 use thiserror::Error;
@@ -17,7 +17,7 @@ mod tests;
 
 pub use config::LlmConfigs;
 pub use openai::{
-    OpenAiPlannerModel, OpenAiQuarantineModel, OpenAiResponseModel, OpenAiSummaryModel,
+    OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel,
 };
 
 #[derive(Debug, Error)]
@@ -46,13 +46,13 @@ pub trait PlannerModel: Send + Sync {
 }
 
 #[async_trait]
-pub trait QuarantineModel: Send + Sync {
+pub trait GuidanceModel: Send + Sync {
     fn config(&self) -> &LlmModelConfig;
 
-    async fn extract_typed(
+    async fn classify_guidance(
         &self,
-        input: QuarantineExtractInput,
-    ) -> Result<QuarantineExtractOutput, LlmError>;
+        input: PlannerGuidanceInput,
+    ) -> Result<PlannerGuidanceOutput, LlmError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

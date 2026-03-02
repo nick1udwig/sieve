@@ -17,39 +17,40 @@ Not in MVP:
 2. Planner/Quarantine split required.
 3. Default trusted roots: user intent/prompt + local config.
 4. Local files are default untrusted (configurable).
-5. Q -> P types: `bool | int | float | enum` only.
+5. Q -> P channel uses typed planner-guidance signals only (Rust enum, numeric wire frame).
 6. Untrusted strings never reach Planner.
 7. Trusted strings allowed only from explicitly trusted sources.
-8. Enums are compile-time Rust registry only (no runtime enum definition).
-9. Both integrity and confidentiality checks are mandatory.
-10. Consequential-action integrity checks apply only to mutating/unknown commands.
-11. Mutating/safe classification is copied from Codex allowlist/denylist snapshot at commit `79d6f80`.
-12. `rm -rf` class is `deny_with_approval`.
-13. Default policy-violation behavior is deny; configurable to ask.
-14. Policy language is pure TOML (no expression language).
-15. URL sink matching uses canonical `scheme://host[:port]/path`; ignore query/fragment.
-16. URL canonicalization includes percent-encoding and dot-segment normalization.
-17. URL canonicalization implementation is pinned to Rust crate `url = 2.5.8`.
-18. No globs in MVP (future work).
-19. No alias-in-alias expansion.
-20. Unsupported/unknown flags in summaries route as unknown command handling.
-21. Supported Bash composition operators: `;`, `&&`, `||`, `|`.
-22. No heredoc in MVP.
-23. No redirections in MVP.
-24. Unsupported shell constructs are `uncertain`.
-25. `uncertain` default is hard deny; configurable similarly to unknown mode.
-26. `unknown_command_mode` default is `deny`.
-27. Unknown mode options: `ask | accept | deny`.
-28. Unknown/uncertain execution policy is all-or-nothing precheck for composed commands.
-29. Quarantine execution: Linux `bwrap` + no network + minimal writable scratch + `strace -ff`.
-30. Pre-exec enforcement only in MVP.
-31. Unknown/accepted quarantine runs log trace and notify user where logs are stored.
-32. If easy, include stdout/stderr in quarantine logs; else omit in MVP.
-33. Logs root: `~/.sieve/logs/`.
-34. Logs are append-only and retained forever by default in MVP.
-35. Retention/redaction are future work.
-36. `endorse` and `declassify` are explicit tools.
-37. Q-LLM typed extraction is deferred from integrated runtime turns in MVP.
+8. Planner-guidance signal variants are compile-time Rust enum variants (no runtime variant definition).
+9. Planner-guidance enum is intentionally extensible; adding many variants over time is expected.
+10. Both integrity and confidentiality checks are mandatory.
+11. Consequential-action integrity checks apply only to mutating/unknown commands.
+12. Mutating/safe classification is copied from Codex allowlist/denylist snapshot at commit `79d6f80`.
+13. `rm -rf` class is `deny_with_approval`.
+14. Default policy-violation behavior is deny; configurable to ask.
+15. Policy language is pure TOML (no expression language).
+16. URL sink matching uses canonical `scheme://host[:port]/path`; ignore query/fragment.
+17. URL canonicalization includes percent-encoding and dot-segment normalization.
+18. URL canonicalization implementation is pinned to Rust crate `url = 2.5.8`.
+19. No globs in MVP (future work).
+20. No alias-in-alias expansion.
+21. Unsupported/unknown flags in summaries route as unknown command handling.
+22. Supported Bash composition operators: `;`, `&&`, `||`, `|`.
+23. No heredoc in MVP.
+24. No redirections in MVP.
+25. Unsupported shell constructs are `uncertain`.
+26. `uncertain` default is hard deny; configurable similarly to unknown mode.
+27. `unknown_command_mode` default is `deny`.
+28. Unknown mode options: `ask | accept | deny`.
+29. Unknown/uncertain execution policy is all-or-nothing precheck for composed commands.
+30. Quarantine execution: Linux `bwrap` + no network + minimal writable scratch + `strace -ff`.
+31. Pre-exec enforcement only in MVP.
+32. Unknown/accepted quarantine runs log trace and notify user where logs are stored.
+33. If easy, include stdout/stderr in quarantine logs; else omit in MVP.
+34. Logs root: `~/.sieve/logs/`.
+35. Logs are append-only and retained forever by default in MVP.
+36. Retention/redaction are future work.
+37. `endorse` and `declassify` are explicit tools.
+38. Q-LLM guidance classification is integrated in the planner act-observe loop for MVP turns.
 
 ## 3. Data model
 
@@ -71,7 +72,7 @@ Not in MVP:
 
 Rules:
 - Non-trusted strings cannot flow to Planner.
-- Typed Q outputs may flow to Planner, but remain policy-controlled for consequential use.
+- Typed Q guidance signals may flow to Planner, but remain policy-controlled for consequential use.
 
 ## 4. Enforcement semantics
 
@@ -230,7 +231,7 @@ Unknown/accepted path:
 - execute in quarantine (`bwrap`, no-net, scratch write, `strace -ff`).
 - save trace artifacts under `~/.sieve/logs/traces/<run_id>/`.
 - notify user with location.
-- do not feed typed Q-LLM extraction outputs back into planner/runtime loop in MVP.
+- feed only typed numeric Q-LLM guidance frames into planner/runtime loop (never free-form strings).
 - no policy-learning side effects in MVP.
 
 Runtime + conversation events (JSONL) under `~/.sieve/logs/runtime-events.jsonl` include:

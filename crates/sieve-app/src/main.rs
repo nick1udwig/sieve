@@ -8,8 +8,9 @@ use sieve_interface_telegram::{
     TelegramEventBridge, TelegramPrompt,
 };
 use sieve_llm::{
-    OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel, ResponseModel,
-    ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput, SummaryModel, SummaryRequest,
+    GuidanceModel, OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel,
+    OpenAiSummaryModel, ResponseModel, ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput,
+    SummaryModel, SummaryRequest,
 };
 use sieve_policy::TomlPolicyEngine;
 use sieve_quarantine::BwrapQuarantineRunner;
@@ -24,18 +25,20 @@ use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
     ApprovalResolvedEvent, AssistantMessageEvent, BraveSearchRequest, BraveSearchResponse,
     BraveSearchResult, Integrity, InteractionModality, ModalityContract, ModalityOverrideReason,
-    RunId, RuntimeEvent, UncertainMode, UnknownMode,
+    PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceSignal, RunId, RuntimeEvent,
+    UncertainMode, UnknownMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc as tokio_mpsc, Semaphore};
 
@@ -58,6 +61,7 @@ struct AppConfig {
     unknown_mode: UnknownMode,
     uncertain_mode: UncertainMode,
     max_concurrent_turns: usize,
+    max_planner_steps: usize,
 }
 
 const DEFAULT_POLICY_PATH: &str = "docs/policy/baseline-policy.toml";
@@ -98,6 +102,10 @@ impl AppConfig {
         if max_concurrent_turns == 0 {
             return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
         }
+        let max_planner_steps = parse_usize_env("SIEVE_MAX_PLANNER_STEPS", 3)?;
+        if max_planner_steps == 0 {
+            return Err("SIEVE_MAX_PLANNER_STEPS must be >= 1".to_string());
+        }
 
         Ok(Self {
             telegram_bot_token,
@@ -117,6 +125,7 @@ impl AppConfig {
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
             uncertain_mode: parse_uncertain_mode(env::var("SIEVE_UNCERTAIN_MODE").ok())?,
             max_concurrent_turns,
+            max_planner_steps,
         })
     }
 }
@@ -965,6 +974,126 @@ fn format_integrity(integrity: Integrity) -> &'static str {
     }
 }
 
+fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Value {
+    match result {
+        PlannerToolResult::Bash {
+            command,
+            disposition,
+        } => match disposition {
+            RuntimeDisposition::ExecuteMainline(report) => {
+                let stdout_bytes: u64 = report
+                    .artifacts
+                    .iter()
+                    .filter(|artifact| matches!(artifact.kind, MainlineArtifactKind::Stdout))
+                    .map(|artifact| artifact.byte_count)
+                    .sum();
+                let stderr_bytes: u64 = report
+                    .artifacts
+                    .iter()
+                    .filter(|artifact| matches!(artifact.kind, MainlineArtifactKind::Stderr))
+                    .map(|artifact| artifact.byte_count)
+                    .sum();
+                serde_json::json!({
+                    "tool": "bash",
+                    "command_len": command.len(),
+                    "disposition": "execute_mainline",
+                    "exit_code": report.exit_code,
+                    "artifact_count": report.artifacts.len(),
+                    "stdout_bytes": stdout_bytes,
+                    "stderr_bytes": stderr_bytes
+                })
+            }
+            RuntimeDisposition::ExecuteQuarantine(report) => serde_json::json!({
+                "tool": "bash",
+                "command_len": command.len(),
+                "disposition": "execute_quarantine",
+                "exit_code": report.exit_code,
+                "trace_path_present": !report.trace_path.trim().is_empty(),
+                "stdout_path_present": report.stdout_path.as_deref().is_some(),
+                "stderr_path_present": report.stderr_path.as_deref().is_some()
+            }),
+            RuntimeDisposition::Denied { reason } => serde_json::json!({
+                "tool": "bash",
+                "command_len": command.len(),
+                "disposition": "denied",
+                "reason_len": reason.len()
+            }),
+        },
+        PlannerToolResult::Endorse {
+            request,
+            transition,
+        } => serde_json::json!({
+            "tool": "endorse",
+            "value_ref_len": request.value_ref.0.len(),
+            "target_integrity": format_integrity(request.target_integrity),
+            "applied": transition.is_some()
+        }),
+        PlannerToolResult::Declassify {
+            request,
+            transition,
+        } => serde_json::json!({
+            "tool": "declassify",
+            "value_ref_len": request.value_ref.0.len(),
+            "sink_len": request.sink.0.len(),
+            "applied": transition.is_some()
+        }),
+        PlannerToolResult::BraveSearch {
+            request,
+            disposition,
+        } => match disposition {
+            WebSearchDisposition::Executed(response) => serde_json::json!({
+                "tool": "brave_search",
+                "disposition": "executed",
+                "query_len": request.query.len(),
+                "count_requested": request.count,
+                "results_count": response.results.len()
+            }),
+            WebSearchDisposition::Denied { reason } => serde_json::json!({
+                "tool": "brave_search",
+                "disposition": "denied",
+                "query_len": request.query.len(),
+                "count_requested": request.count,
+                "reason_len": reason.len()
+            }),
+        },
+    }
+}
+
+fn build_guidance_prompt(
+    trusted_user_message: &str,
+    step_index: usize,
+    max_steps: usize,
+    step_results: &[PlannerToolResult],
+    total_results: usize,
+) -> String {
+    let observed_results: Vec<serde_json::Value> = step_results
+        .iter()
+        .map(summarize_observed_tool_result)
+        .collect();
+    serde_json::json!({
+        "task": "planner_act_observe",
+        "trusted_user_message": trusted_user_message,
+        "step_index": step_index,
+        "max_steps": max_steps,
+        "step_tool_result_count": step_results.len(),
+        "total_tool_result_count": total_results,
+        "observed_step_results": observed_results,
+        "instruction": "Return numeric guidance code: continue only if more tool actions are still needed; otherwise return final or stop."
+    })
+    .to_string()
+}
+
+fn guidance_requests_continue(signal: PlannerGuidanceSignal) -> bool {
+    matches!(
+        signal,
+        PlannerGuidanceSignal::ContinueNeedEvidence
+            | PlannerGuidanceSignal::ContinueFetchPrimarySource
+            | PlannerGuidanceSignal::ContinueFetchAdditionalSource
+            | PlannerGuidanceSignal::ContinueRefineApproach
+    )
+}
+
+#[cfg(test)]
 fn normalize_chat_probe(input: &str) -> String {
     input
         .trim()
@@ -975,6 +1104,7 @@ fn normalize_chat_probe(input: &str) -> String {
         .join(" ")
 }
 
+#[cfg(test)]
 fn is_chat_only_prompt(input: &str) -> bool {
     let normalized = normalize_chat_probe(input);
     if normalized.is_empty() {
@@ -1075,6 +1205,503 @@ async fn resolve_ref_summary_input(
             Some((content, *byte_count, *line_count))
         }
     }
+}
+
+fn web_search_ref_ids(input: &ResponseTurnInput) -> BTreeSet<String> {
+    input
+        .tool_outcomes
+        .iter()
+        .flat_map(|outcome| outcome.refs.iter())
+        .filter(|ref_metadata| {
+            ref_metadata.kind == "web_search_results_json" && ref_metadata.byte_count > 0
+        })
+        .map(|ref_metadata| ref_metadata.ref_id.clone())
+        .collect()
+}
+
+fn sanitize_ref_component(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "ref".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+async fn persist_web_search_render_refs_as_artifacts(
+    run_id: &RunId,
+    input: &ResponseTurnInput,
+    render_refs: &mut BTreeMap<String, RenderRef>,
+    artifacts_root: &Path,
+) -> Result<(), String> {
+    let ref_ids = web_search_ref_ids(input);
+    if ref_ids.is_empty() {
+        return Ok(());
+    }
+
+    let run_dir = artifacts_root.join(&run_id.0);
+    tokio::fs::create_dir_all(&run_dir)
+        .await
+        .map_err(|err| format!("failed to create web-search artifact dir: {err}"))?;
+
+    for ref_id in ref_ids {
+        let Some(RenderRef::Literal { value }) = render_refs.get(&ref_id).cloned() else {
+            continue;
+        };
+        let file_name = format!("{}-web-search.json", sanitize_ref_component(&ref_id));
+        let path = run_dir.join(file_name);
+        tokio::fs::write(&path, value.as_bytes())
+            .await
+            .map_err(|err| format!("failed to persist web-search artifact `{ref_id}`: {err}"))?;
+        render_refs.insert(
+            ref_id,
+            RenderRef::Artifact {
+                path,
+                byte_count: value.len() as u64,
+                line_count: count_newlines(value.as_bytes()),
+            },
+        );
+    }
+
+    Ok(())
+}
+
+async fn collect_web_search_results(
+    input: &ResponseTurnInput,
+    render_refs: &BTreeMap<String, RenderRef>,
+) -> Vec<BraveSearchResult> {
+    let mut all = Vec::new();
+    for ref_id in web_search_ref_ids(input) {
+        let Some(raw) = resolve_raw_ref_value(&ref_id, render_refs).await else {
+            continue;
+        };
+        let Ok(parsed) = serde_json::from_str::<BraveSearchResponse>(&raw) else {
+            continue;
+        };
+        for result in parsed.results {
+            if !result.url.trim().is_empty() {
+                all.push(result);
+            }
+        }
+    }
+    all
+}
+
+fn distinct_plain_urls(results: &[BraveSearchResult]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for result in results {
+        let url = result.url.trim();
+        if url.is_empty() {
+            continue;
+        }
+        if seen.insert(url.to_string()) {
+            out.push(url.to_string());
+        }
+    }
+    out
+}
+
+fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    out
+}
+
+fn extract_plain_urls_from_text(message: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    for token in message.split_whitespace() {
+        let trimmed = token.trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\''
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | ','
+                    | '.'
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+            )
+        });
+        if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+            urls.push(trimmed.to_string());
+        }
+    }
+    dedupe_preserve_order(urls)
+}
+
+fn contains_plain_url(message: &str) -> bool {
+    message.contains("https://") || message.contains("http://")
+}
+
+fn mentions_linkish_text(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains(" link")
+        || normalized.contains(" links")
+        || normalized.contains("url")
+        || normalized.contains("source")
+        || normalized.contains("full results")
+        || normalized.contains("search results")
+}
+
+fn split_sentences(message: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for ch in message.chars() {
+        current.push(ch);
+        if matches!(ch, '.' | '!' | '?' | '\n') {
+            if !current.trim().is_empty() {
+                out.push(current.trim().to_string());
+            }
+            current.clear();
+        }
+    }
+    if !current.trim().is_empty() {
+        out.push(current.trim().to_string());
+    }
+    out
+}
+
+fn remove_linkish_sentences(message: &str) -> String {
+    let kept: Vec<String> = split_sentences(message)
+        .into_iter()
+        .filter(|sentence| {
+            let lower = sentence.to_ascii_lowercase();
+            !lower.contains(" link")
+                && !lower.contains(" links")
+                && !lower.contains("url")
+                && !lower.contains("source")
+                && !lower.contains("full results")
+                && !lower.contains("search results")
+        })
+        .collect();
+    if kept.is_empty() {
+        message
+            .replace("provided link", "")
+            .replace("provided links", "")
+            .trim()
+            .to_string()
+    } else {
+        kept.join(" ")
+    }
+}
+
+fn enforce_link_policy(message: String, source_urls: &[String]) -> String {
+    if !mentions_linkish_text(&message) || contains_plain_url(&message) {
+        return message;
+    }
+    if !source_urls.is_empty() {
+        let mut out = message.trim().to_string();
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        for url in source_urls.iter().take(3) {
+            out.push_str(url);
+            out.push('\n');
+        }
+        return out.trim().to_string();
+    }
+    remove_linkish_sentences(&message)
+}
+
+fn obvious_meta_compose_pattern(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    normalized.starts_with("the assistant ")
+        || normalized.starts_with("assistant is ")
+        || normalized.contains("the user has")
+        || normalized.contains("user has asked")
+        || normalized.contains("the assistant is ready to help")
+}
+
+async fn append_jsonl_record(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("jsonl path has no parent: {}", path.display()))?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|err| format!("failed to create jsonl parent dir: {err}"))?;
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await
+        .map_err(|err| format!("failed to open jsonl log `{}`: {err}", path.display()))?;
+    let line = format!("{value}\n");
+    file.write_all(line.as_bytes())
+        .await
+        .map_err(|err| format!("failed to append jsonl log `{}`: {err}", path.display()))
+}
+
+async fn summarize_with_ref_id(
+    summary_model: &dyn SummaryModel,
+    run_id: &RunId,
+    ref_id: &str,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    let content = payload.to_string();
+    let request = SummaryRequest {
+        run_id: run_id.clone(),
+        ref_id: ref_id.to_string(),
+        byte_count: content.len() as u64,
+        line_count: count_newlines(content.as_bytes()),
+        content,
+    };
+    match summary_model.summarize_ref(request).await {
+        Ok(summary) => {
+            let trimmed = summary.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+fn compose_quality_requires_retry(
+    composed_message: &str,
+    quality_gate: Option<&str>,
+) -> Option<String> {
+    if obvious_meta_compose_pattern(composed_message) {
+        return Some(
+            "response used third-person meta narration; respond directly to user".to_string(),
+        );
+    }
+    let gate = quality_gate.unwrap_or("").trim();
+    if gate.is_empty() {
+        return None;
+    }
+    let lower = gate.to_ascii_lowercase();
+    if lower.starts_with("pass") {
+        None
+    } else {
+        Some(gate.to_string())
+    }
+}
+
+async fn write_compose_audit_artifacts(
+    sieve_home: &Path,
+    run_id: &RunId,
+    attempts: &[serde_json::Value],
+    final_message: &str,
+    web_search_ref_ids: &[String],
+    source_urls: &[String],
+    quality_gate: Option<&str>,
+) -> Result<(), String> {
+    let run_dir = sieve_home.join("artifacts").join(&run_id.0);
+    tokio::fs::create_dir_all(&run_dir)
+        .await
+        .map_err(|err| format!("failed to create compose artifact dir: {err}"))?;
+
+    let mut input_refs = Vec::new();
+    for (idx, attempt) in attempts.iter().enumerate() {
+        let ref_id = format!("assistant-compose-input:{}:{}", run_id.0, idx + 1);
+        let path = run_dir.join(format!("assistant-compose-input-{}.json", idx + 1));
+        let content = serde_json::to_vec_pretty(attempt)
+            .map_err(|err| format!("failed to encode compose payload: {err}"))?;
+        tokio::fs::write(&path, content)
+            .await
+            .map_err(|err| format!("failed to write compose payload artifact: {err}"))?;
+        input_refs.push(serde_json::json!({
+            "ref_id": ref_id,
+            "path": path.to_string_lossy(),
+        }));
+    }
+
+    let output_ref_id = format!("assistant-compose-output:{}", run_id.0);
+    let output_path = run_dir.join("assistant-compose-output.txt");
+    tokio::fs::write(&output_path, final_message.as_bytes())
+        .await
+        .map_err(|err| format!("failed to write compose output artifact: {err}"))?;
+
+    let logs_path = sieve_home.join("logs/compose-events.jsonl");
+    let record = serde_json::json!({
+        "schema_version": 1,
+        "event": "compose_audit",
+        "created_at_ms": now_ms(),
+        "run_id": run_id.0,
+        "input_refs": input_refs,
+        "output_ref": {
+            "ref_id": output_ref_id,
+            "path": output_path.to_string_lossy(),
+        },
+        "web_search_ref_ids": web_search_ref_ids,
+        "source_urls": source_urls,
+        "quality_gate": quality_gate,
+    });
+    append_jsonl_record(&logs_path, &record).await
+}
+
+async fn compose_assistant_message(
+    summary_model: &dyn SummaryModel,
+    sieve_home: &Path,
+    run_id: &RunId,
+    trusted_user_message: &str,
+    response_input: &ResponseTurnInput,
+    render_refs: &BTreeMap<String, RenderRef>,
+    draft_message: String,
+) -> String {
+    let web_results = collect_web_search_results(response_input, render_refs).await;
+    let web_search_ref_ids: Vec<String> = web_search_ref_ids(response_input).into_iter().collect();
+    let mut source_urls = distinct_plain_urls(&web_results);
+    source_urls.extend(extract_plain_urls_from_text(&draft_message));
+    let source_urls = dedupe_preserve_order(source_urls);
+
+    let sources: Vec<serde_json::Value> = web_results
+        .iter()
+        .take(5)
+        .map(|result| {
+            serde_json::json!({
+                "title": result.title.trim(),
+                "url": result.url.trim(),
+                "description": result
+                    .description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty()),
+            })
+        })
+        .collect();
+    let tool_outcomes: Vec<serde_json::Value> = response_input
+        .tool_outcomes
+        .iter()
+        .map(|outcome| {
+            serde_json::json!({
+                "tool_name": outcome.tool_name,
+                "outcome": outcome.outcome,
+                "refs": outcome.refs.iter().map(|ref_metadata| {
+                    serde_json::json!({
+                        "ref_id": ref_metadata.ref_id,
+                        "kind": ref_metadata.kind,
+                        "byte_count": ref_metadata.byte_count,
+                        "line_count": ref_metadata.line_count,
+                    })
+                }).collect::<Vec<_>>()
+            })
+        })
+        .collect();
+
+    let mut attempt_payloads = Vec::new();
+    let payload = serde_json::json!({
+        "task": "compose_user_reply",
+        "trusted_user_message": trusted_user_message,
+        "assistant_draft_message": draft_message,
+        "planner_thoughts": response_input.planner_thoughts.clone(),
+        "tool_outcomes": tool_outcomes,
+        "sources": sources.clone(),
+        "available_plain_urls": source_urls.clone(),
+    });
+    attempt_payloads.push(payload.clone());
+
+    let first_composed = summarize_with_ref_id(
+        summary_model,
+        run_id,
+        &format!("assistant-compose:{}", run_id.0),
+        &payload,
+    )
+    .await
+    .unwrap_or_else(|| {
+        payload
+            .get("assistant_draft_message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    });
+
+    let quality_payload = serde_json::json!({
+        "task": "compose_quality_gate",
+        "trusted_user_message": trusted_user_message,
+        "composed_message": first_composed,
+    });
+    let quality_gate = summarize_with_ref_id(
+        summary_model,
+        run_id,
+        &format!("assistant-compose-quality:{}", run_id.0),
+        &quality_payload,
+    )
+    .await;
+
+    let mut composed = quality_payload
+        .get("composed_message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if let Some(diagnostic) = compose_quality_requires_retry(&composed, quality_gate.as_deref()) {
+        let retry_payload = serde_json::json!({
+            "task": "compose_user_reply",
+            "trusted_user_message": trusted_user_message,
+            "assistant_draft_message": payload
+                .get("assistant_draft_message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            "planner_thoughts": response_input.planner_thoughts.clone(),
+            "tool_outcomes": payload
+                .get("tool_outcomes")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "sources": sources,
+            "available_plain_urls": source_urls.clone(),
+            "compose_diagnostic": diagnostic,
+            "previous_composed_message": composed,
+        });
+        attempt_payloads.push(retry_payload.clone());
+        composed = summarize_with_ref_id(
+            summary_model,
+            run_id,
+            &format!("assistant-compose-retry:{}", run_id.0),
+            &retry_payload,
+        )
+        .await
+        .unwrap_or_else(|| {
+            retry_payload
+                .get("previous_composed_message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        });
+    }
+
+    let composed = enforce_link_policy(composed, &source_urls);
+    if let Err(err) = write_compose_audit_artifacts(
+        sieve_home,
+        run_id,
+        &attempt_payloads,
+        &composed,
+        &web_search_ref_ids,
+        &source_urls,
+        quality_gate.as_deref(),
+    )
+    .await
+    {
+        eprintln!("compose audit write failed for {}: {}", run_id.0, err);
+    }
+    composed
 }
 
 async fn read_artifact_as_string(path: &std::path::Path) -> Result<String, io::Error> {
@@ -1375,6 +2002,7 @@ async fn emit_assistant_error_message(
 
 async fn run_turn(
     runtime: &RuntimeOrchestrator,
+    guidance_model: &dyn GuidanceModel,
     response_model: &dyn ResponseModel,
     summary_model: &dyn SummaryModel,
     event_log: &FanoutRuntimeEventLog,
@@ -1438,21 +2066,22 @@ async fn run_turn(
         ))
         .await?;
 
-    let result = if input_modality == InteractionModality::Text
-        && is_chat_only_prompt(&trusted_user_message)
-    {
-        PlannerRunResult {
-            thoughts: Some("chat-only turn: no tools needed".to_string()),
-            tool_results: Vec::new(),
-        }
-    } else {
-        match runtime
+    let mut aggregated_result = PlannerRunResult {
+        thoughts: None,
+        tool_results: Vec::new(),
+    };
+    let mut planner_guidance: Option<PlannerGuidanceFrame> = None;
+    let mut consecutive_empty_steps = 0usize;
+
+    for step_index in 0..cfg.max_planner_steps {
+        let step_result = match runtime
             .orchestrate_planner_turn(PlannerRunRequest {
                 run_id: run_id.clone(),
                 cwd: cfg.runtime_cwd.clone(),
                 user_message: trusted_user_message.clone(),
                 allowed_tools: cfg.allowed_tools.clone(),
                 previous_events: event_log.snapshot(),
+                guidance: planner_guidance.clone(),
                 control_value_refs: BTreeSet::new(),
                 control_endorsed_by: None,
                 unknown_mode: cfg.unknown_mode,
@@ -1469,11 +2098,85 @@ async fn run_turn(
                 }
                 return Err(err.into());
             }
-        }
-    };
+        };
 
-    let (mut response_input, render_refs) =
+        let step_tool_count = step_result.tool_results.len();
+        if step_tool_count == 0 {
+            consecutive_empty_steps = consecutive_empty_steps.saturating_add(1);
+        } else {
+            consecutive_empty_steps = 0;
+        }
+        if let Some(thoughts) = step_result.thoughts.clone() {
+            aggregated_result.thoughts = Some(thoughts);
+        }
+        let step_results = step_result.tool_results;
+        aggregated_result.tool_results.extend(step_results.clone());
+
+        let guidance_prompt = build_guidance_prompt(
+            &trusted_user_message,
+            step_index + 1,
+            cfg.max_planner_steps,
+            &step_results,
+            aggregated_result.tool_results.len(),
+        );
+        let guidance_output = match guidance_model
+            .classify_guidance(PlannerGuidanceInput {
+                run_id: run_id.clone(),
+                prompt: guidance_prompt,
+            })
+            .await
+        {
+            Ok(output) => output,
+            Err(err) => {
+                eprintln!(
+                    "guidance model failed for {} at step {}: {}",
+                    run_id.0,
+                    step_index + 1,
+                    err
+                );
+                break;
+            }
+        };
+        let signal = match guidance_output.guidance.signal() {
+            Ok(signal) => signal,
+            Err(err) => {
+                eprintln!(
+                    "invalid guidance signal for {} at step {}: {}",
+                    run_id.0,
+                    step_index + 1,
+                    err
+                );
+                break;
+            }
+        };
+        if !guidance_requests_continue(signal) {
+            break;
+        }
+        if step_index + 1 >= cfg.max_planner_steps {
+            break;
+        }
+        if consecutive_empty_steps >= 2 {
+            break;
+        }
+        planner_guidance = Some(guidance_output.guidance);
+    }
+    let result = aggregated_result;
+
+    let (mut response_input, mut render_refs) =
         build_response_turn_input(&run_id, &trusted_user_message, &result);
+    if let Err(err) = persist_web_search_render_refs_as_artifacts(
+        &run_id,
+        &response_input,
+        &mut render_refs,
+        &cfg.sieve_home.join("artifacts"),
+    )
+    .await
+    {
+        eprintln!(
+            "failed to persist web-search refs for {}: {}",
+            run_id.0, err
+        );
+    }
     let mut response_output = match response_model
         .write_turn_response(response_input.clone())
         .await
@@ -1542,6 +2245,16 @@ async fn run_turn(
         &render_refs,
         summary_model,
         &run_id,
+    )
+    .await;
+    let assistant_message = compose_assistant_message(
+        summary_model,
+        &cfg.sieve_home,
+        &run_id,
+        &trusted_user_message,
+        &response_input,
+        &render_refs,
+        assistant_message,
     )
     .await;
     println!("{}: {}", run_id.0, assistant_message);
@@ -1628,6 +2341,7 @@ impl Drop for TypingGuard {
 
 async fn run_agent_loop(
     runtime: Arc<RuntimeOrchestrator>,
+    guidance_model: Arc<dyn GuidanceModel>,
     response_model: Arc<dyn ResponseModel>,
     summary_model: Arc<dyn SummaryModel>,
     event_log: Arc<FanoutRuntimeEventLog>,
@@ -1650,6 +2364,7 @@ async fn run_agent_loop(
         };
 
         let runtime = runtime.clone();
+        let guidance_model = guidance_model.clone();
         let response_model = response_model.clone();
         let summary_model = summary_model.clone();
         let event_log = event_log.clone();
@@ -1672,6 +2387,7 @@ async fn run_agent_loop(
             };
             if let Err(err) = run_turn(
                 &runtime,
+                guidance_model.as_ref(),
                 response_model.as_ref(),
                 summary_model.as_ref(),
                 &event_log,
@@ -1704,6 +2420,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let policy = TomlPolicyEngine::from_toml_str(&policy_toml)?;
 
     let planner = OpenAiPlannerModel::from_env()?;
+    let guidance_model: Arc<dyn GuidanceModel> = Arc::new(OpenAiGuidanceModel::from_env()?);
     let response_model: Arc<dyn ResponseModel> = Arc::new(OpenAiResponseModel::from_env()?);
     let summary_model: Arc<dyn SummaryModel> = Arc::new(OpenAiSummaryModel::from_env()?);
     let approval_bus = Arc::new(InProcessApprovalBus::new());
@@ -1745,6 +2462,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if single_command_mode {
         run_turn(
             &runtime,
+            guidance_model.as_ref(),
             response_model.as_ref(),
             summary_model.as_ref(),
             &event_log,
@@ -1762,6 +2480,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         run_agent_loop(
             runtime.clone(),
+            guidance_model.clone(),
             response_model.clone(),
             summary_model.clone(),
             event_log.clone(),
@@ -1779,11 +2498,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use serde_json::Value;
-    use sieve_llm::{LlmError, PlannerModel};
+    use sieve_llm::{GuidanceModel, LlmError, PlannerModel};
     use sieve_runtime::ApprovalBus;
     use sieve_types::{
         ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, BraveSearchRequest,
         BraveSearchResponse, BraveSearchResult, CommandSegment, LlmModelConfig, LlmProvider,
+        PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerGuidanceSignal,
         PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, PolicyDecisionKind,
         PolicyEvaluatedEvent, Resource,
     };
@@ -1810,10 +2530,69 @@ mod tests {
         }
 
         async fn summarize_ref(&self, request: SummaryRequest) -> Result<String, LlmError> {
+            if request.ref_id.starts_with("assistant-compose-quality:") {
+                return Ok("PASS".to_string());
+            }
+            if request.ref_id.starts_with("assistant-compose:")
+                || request.ref_id.starts_with("assistant-compose-retry:")
+            {
+                if let Ok(payload) = serde_json::from_str::<Value>(&request.content) {
+                    if let Some(draft) = payload
+                        .get("assistant_draft_message")
+                        .and_then(Value::as_str)
+                    {
+                        return Ok(draft.to_string());
+                    }
+                    if let Some(previous) = payload
+                        .get("previous_composed_message")
+                        .and_then(Value::as_str)
+                    {
+                        return Ok(previous.to_string());
+                    }
+                }
+                return Ok(String::new());
+            }
             Ok(format!(
                 "summary(bytes={},lines={})",
                 request.byte_count, request.line_count
             ))
+        }
+    }
+
+    struct QueuedSummaryModel {
+        config: LlmModelConfig,
+        outputs: StdMutex<VecDeque<Result<String, LlmError>>>,
+    }
+
+    impl QueuedSummaryModel {
+        fn new(outputs: Vec<Result<String, LlmError>>) -> Self {
+            Self {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "summary-queue-test".to_string(),
+                    api_base: None,
+                },
+                outputs: StdMutex::new(VecDeque::from(outputs)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SummaryModel for QueuedSummaryModel {
+        fn config(&self) -> &LlmModelConfig {
+            &self.config
+        }
+
+        async fn summarize_ref(&self, _request: SummaryRequest) -> Result<String, LlmError> {
+            self.outputs
+                .lock()
+                .expect("summary queue mutex poisoned")
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Err(LlmError::Backend(
+                        "summary queue exhausted with no configured output".to_string(),
+                    ))
+                })
         }
     }
 
@@ -1870,6 +2649,62 @@ require_trusted_control_for_mutating = true
                         "planner queue exhausted with no configured output".to_string(),
                     ))
                 })
+        }
+    }
+
+    struct QueuedGuidanceModel {
+        config: LlmModelConfig,
+        outputs: StdMutex<VecDeque<Result<PlannerGuidanceOutput, LlmError>>>,
+    }
+
+    impl QueuedGuidanceModel {
+        fn new(outputs: Vec<Result<PlannerGuidanceOutput, LlmError>>) -> Self {
+            Self {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "guidance-test".to_string(),
+                    api_base: None,
+                },
+                outputs: StdMutex::new(VecDeque::from(outputs)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl GuidanceModel for QueuedGuidanceModel {
+        fn config(&self) -> &LlmModelConfig {
+            &self.config
+        }
+
+        async fn classify_guidance(
+            &self,
+            _input: PlannerGuidanceInput,
+        ) -> Result<PlannerGuidanceOutput, LlmError> {
+            self.outputs
+                .lock()
+                .expect("guidance queue mutex poisoned")
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Ok(PlannerGuidanceOutput {
+                        guidance: PlannerGuidanceFrame {
+                            code: PlannerGuidanceSignal::FinalAnswerReady.code(),
+                            confidence_bps: 10_000,
+                            source_hit_index: None,
+                            evidence_ref_index: None,
+                        },
+                    })
+                })
+        }
+    }
+
+    fn guidance_output(signal: PlannerGuidanceSignal) -> PlannerGuidanceOutput {
+        PlannerGuidanceOutput {
+            guidance: PlannerGuidanceFrame {
+                code: signal.code(),
+                confidence_bps: 10_000,
+                source_hit_index: None,
+                evidence_ref_index: None,
+            },
         }
     }
 
@@ -1960,6 +2795,7 @@ require_trusted_control_for_mutating = true
     enum E2eModelMode {
         Fake {
             planner: Arc<dyn PlannerModel>,
+            guidance: Arc<dyn GuidanceModel>,
             response: Arc<dyn ResponseModel>,
             summary: Arc<dyn SummaryModel>,
         },
@@ -1968,6 +2804,7 @@ require_trusted_control_for_mutating = true
 
     struct AppE2eHarness {
         runtime: Arc<RuntimeOrchestrator>,
+        guidance_model: Arc<dyn GuidanceModel>,
         response_model: Arc<dyn ResponseModel>,
         summary_model: Arc<dyn SummaryModel>,
         event_log: Arc<FanoutRuntimeEventLog>,
@@ -2023,19 +2860,23 @@ require_trusted_control_for_mutating = true
                 unknown_mode: UnknownMode::Deny,
                 uncertain_mode: UncertainMode::Deny,
                 max_concurrent_turns: 1,
+                max_planner_steps: 3,
             };
 
-            let (response_model, summary_model, planner): (
+            let (guidance_model, response_model, summary_model, planner): (
+                Arc<dyn GuidanceModel>,
                 Arc<dyn ResponseModel>,
                 Arc<dyn SummaryModel>,
                 Arc<dyn PlannerModel>,
             ) = match model_mode {
                 E2eModelMode::Fake {
                     planner,
+                    guidance,
                     response,
                     summary,
-                } => (response, summary, planner),
+                } => (guidance, response, summary, planner),
                 E2eModelMode::RealOpenAi => (
+                    Arc::new(OpenAiGuidanceModel::from_env().expect("load real guidance model")),
                     Arc::new(OpenAiResponseModel::from_env().expect("load real response model")),
                     Arc::new(OpenAiSummaryModel::from_env().expect("load real summary model")),
                     Arc::new(OpenAiPlannerModel::from_env().expect("load real planner model")),
@@ -2064,6 +2905,7 @@ require_trusted_control_for_mutating = true
 
             Self {
                 runtime,
+                guidance_model,
                 response_model,
                 summary_model,
                 event_log,
@@ -2106,6 +2948,7 @@ require_trusted_control_for_mutating = true
             let run_index = self.next_run_index.fetch_add(1, Ordering::Relaxed);
             run_turn(
                 &self.runtime,
+                self.guidance_model.as_ref(),
                 self.response_model.as_ref(),
                 self.summary_model.as_ref(),
                 &self.event_log,
@@ -2185,7 +3028,7 @@ require_trusted_control_for_mutating = true
     }
 
     #[tokio::test]
-    async fn e2e_fake_greeting_stays_chat_only_without_approval() {
+    async fn e2e_fake_greeting_uses_guided_zero_tool_turn_without_approval() {
         let planner_output = PlannerTurnOutput {
             thoughts: Some("chat only".to_string()),
             tool_calls: Vec::new(),
@@ -2197,6 +3040,9 @@ require_trusted_control_for_mutating = true
         };
         let planner: Arc<dyn PlannerModel> =
             Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
         let response: Arc<dyn ResponseModel> =
             Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
@@ -2206,6 +3052,7 @@ require_trusted_control_for_mutating = true
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner,
+                guidance,
                 response,
                 summary,
             },
@@ -2248,8 +3095,14 @@ require_trusted_control_for_mutating = true
     }
 
     #[tokio::test]
-    async fn e2e_fake_chat_fast_path_skips_planner_calls() {
-        let planner = Arc::new(QueuedPlannerModel::new(Vec::new()));
+    async fn e2e_fake_greeting_runs_planner_once_with_guided_finalize() {
+        let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+            thoughts: Some("friendly response".to_string()),
+            tool_calls: Vec::new(),
+        })]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
         let response_output = sieve_llm::ResponseTurnOutput {
             message: "I'm doing well, thank you!".to_string(),
             referenced_ref_ids: BTreeSet::new(),
@@ -2264,6 +3117,7 @@ require_trusted_control_for_mutating = true
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner: planner.clone(),
+                guidance,
                 response,
                 summary,
             },
@@ -2280,12 +3134,12 @@ require_trusted_control_for_mutating = true
         harness
             .run_text_turn("Hi how are you?")
             .await
-            .expect("chat fast-path greeting should succeed");
+            .expect("guided greeting should succeed");
 
         assert_eq!(
             planner.call_count(),
-            0,
-            "chat fast-path should bypass planner and tools"
+            1,
+            "greeting should execute one planner turn"
         );
         let events = harness.runtime_events();
         assert_eq!(count_approval_requested(&events), 0);
@@ -2293,7 +3147,112 @@ require_trusted_control_for_mutating = true
             !events
                 .iter()
                 .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
-            "chat fast-path should avoid tool policy checks"
+            "zero-tool greeting should avoid tool policy checks"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_general_compose_pass_rewrites_final_message() {
+        let planner_output = PlannerTurnOutput {
+            thoughts: Some("direct response".to_string()),
+            tool_calls: Vec::new(),
+        };
+        let response_output = sieve_llm::ResponseTurnOutput {
+            message: "Draft response that is too wordy.".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        };
+        let planner: Arc<dyn PlannerModel> =
+            Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
+        let response: Arc<dyn ResponseModel> =
+            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
+            Ok("Hello there.".to_string()),
+            Ok("PASS".to_string()),
+        ]));
+        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
+            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
+        );
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                guidance,
+                response,
+                summary,
+            },
+            web_search,
+            vec![
+                "bash".to_string(),
+                "endorse".to_string(),
+                "declassify".to_string(),
+                "brave_search".to_string(),
+            ],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("Please greet me briefly.")
+            .await
+            .expect("compose pass turn should succeed");
+
+        let assistant = assistant_messages(&harness.runtime_events());
+        assert_eq!(assistant, vec!["Hello there.".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_compose_retries_on_meta_narration() {
+        let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+            thoughts: Some("chat".to_string()),
+            tool_calls: Vec::new(),
+        })]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
+        let response_output = sieve_llm::ResponseTurnOutput {
+            message: "Hey!".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        };
+        let response: Arc<dyn ResponseModel> =
+            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
+            Ok("The assistant is ready to help and asks how it can assist.".to_string()),
+            Ok("PASS".to_string()),
+            Ok("I'm doing well, thanks for asking. How can I help?".to_string()),
+        ]));
+        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
+            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
+        );
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                guidance,
+                response,
+                summary,
+            },
+            web_search,
+            vec![
+                "bash".to_string(),
+                "endorse".to_string(),
+                "declassify".to_string(),
+                "brave_search".to_string(),
+            ],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("Hi how are you?")
+            .await
+            .expect("meta compose retry turn should succeed");
+
+        let assistant = assistant_messages(&harness.runtime_events());
+        assert_eq!(assistant.len(), 1);
+        assert!(
+            assistant[0].starts_with("I'm doing well"),
+            "compose retry should replace third-person meta narration"
         );
     }
 
@@ -2319,6 +3278,9 @@ require_trusted_control_for_mutating = true
         };
         let planner: Arc<dyn PlannerModel> =
             Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
         let response: Arc<dyn ResponseModel> =
             Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
@@ -2333,6 +3295,7 @@ require_trusted_control_for_mutating = true
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner,
+                guidance,
                 response,
                 summary,
             },
@@ -2373,6 +3336,9 @@ require_trusted_control_for_mutating = true
         let planner: Arc<dyn PlannerModel> = Arc::new(QueuedPlannerModel::new(vec![Err(
             LlmError::Backend("planner boom".to_string()),
         )]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
         let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(Vec::new()));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
         let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
@@ -2381,6 +3347,7 @@ require_trusted_control_for_mutating = true
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner,
+                guidance,
                 response,
                 summary,
             },
@@ -2921,6 +3888,126 @@ require_trusted_control_for_mutating = true
             summarized_ref_ids: BTreeSet::from(["web-search-1".to_string()]),
         };
         assert!(response_has_visible_selected_output(&input, &response));
+    }
+
+    #[test]
+    fn enforce_link_policy_appends_plain_urls_when_link_claim_has_no_url() {
+        let message = "For more information, visit the provided link.".to_string();
+        let enforced = enforce_link_policy(
+            message,
+            &[
+                "https://example.com/a".to_string(),
+                "https://example.com/b".to_string(),
+            ],
+        );
+        assert!(enforced.contains("https://example.com/a"));
+        assert!(enforced.contains("https://example.com/b"));
+        assert!(enforced.contains("provided link"));
+    }
+
+    #[test]
+    fn enforce_link_policy_strips_link_claim_without_available_urls() {
+        let message = "Top result is ready. Visit the provided link for details.".to_string();
+        let enforced = enforce_link_policy(message, &[]);
+        assert!(!enforced.to_ascii_lowercase().contains("provided link"));
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_web_search_polish_includes_plain_url_when_draft_omits_it() {
+        let mut args = BTreeMap::new();
+        args.insert(
+            "query".to_string(),
+            serde_json::json!("weather tomorrow livermore"),
+        );
+        args.insert("count".to_string(), serde_json::json!(1));
+        let planner_output = PlannerTurnOutput {
+            thoughts: Some("search then answer".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "brave_search".to_string(),
+                args,
+            }],
+        };
+        let response_output = sieve_llm::ResponseTurnOutput {
+            message: "[[summary:web-search:1-1]]".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
+        };
+        let planner: Arc<dyn PlannerModel> =
+            Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
+        let response: Arc<dyn ResponseModel> =
+            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
+            Ok("search summary".to_string()),
+            Ok("For more details, visit the provided link.".to_string()),
+            Ok("REVISE: answer the question directly before linking".to_string()),
+            Ok("Tomorrow in Livermore should stay mild. Source listed below.".to_string()),
+        ]));
+        let web_search = Arc::new(RecordingWebSearchRunner::new(
+            DEFAULT_BRAVE_API_BASE,
+            vec![BraveSearchResult {
+                title: "Weather Underground Livermore".to_string(),
+                url: "https://www.wunderground.com/weather/us/ca/livermore".to_string(),
+                description: Some("Forecast page".to_string()),
+            }],
+        ));
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                guidance,
+                response,
+                summary,
+            },
+            web_search,
+            vec!["brave_search".to_string()],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("What is the weather tomorrow in Livermore?")
+            .await
+            .expect("turn should succeed");
+
+        let assistant = assistant_messages(&harness.runtime_events());
+        assert_eq!(assistant.len(), 1);
+        assert!(
+            assistant[0].contains("https://www.wunderground.com/weather/us/ca/livermore"),
+            "assistant reply should include explicit plain URL when mentioning sources"
+        );
+        assert!(
+            assistant[0].contains("Tomorrow in Livermore"),
+            "compose retry should answer directly after quality-gate revise"
+        );
+
+        let compose_log_path = harness.root.join("logs/compose-events.jsonl");
+        let compose_records = read_jsonl_records(&compose_log_path);
+        assert!(
+            compose_records
+                .iter()
+                .any(|record| record.get("event").and_then(Value::as_str) == Some("compose_audit")),
+            "compose audit event must be logged"
+        );
+        assert!(
+            compose_records.iter().any(|record| {
+                record
+                    .get("web_search_ref_ids")
+                    .and_then(Value::as_array)
+                    .map(|ids| ids.iter().any(|id| id.as_str() == Some("web-search:1-1")))
+                    .unwrap_or(false)
+            }),
+            "compose audit must include web-search ref id provenance"
+        );
+        let web_artifact_path = harness
+            .root
+            .join("artifacts")
+            .join("run-1")
+            .join("web-search_1-1-web-search.json");
+        assert!(
+            web_artifact_path.exists(),
+            "web-search raw response should be persisted as artifact for provenance"
+        );
     }
 
     #[test]

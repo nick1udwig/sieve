@@ -98,6 +98,7 @@ impl CaseGenerator for PlannerCaseGenerator {
                 user_message,
                 allowed_tools: vec!["bash".to_string()],
                 previous_events: Vec::new(),
+                guidance: None,
             })
             .await
             .map_err(llm_err)?;

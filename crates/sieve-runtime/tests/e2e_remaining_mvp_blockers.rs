@@ -174,6 +174,7 @@ async fn l_disallowed_planner_tool_is_rejected_at_runtime_boundary() {
             user_message: "run echo".to_string(),
             allowed_tools: vec!["endorse".to_string()],
             previous_events: Vec::new(),
+            guidance: None,
             control_value_refs: BTreeSet::new(),
             control_endorsed_by: None,
             unknown_mode: UnknownMode::Deny,
