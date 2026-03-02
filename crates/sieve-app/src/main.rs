@@ -1120,6 +1120,9 @@ fn is_chat_only_prompt(input: &str) -> bool {
             | "how are you"
             | "how are you today"
             | "hi can you hear me"
+            | "hi can you hear me how are you"
+            | "hello can you hear me how are you"
+            | "hey can you hear me how are you"
             | "can you hear me"
             | "who are you"
             | "whats your name"
@@ -1455,6 +1458,29 @@ async fn append_jsonl_record(path: &Path, value: &serde_json::Value) -> Result<(
         .map_err(|err| format!("failed to append jsonl log `{}`: {err}", path.display()))
 }
 
+async fn append_turn_controller_event(
+    sieve_home: &Path,
+    run_id: &RunId,
+    phase: &str,
+    payload: serde_json::Value,
+) {
+    let path = sieve_home.join("logs/turn-controller-events.jsonl");
+    let record = serde_json::json!({
+        "event": "turn_controller",
+        "schema_version": 1,
+        "created_at_ms": now_ms(),
+        "run_id": run_id.0,
+        "phase": phase,
+        "payload": payload,
+    });
+    if let Err(err) = append_jsonl_record(&path, &record).await {
+        eprintln!(
+            "turn controller log write failed for {} (phase={}): {}",
+            run_id.0, phase, err
+        );
+    }
+}
+
 async fn summarize_with_ref_id(
     summary_model: &dyn SummaryModel,
     run_id: &RunId,
@@ -1496,11 +1522,71 @@ fn compose_quality_requires_retry(
         return None;
     }
     let lower = gate.to_ascii_lowercase();
-    if lower.starts_with("pass") {
+    if lower.starts_with("pass") || (lower.contains("pass") && !lower.contains("revise")) {
         None
     } else {
         Some(gate.to_string())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComposePlannerDecision {
+    Finalize,
+    Continue(PlannerGuidanceSignal),
+}
+
+struct ComposeAssistantOutcome {
+    message: String,
+    quality_gate: Option<String>,
+    planner_decision: ComposePlannerDecision,
+}
+
+fn compose_quality_followup_signal(
+    quality_gate: Option<&str>,
+    response_input: &ResponseTurnInput,
+) -> Option<PlannerGuidanceSignal> {
+    let gate = quality_gate.unwrap_or("").trim();
+    if gate.is_empty() {
+        return None;
+    }
+    let lower = gate.to_ascii_lowercase();
+    if lower.starts_with("pass") || (lower.contains("pass") && !lower.contains("revise")) {
+        return None;
+    }
+
+    let has_non_empty_refs = response_input
+        .tool_outcomes
+        .iter()
+        .any(|outcome| outcome.refs.iter().any(|metadata| metadata.byte_count > 0));
+    if !has_non_empty_refs {
+        return None;
+    }
+
+    let is_style_only = lower.contains("third-person")
+        || lower.contains("third person")
+        || lower.contains("meta narration")
+        || lower.contains("tone");
+    if is_style_only {
+        return None;
+    }
+
+    let missing_evidence = lower.contains("insufficient")
+        || lower.contains("not enough")
+        || lower.contains("missing")
+        || lower.contains("doesn't directly answer")
+        || lower.contains("does not directly answer")
+        || lower.contains("doesn’t directly answer")
+        || lower.contains("can't")
+        || lower.contains("cannot")
+        || lower.contains("can’t")
+        || lower.contains("no actual")
+        || lower.contains("real-time")
+        || lower.contains("right now");
+    if missing_evidence {
+        return Some(PlannerGuidanceSignal::ContinueFetchAdditionalSource);
+    }
+
+    None
 }
 
 async fn write_compose_audit_artifacts(
@@ -1511,6 +1597,7 @@ async fn write_compose_audit_artifacts(
     web_search_ref_ids: &[String],
     source_urls: &[String],
     quality_gate: Option<&str>,
+    planner_followup_signal: Option<PlannerGuidanceSignal>,
 ) -> Result<(), String> {
     let run_dir = sieve_home.join("artifacts").join(&run_id.0);
     tokio::fs::create_dir_all(&run_dir)
@@ -1552,6 +1639,7 @@ async fn write_compose_audit_artifacts(
         "web_search_ref_ids": web_search_ref_ids,
         "source_urls": source_urls,
         "quality_gate": quality_gate,
+        "planner_followup_signal_code": planner_followup_signal.map(PlannerGuidanceSignal::code),
     });
     append_jsonl_record(&logs_path, &record).await
 }
@@ -1564,7 +1652,7 @@ async fn compose_assistant_message(
     response_input: &ResponseTurnInput,
     render_refs: &BTreeMap<String, RenderRef>,
     draft_message: String,
-) -> String {
+) -> ComposeAssistantOutcome {
     let web_results = collect_web_search_results(response_input, render_refs).await;
     let web_search_ref_ids: Vec<String> = web_search_ref_ids(response_input).into_iter().collect();
     let mut source_urls = distinct_plain_urls(&web_results);
@@ -1637,7 +1725,7 @@ async fn compose_assistant_message(
         "trusted_user_message": trusted_user_message,
         "composed_message": first_composed,
     });
-    let quality_gate = summarize_with_ref_id(
+    let first_quality_gate = summarize_with_ref_id(
         summary_model,
         run_id,
         &format!("assistant-compose-quality:{}", run_id.0),
@@ -1650,7 +1738,11 @@ async fn compose_assistant_message(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string();
-    if let Some(diagnostic) = compose_quality_requires_retry(&composed, quality_gate.as_deref()) {
+    let mut did_retry = false;
+    if let Some(diagnostic) =
+        compose_quality_requires_retry(&composed, first_quality_gate.as_deref())
+    {
+        did_retry = true;
         let retry_payload = serde_json::json!({
             "task": "compose_user_reply",
             "trusted_user_message": trusted_user_message,
@@ -1685,6 +1777,29 @@ async fn compose_assistant_message(
         });
     }
 
+    let quality_gate = if did_retry {
+        let final_quality_payload = serde_json::json!({
+            "task": "compose_quality_gate",
+            "trusted_user_message": trusted_user_message,
+            "composed_message": composed,
+        });
+        summarize_with_ref_id(
+            summary_model,
+            run_id,
+            &format!("assistant-compose-quality-final:{}", run_id.0),
+            &final_quality_payload,
+        )
+        .await
+    } else {
+        first_quality_gate.clone()
+    };
+
+    let planner_followup_signal =
+        compose_quality_followup_signal(quality_gate.as_deref(), response_input);
+    let planner_decision = planner_followup_signal
+        .map(ComposePlannerDecision::Continue)
+        .unwrap_or(ComposePlannerDecision::Finalize);
+
     let composed = enforce_link_policy(composed, &source_urls);
     if let Err(err) = write_compose_audit_artifacts(
         sieve_home,
@@ -1694,12 +1809,17 @@ async fn compose_assistant_message(
         &web_search_ref_ids,
         &source_urls,
         quality_gate.as_deref(),
+        planner_followup_signal,
     )
     .await
     {
         eprintln!("compose audit write failed for {}: {}", run_id.0, err);
     }
-    composed
+    ComposeAssistantOutcome {
+        message: composed,
+        quality_gate,
+        planner_decision,
+    }
 }
 
 async fn read_artifact_as_string(path: &std::path::Path) -> Result<String, io::Error> {
@@ -2068,145 +2188,159 @@ async fn run_turn(
         thoughts: None,
         tool_results: Vec::new(),
     };
-    if input_modality == InteractionModality::Text && is_chat_only_prompt(&trusted_user_message) {
+    let chat_only_turn =
+        input_modality == InteractionModality::Text && is_chat_only_prompt(&trusted_user_message);
+    if chat_only_turn {
         aggregated_result.thoughts = Some("chat-only turn: no tools needed".to_string());
-    } else {
-        let mut planner_guidance: Option<PlannerGuidanceFrame> = None;
-        let mut consecutive_empty_steps = 0usize;
+    }
+    let mut planner_guidance: Option<PlannerGuidanceFrame> = None;
+    let mut consecutive_empty_steps = 0usize;
+    let mut planner_steps_taken = 0usize;
+    let mut compose_followup_cycles = 0usize;
+    let max_compose_followup_cycles = cfg.max_planner_steps.max(1);
 
-        for step_index in 0..cfg.max_planner_steps {
-            let step_result = match runtime
-                .orchestrate_planner_turn(PlannerRunRequest {
-                    run_id: run_id.clone(),
-                    cwd: cfg.runtime_cwd.clone(),
-                    user_message: trusted_user_message.clone(),
-                    allowed_tools: cfg.allowed_tools.clone(),
-                    previous_events: event_log.snapshot(),
-                    guidance: planner_guidance.clone(),
-                    control_value_refs: BTreeSet::new(),
-                    control_endorsed_by: None,
-                    unknown_mode: cfg.unknown_mode,
-                    uncertain_mode: cfg.uncertain_mode,
-                })
-                .await
-            {
-                Ok(result) => result,
-                Err(err) => {
-                    if let Err(log_err) =
-                        emit_assistant_error_message(event_log, &run_id, format!("error: {err}"))
-                            .await
-                    {
-                        eprintln!("failed to append assistant error conversation log: {log_err}");
+    let assistant_message = loop {
+        if !chat_only_turn {
+            while planner_steps_taken < cfg.max_planner_steps {
+                let step_number = planner_steps_taken + 1;
+                let step_result = match runtime
+                    .orchestrate_planner_turn(PlannerRunRequest {
+                        run_id: run_id.clone(),
+                        cwd: cfg.runtime_cwd.clone(),
+                        user_message: trusted_user_message.clone(),
+                        allowed_tools: cfg.allowed_tools.clone(),
+                        previous_events: event_log.snapshot(),
+                        guidance: planner_guidance.clone(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
+                        unknown_mode: cfg.unknown_mode,
+                        uncertain_mode: cfg.uncertain_mode,
+                    })
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(err) => {
+                        if let Err(log_err) = emit_assistant_error_message(
+                            event_log,
+                            &run_id,
+                            format!("error: {err}"),
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "failed to append assistant error conversation log: {log_err}"
+                            );
+                        }
+                        return Err(err.into());
                     }
-                    return Err(err.into());
+                };
+
+                planner_steps_taken = planner_steps_taken.saturating_add(1);
+                let step_tool_count = step_result.tool_results.len();
+                if step_tool_count == 0 {
+                    consecutive_empty_steps = consecutive_empty_steps.saturating_add(1);
+                } else {
+                    consecutive_empty_steps = 0;
                 }
-            };
+                if let Some(thoughts) = step_result.thoughts.clone() {
+                    aggregated_result.thoughts = Some(thoughts);
+                }
+                let step_results = step_result.tool_results;
+                aggregated_result.tool_results.extend(step_results.clone());
 
-            let step_tool_count = step_result.tool_results.len();
-            if step_tool_count == 0 {
-                consecutive_empty_steps = consecutive_empty_steps.saturating_add(1);
-            } else {
-                consecutive_empty_steps = 0;
-            }
-            if let Some(thoughts) = step_result.thoughts.clone() {
-                aggregated_result.thoughts = Some(thoughts);
-            }
-            let step_results = step_result.tool_results;
-            aggregated_result.tool_results.extend(step_results.clone());
-
-            let guidance_prompt = build_guidance_prompt(
-                &trusted_user_message,
-                step_index + 1,
-                cfg.max_planner_steps,
-                &step_results,
-                aggregated_result.tool_results.len(),
-            );
-            let guidance_output = match guidance_model
-                .classify_guidance(PlannerGuidanceInput {
-                    run_id: run_id.clone(),
-                    prompt: guidance_prompt,
-                })
-                .await
-            {
-                Ok(output) => output,
-                Err(err) => {
-                    eprintln!(
-                        "guidance model failed for {} at step {}: {}",
-                        run_id.0,
-                        step_index + 1,
-                        err
-                    );
+                let guidance_prompt = build_guidance_prompt(
+                    &trusted_user_message,
+                    step_number,
+                    cfg.max_planner_steps,
+                    &step_results,
+                    aggregated_result.tool_results.len(),
+                );
+                let guidance_output = match guidance_model
+                    .classify_guidance(PlannerGuidanceInput {
+                        run_id: run_id.clone(),
+                        prompt: guidance_prompt,
+                    })
+                    .await
+                {
+                    Ok(output) => output,
+                    Err(err) => {
+                        eprintln!(
+                            "guidance model failed for {} at step {}: {}",
+                            run_id.0, step_number, err
+                        );
+                        append_turn_controller_event(
+                            &cfg.sieve_home,
+                            &run_id,
+                            "planner_guidance_error",
+                            serde_json::json!({
+                                "step_number": step_number,
+                                "planner_steps_taken": planner_steps_taken,
+                            }),
+                        )
+                        .await;
+                        break;
+                    }
+                };
+                let signal = match guidance_output.guidance.signal() {
+                    Ok(signal) => signal,
+                    Err(err) => {
+                        eprintln!(
+                            "invalid guidance signal for {} at step {}: {}",
+                            run_id.0, step_number, err
+                        );
+                        append_turn_controller_event(
+                            &cfg.sieve_home,
+                            &run_id,
+                            "planner_guidance_invalid",
+                            serde_json::json!({
+                                "step_number": step_number,
+                                "planner_steps_taken": planner_steps_taken,
+                            }),
+                        )
+                        .await;
+                        break;
+                    }
+                };
+                let should_continue = guidance_requests_continue(signal)
+                    && planner_steps_taken < cfg.max_planner_steps
+                    && consecutive_empty_steps < 2;
+                append_turn_controller_event(
+                    &cfg.sieve_home,
+                    &run_id,
+                    "planner_guidance",
+                    serde_json::json!({
+                        "step_number": step_number,
+                        "signal_code": signal.code(),
+                        "continue": should_continue,
+                        "step_tool_count": step_tool_count,
+                        "planner_steps_taken": planner_steps_taken,
+                        "consecutive_empty_steps": consecutive_empty_steps,
+                    }),
+                )
+                .await;
+                planner_guidance = Some(guidance_output.guidance);
+                if !should_continue {
                     break;
                 }
-            };
-            let signal = match guidance_output.guidance.signal() {
-                Ok(signal) => signal,
-                Err(err) => {
-                    eprintln!(
-                        "invalid guidance signal for {} at step {}: {}",
-                        run_id.0,
-                        step_index + 1,
-                        err
-                    );
-                    break;
-                }
-            };
-            if !guidance_requests_continue(signal) {
-                break;
             }
-            if step_index + 1 >= cfg.max_planner_steps {
-                break;
-            }
-            if consecutive_empty_steps >= 2 {
-                break;
-            }
-            planner_guidance = Some(guidance_output.guidance);
         }
-    }
-    let result = aggregated_result;
 
-    let (mut response_input, mut render_refs) =
-        build_response_turn_input(&run_id, &trusted_user_message, &result);
-    if let Err(err) = persist_web_search_render_refs_as_artifacts(
-        &run_id,
-        &response_input,
-        &mut render_refs,
-        &cfg.sieve_home.join("artifacts"),
-    )
-    .await
-    {
-        eprintln!(
-            "failed to persist web-search refs for {}: {}",
-            run_id.0, err
-        );
-    }
-    let mut response_output = match response_model
-        .write_turn_response(response_input.clone())
+        let (mut response_input, mut render_refs) =
+            build_response_turn_input(&run_id, &trusted_user_message, &aggregated_result);
+        if let Err(err) = persist_web_search_render_refs_as_artifacts(
+            &run_id,
+            &response_input,
+            &mut render_refs,
+            &cfg.sieve_home.join("artifacts"),
+        )
         .await
-    {
-        Ok(response) => response,
-        Err(err) => {
-            if let Err(log_err) =
-                emit_assistant_error_message(event_log, &run_id, format!("error: {err}")).await
-            {
-                eprintln!("failed to append assistant error conversation log: {log_err}");
-            }
-            return Err(err.into());
+        {
+            eprintln!(
+                "failed to persist web-search refs for {}: {}",
+                run_id.0, err
+            );
         }
-    };
-
-    if requires_output_visibility(&response_input)
-        && !response_has_visible_selected_output(&response_input, &response_output)
-    {
-        // One regeneration pass: enforce that non-empty output refs are either shown raw
-        // or summarized by Q-LLM, without exposing untrusted strings to the model.
-        let diagnostics = "Non-empty output refs exist (stdout/stderr/web search). Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
-        response_input.planner_thoughts = Some(match response_input.planner_thoughts.take() {
-            Some(existing) if !existing.trim().is_empty() => format!("{existing}\n{diagnostics}"),
-            _ => diagnostics.to_string(),
-        });
-
-        response_output = match response_model
+        let mut response_output = match response_model
             .write_turn_response(response_input.clone())
             .await
         {
@@ -2221,45 +2355,126 @@ async fn run_turn(
             }
         };
 
-        if !response_has_visible_selected_output(&response_input, &response_output) {
-            if let Some(fallback_ref_id) =
-                non_empty_output_ref_ids(&response_input).into_iter().next()
+        if requires_output_visibility(&response_input)
+            && !response_has_visible_selected_output(&response_input, &response_output)
+        {
+            // One regeneration pass: enforce that non-empty output refs are either shown raw
+            // or summarized by Q-LLM, without exposing untrusted strings to the model.
+            let diagnostics = "Non-empty output refs exist (stdout/stderr/web search). Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
+            response_input.planner_thoughts = Some(match response_input.planner_thoughts.take() {
+                Some(existing) if !existing.trim().is_empty() => {
+                    format!("{existing}\n{diagnostics}")
+                }
+                _ => diagnostics.to_string(),
+            });
+
+            response_output = match response_model
+                .write_turn_response(response_input.clone())
+                .await
             {
-                response_output
-                    .summarized_ref_ids
-                    .insert(fallback_ref_id.clone());
-                let token = format!("[[summary:{fallback_ref_id}]]");
-                if !response_output.message.contains(&token) {
-                    let base = response_output.message.trim();
-                    response_output.message = if base.is_empty() {
-                        token
-                    } else {
-                        format!("{base}\n{token}")
-                    };
+                Ok(response) => response,
+                Err(err) => {
+                    if let Err(log_err) =
+                        emit_assistant_error_message(event_log, &run_id, format!("error: {err}"))
+                            .await
+                    {
+                        eprintln!("failed to append assistant error conversation log: {log_err}");
+                    }
+                    return Err(err.into());
+                }
+            };
+
+            if !response_has_visible_selected_output(&response_input, &response_output) {
+                if let Some(fallback_ref_id) =
+                    non_empty_output_ref_ids(&response_input).into_iter().next()
+                {
+                    response_output
+                        .summarized_ref_ids
+                        .insert(fallback_ref_id.clone());
+                    let token = format!("[[summary:{fallback_ref_id}]]");
+                    if !response_output.message.contains(&token) {
+                        let base = response_output.message.trim();
+                        response_output.message = if base.is_empty() {
+                            token
+                        } else {
+                            format!("{base}\n{token}")
+                        };
+                    }
                 }
             }
         }
-    }
 
-    let assistant_message = render_assistant_message(
-        &response_output.message,
-        &response_output.referenced_ref_ids,
-        &response_output.summarized_ref_ids,
-        &render_refs,
-        summary_model,
-        &run_id,
-    )
-    .await;
-    let assistant_message = compose_assistant_message(
-        summary_model,
-        &cfg.sieve_home,
-        &run_id,
-        &trusted_user_message,
-        &response_input,
-        &render_refs,
-        assistant_message,
-    )
-    .await;
+        let rendered_message = render_assistant_message(
+            &response_output.message,
+            &response_output.referenced_ref_ids,
+            &response_output.summarized_ref_ids,
+            &render_refs,
+            summary_model,
+            &run_id,
+        )
+        .await;
+
+        let composed = if chat_only_turn {
+            ComposeAssistantOutcome {
+                message: rendered_message,
+                quality_gate: None,
+                planner_decision: ComposePlannerDecision::Finalize,
+            }
+        } else {
+            compose_assistant_message(
+                summary_model,
+                &cfg.sieve_home,
+                &run_id,
+                &trusted_user_message,
+                &response_input,
+                &render_refs,
+                rendered_message,
+            )
+            .await
+        };
+
+        if let ComposePlannerDecision::Continue(signal) = composed.planner_decision {
+            let can_continue = !chat_only_turn
+                && planner_steps_taken < cfg.max_planner_steps
+                && compose_followup_cycles < max_compose_followup_cycles;
+            append_turn_controller_event(
+                &cfg.sieve_home,
+                &run_id,
+                "compose_decision",
+                serde_json::json!({
+                    "planner_decision_code": signal.code(),
+                    "quality_gate_len": composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
+                    "planner_steps_taken": planner_steps_taken,
+                    "compose_followup_cycles": compose_followup_cycles,
+                    "continue": can_continue,
+                }),
+            )
+            .await;
+            if can_continue {
+                compose_followup_cycles = compose_followup_cycles.saturating_add(1);
+                planner_guidance = Some(PlannerGuidanceFrame {
+                    code: signal.code(),
+                    confidence_bps: 9_000,
+                    source_hit_index: None,
+                    evidence_ref_index: None,
+                });
+                continue;
+            }
+        }
+
+        append_turn_controller_event(
+            &cfg.sieve_home,
+            &run_id,
+            "turn_finalize",
+            serde_json::json!({
+                "planner_steps_taken": planner_steps_taken,
+                "compose_followup_cycles": compose_followup_cycles,
+                "quality_gate_len": composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
+            }),
+        )
+        .await;
+        break composed.message;
+    };
     println!("{}: {}", run_id.0, assistant_message);
 
     let mut delivered_audio = false;
@@ -3358,7 +3573,7 @@ require_trusted_control_for_mutating = true
         );
 
         harness
-            .run_text_turn("Hi how are you?")
+            .run_text_turn("Reply directly to this greeting: Hi how are you?")
             .await
             .expect("meta compose retry turn should succeed");
 
@@ -3367,6 +3582,101 @@ require_trusted_control_for_mutating = true
         assert!(
             assistant[0].starts_with("I'm doing well"),
             "compose retry should replace third-person meta narration"
+        );
+    }
+
+    #[tokio::test]
+    async fn e2e_fake_compose_followup_continues_planner_after_insufficient_evidence() {
+        let mut first_args = BTreeMap::new();
+        first_args.insert(
+            "query".to_string(),
+            serde_json::json!("current weather livermore now"),
+        );
+        first_args.insert("count".to_string(), serde_json::json!(1));
+        let mut second_args = BTreeMap::new();
+        second_args.insert(
+            "query".to_string(),
+            serde_json::json!("current temperature livermore station"),
+        );
+        second_args.insert("count".to_string(), serde_json::json!(1));
+
+        let planner = Arc::new(QueuedPlannerModel::new(vec![
+            Ok(PlannerTurnOutput {
+                thoughts: Some("first search".to_string()),
+                tool_calls: vec![PlannerToolCall {
+                    tool_name: "brave_search".to_string(),
+                    args: first_args,
+                }],
+            }),
+            Ok(PlannerTurnOutput {
+                thoughts: Some("second search".to_string()),
+                tool_calls: vec![PlannerToolCall {
+                    tool_name: "brave_search".to_string(),
+                    args: second_args,
+                }],
+            }),
+        ]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![
+            Ok(guidance_output(
+                PlannerGuidanceSignal::FinalInsufficientEvidence,
+            )),
+            Ok(guidance_output(PlannerGuidanceSignal::FinalAnswerReady)),
+        ]));
+        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![
+            Ok(sieve_llm::ResponseTurnOutput {
+                message: "first raw: [[ref:web-search:1-1]]".to_string(),
+                referenced_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
+                summarized_ref_ids: BTreeSet::new(),
+            }),
+            Ok(sieve_llm::ResponseTurnOutput {
+                message: "second raw: [[ref:web-search:1-2]]".to_string(),
+                referenced_ref_ids: BTreeSet::from(["web-search:1-2".to_string()]),
+                summarized_ref_ids: BTreeSet::new(),
+            }),
+        ]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
+            Ok("first pass answer".to_string()),
+            Ok("REVISE: doesn't directly answer; more evidence is needed.".to_string()),
+            Ok("still incomplete answer".to_string()),
+            Ok("REVISE: insufficient evidence remains; gather another source.".to_string()),
+            Ok("second pass answer with concrete info".to_string()),
+            Ok("PASS".to_string()),
+        ]));
+        let web_search = Arc::new(RecordingWebSearchRunner::new(
+            DEFAULT_BRAVE_API_BASE,
+            vec![BraveSearchResult {
+                title: "Result".to_string(),
+                url: "https://example.com/weather".to_string(),
+                description: Some("Sample weather source".to_string()),
+            }],
+        ));
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner: planner.clone(),
+                guidance,
+                response,
+                summary,
+            },
+            web_search.clone(),
+            vec!["brave_search".to_string()],
+            E2E_POLICY_ALLOW_BRAVE,
+        );
+
+        harness
+            .run_text_turn("What is the weather right now in Livermore?")
+            .await
+            .expect("compose followup turn should succeed");
+
+        assert_eq!(
+            planner.call_count(),
+            2,
+            "compose followup should request another planner cycle"
+        );
+        assert_eq!(web_search.requests().len(), 2);
+        let assistant = assistant_messages(&harness.runtime_events());
+        assert_eq!(
+            assistant,
+            vec!["second pass answer with concrete info".to_string()]
         );
     }
 
@@ -4005,6 +4315,46 @@ require_trusted_control_for_mutating = true
     }
 
     #[test]
+    fn compose_quality_retry_treats_verbose_pass_as_pass() {
+        let composed = "Here is a direct answer.";
+        let gate = Some("Quality gate verdict: PASS because the answer is direct.");
+        assert!(compose_quality_requires_retry(composed, gate).is_none());
+    }
+
+    #[test]
+    fn compose_quality_followup_only_triggers_for_missing_evidence() {
+        let with_refs = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "weather".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "brave_search".to_string(),
+                outcome: "executed".to_string(),
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "web-search-1".to_string(),
+                    kind: "web_search_results_json".to_string(),
+                    byte_count: 64,
+                    line_count: 1,
+                }],
+            }],
+        };
+        let signal = compose_quality_followup_signal(
+            Some("REVISE: doesn't directly answer and is missing evidence."),
+            &with_refs,
+        );
+        assert_eq!(
+            signal,
+            Some(PlannerGuidanceSignal::ContinueFetchAdditionalSource)
+        );
+
+        let style_signal = compose_quality_followup_signal(
+            Some("REVISE: third-person meta narration."),
+            &with_refs,
+        );
+        assert!(style_signal.is_none());
+    }
+
+    #[test]
     fn enforce_link_policy_appends_plain_urls_when_link_claim_has_no_url() {
         let message = "For more information, visit the provided link.".to_string();
         let enforced = enforce_link_policy(
@@ -4138,6 +4488,7 @@ require_trusted_control_for_mutating = true
     fn chat_only_prompt_detection_covers_basic_small_talk() {
         assert!(is_chat_only_prompt("Hi how are you?"));
         assert!(is_chat_only_prompt("Can you hear me"));
+        assert!(is_chat_only_prompt("Hi can you hear me? How are you?"));
         assert!(is_chat_only_prompt("what's your name"));
         assert!(!is_chat_only_prompt(
             "What is the weather in Livermore ca going to be like tomorrow"

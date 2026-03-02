@@ -51,6 +51,7 @@ Not in MVP:
 36. Retention/redaction are future work.
 37. `endorse` and `declassify` are explicit tools.
 38. Q-LLM guidance classification is integrated in the planner act-observe loop for MVP turns.
+39. Compose quality can request additional planner/tool cycles only through typed guidance signals (no free-form diagnostics to planner).
 
 ## 3. Data model
 
@@ -242,6 +243,11 @@ Runtime + conversation events (JSONL) under `~/.sieve/logs/runtime-events.jsonl`
 - approval outcome
 - trace path
 - stdout/stderr metadata if captured
+
+Controller audit events (JSONL) under `~/.sieve/logs/turn-controller-events.jsonl` include:
+- planner guidance signals per step
+- compose follow-up decisions (`finalize` vs typed `continue`)
+- bounded retry/finalization decisions
 
 ## 11. Agent prompt constraints
 Use companion file:

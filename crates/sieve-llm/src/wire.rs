@@ -22,6 +22,8 @@ Rules:
 pub(crate) const GUIDANCE_SYSTEM_PROMPT: &str = r#"Classify planner next-step guidance using numeric typed signals only.
 Rules:
 - Return JSON only matching schema.
+- Prefer continue codes (100-103) when additional tool actions may still recover missing facts.
+- Use final/stop codes only when further tool actions are unlikely to improve the answer.
 - `guidance.code` must be one of:
   - 100 continue_need_evidence
   - 101 continue_fetch_primary_source
