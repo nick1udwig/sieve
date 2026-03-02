@@ -23,6 +23,7 @@ Inspired by:
    - optional: `SIEVE_HOME` (defaults to `~/.sieve`)
    - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
    - optional: `SIEVE_MAX_PLANNER_STEPS` (defaults to `3`)
+   - optional: `SIEVE_LLM_EXCHANGE_LOG_PATH` (exact OpenAI request/response JSONL; defaults to `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl`)
    - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
    - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to planner model when unset)
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
@@ -83,6 +84,9 @@ Telegram 409 troubleshooting:
 
 Runtime JSONL logs now include both runtime events and conversation records, defaulting to
 `$SIEVE_HOME/logs/runtime-events.jsonl` (same base dir as trace logs).
+LLM provider wire logs are also written by default to
+`$SIEVE_HOME/logs/llm-provider-exchanges.jsonl`, containing exact request JSON payloads and raw
+response bodies per attempt.
 Turns run in a planner act-observe loop bounded by `SIEVE_MAX_PLANNER_STEPS`, with typed
 Q-LLM guidance signals controlling whether to continue tool actions or finalize. Planner never sees
 raw untrusted stdout/stderr strings.

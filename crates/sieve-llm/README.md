@@ -16,6 +16,10 @@ Guidance config env:
 - `SIEVE_GUIDANCE_API_BASE` (optional)
 - `SIEVE_GUIDANCE_OPENAI_API_KEY` (optional; falls back to `SIEVE_PLANNER_OPENAI_API_KEY` then `OPENAI_API_KEY`)
 
+LLM exchange logging env:
+- `SIEVE_LLM_EXCHANGE_LOG_PATH` (optional JSONL file path)
+- default when unset: `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl` (or `$HOME/.sieve/logs/...`)
+
 ## Guarantees
 
 - Planner input boundary: only trusted user message + constrained metadata shape.
@@ -23,6 +27,7 @@ Guidance config env:
 - On planner tool-arg contract failure, one regeneration pass is attempted with structured diagnostics.
 - Q-LLM -> planner boundary: typed numeric guidance signals only (`PlannerGuidanceSignal` + `PlannerGuidanceFrame`).
 - No free-form strings cross from guidance model into planner context.
+- OpenAI wire logs persist exact request JSON payloads and raw response bodies per attempt.
 
 ## Live smoke test
 

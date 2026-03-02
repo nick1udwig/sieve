@@ -20,8 +20,11 @@ use sieve_types::{
     LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerTurnInput,
     PlannerTurnOutput, ToolContractValidationReport,
 };
+use std::fs::{create_dir_all, OpenOptions};
 use std::future::Future;
-use std::time::Duration;
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const OPENAI_DEFAULT_API_BASE: &str = "https://api.openai.com";
 const HTTP_TIMEOUT_SECONDS: u64 = 30;
@@ -35,6 +38,7 @@ struct OpenAiClient {
     api_base: String,
     max_retries: usize,
     retry_backoff: Duration,
+    exchange_logger: LlmExchangeLogger,
 }
 
 impl OpenAiClient {
@@ -49,6 +53,7 @@ impl OpenAiClient {
             api_base: api_base.unwrap_or_else(|| OPENAI_DEFAULT_API_BASE.to_string()),
             max_retries: DEFAULT_MAX_RETRIES,
             retry_backoff: Duration::from_millis(DEFAULT_RETRY_BACKOFF_MS),
+            exchange_logger: LlmExchangeLogger::from_env(),
         })
     }
 
@@ -59,6 +64,7 @@ impl OpenAiClient {
         );
         let mut attempt = 0usize;
         loop {
+            let attempt_number = attempt + 1;
             let request = self
                 .http
                 .post(&endpoint)
@@ -72,6 +78,13 @@ impl OpenAiClient {
                     let body = resp.text().await.map_err(|e| {
                         LlmError::Transport(format!("failed reading OpenAI response body: {e}"))
                     })?;
+                    self.exchange_logger.log_http(
+                        &endpoint,
+                        &payload,
+                        attempt_number,
+                        status.as_u16(),
+                        &body,
+                    );
 
                     if status.is_success() {
                         return serde_json::from_str::<Value>(&body).map_err(|e| {
@@ -92,6 +105,12 @@ impl OpenAiClient {
                 }
                 Err(err) => {
                     let retryable = err.is_timeout() || err.is_connect();
+                    self.exchange_logger.log_transport_error(
+                        &endpoint,
+                        &payload,
+                        attempt_number,
+                        &err.to_string(),
+                    );
                     if retryable && attempt < self.max_retries {
                         attempt += 1;
                         tokio::time::sleep(backoff(self.retry_backoff, attempt)).await;
@@ -107,6 +126,127 @@ impl OpenAiClient {
             }
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct LlmExchangeLogger {
+    path: Option<PathBuf>,
+}
+
+impl LlmExchangeLogger {
+    fn with_path(path: Option<PathBuf>) -> Self {
+        Self { path }
+    }
+
+    fn from_env() -> Self {
+        if let Some(explicit) = std::env::var("SIEVE_LLM_EXCHANGE_LOG_PATH")
+            .ok()
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+        {
+            return Self::with_path(Some(PathBuf::from(explicit)));
+        }
+
+        let sieve_home = std::env::var("SIEVE_HOME")
+            .ok()
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|raw| raw.trim().to_string())
+                    .filter(|raw| !raw.is_empty())
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".sieve"))
+            });
+
+        let default_path = sieve_home.map(|home| home.join("logs/llm-provider-exchanges.jsonl"));
+        Self::with_path(default_path)
+    }
+
+    fn log_http(
+        &self,
+        endpoint: &str,
+        request_json: &Value,
+        attempt: usize,
+        status: u16,
+        response_body: &str,
+    ) {
+        let event = json!({
+            "event": "llm_provider_exchange",
+            "schema_version": 1,
+            "provider": "openai",
+            "created_at_ms": now_ms(),
+            "endpoint": endpoint,
+            "attempt": attempt,
+            "request_json": request_json,
+            "response_status": status,
+            "response_body": response_body,
+        });
+        self.append(event);
+    }
+
+    fn log_transport_error(
+        &self,
+        endpoint: &str,
+        request_json: &Value,
+        attempt: usize,
+        error: &str,
+    ) {
+        let event = json!({
+            "event": "llm_provider_exchange",
+            "schema_version": 1,
+            "provider": "openai",
+            "created_at_ms": now_ms(),
+            "endpoint": endpoint,
+            "attempt": attempt,
+            "request_json": request_json,
+            "transport_error": error,
+        });
+        self.append(event);
+    }
+
+    fn append(&self, event: Value) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            if let Err(err) = create_dir_all(parent) {
+                eprintln!(
+                    "sieve-llm exchange logger failed creating {}: {}",
+                    parent.display(),
+                    err
+                );
+                return;
+            }
+        }
+        let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+            eprintln!(
+                "sieve-llm exchange logger failed opening {}",
+                path.display()
+            );
+            return;
+        };
+        let Ok(line) = serde_json::to_string(&event) else {
+            eprintln!("sieve-llm exchange logger failed serializing event");
+            return;
+        };
+        if let Err(err) = writeln!(file, "{line}") {
+            eprintln!(
+                "sieve-llm exchange logger failed writing {}: {}",
+                path.display(),
+                err
+            );
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 pub struct OpenAiPlannerModel {
@@ -504,7 +644,10 @@ fn truncate_for_error(input: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn planner_native_tool_response(tool_calls: Value) -> Value {
         json!({
@@ -517,6 +660,76 @@ mod tests {
                 }
             ]
         })
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("sieve-llm-{name}-{nanos}.jsonl"))
+    }
+
+    #[test]
+    fn exchange_logger_writes_http_event_with_exact_payloads() {
+        let path = unique_temp_path("exchange-http");
+        let logger = LlmExchangeLogger::with_path(Some(path.clone()));
+        let request_json = json!({
+            "model": "gpt-4o-mini",
+            "messages": [{"role":"user","content":"hi"}]
+        });
+        let response_body = "{\"id\":\"resp_1\",\"choices\":[]}";
+
+        logger.log_http(
+            "https://api.openai.com/v1/chat/completions",
+            &request_json,
+            1,
+            200,
+            response_body,
+        );
+
+        let body = fs::read_to_string(&path).expect("read exchange log");
+        let line = body.lines().next().expect("one log line");
+        let record: Value = serde_json::from_str(line).expect("parse record json");
+        assert_eq!(record["event"], "llm_provider_exchange");
+        assert_eq!(
+            record["endpoint"],
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(record["attempt"], 1);
+        assert_eq!(record["response_status"], 200);
+        assert_eq!(record["request_json"], request_json);
+        assert_eq!(record["response_body"], response_body);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn exchange_logger_writes_transport_error_event() {
+        let path = unique_temp_path("exchange-transport");
+        let logger = LlmExchangeLogger::with_path(Some(path.clone()));
+        let request_json = json!({
+            "model": "gpt-4o-mini",
+            "messages": [{"role":"user","content":"hello"}]
+        });
+
+        logger.log_transport_error(
+            "https://api.openai.com/v1/chat/completions",
+            &request_json,
+            2,
+            "connection reset",
+        );
+
+        let body = fs::read_to_string(&path).expect("read exchange log");
+        let line = body.lines().next().expect("one log line");
+        let record: Value = serde_json::from_str(line).expect("parse record json");
+        assert_eq!(record["event"], "llm_provider_exchange");
+        assert_eq!(record["attempt"], 2);
+        assert_eq!(record["request_json"], request_json);
+        assert_eq!(record["transport_error"], "connection reset");
+        assert!(record.get("response_body").is_none());
+
+        let _ = fs::remove_file(path);
     }
 
     #[tokio::test]
