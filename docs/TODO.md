@@ -16,12 +16,12 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 
 ## Unclaimed
 
-- [ ] `AA` Telegram Full-Flow Harness (Mock Long-Poll + Outbound Assertions)
-: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: implement a full app/adapter harness that mocks Telegram `getUpdates`, injects user messages, and asserts outbound `sendMessage`/typing behavior through the real flow. Include deterministic and env-gated live cases from [telegram-fullflow-harness-plan.md](/root/git/sieve-v3/docs/telegram-fullflow-harness-plan.md), specifically greeting + `weather in dublin ireland today` + `weather in dublin ireland tomorrow`.
-
 ## Claimed
 
 ## Done
+
+- [x] `AA` Telegram Full-Flow Harness (Mock Long-Poll + Outbound Assertions)
+: Owner: `codex` | Branch: `master` | PR: `pending` | Scope: added app-level Telegram full-flow harness that injects mock `getUpdates` messages, routes through `TelegramAdapter` + `RuntimeBridge` ingress, executes real turn logic, and forwards fanout runtime/typing events back through adapter egress assertions (`sendMessage` + `typing`). Includes deterministic greeting + weather tests and env-gated live cases for greeting + `weather in dublin ireland today` + `weather in dublin ireland tomorrow`.
 
 - [x] `AB` Complete CLI Search Migration (Remove Dedicated `brave_search` Tool Path)
 : Owner: `codex` | Branch: `master` | PR: `2045452` | Scope: fully removed dedicated `brave_search` contracts/types/runtime/app paths; kept only backward-compatible filtering in `parse_allowed_tools`; updated tests and docs for bash/CLI-driven search.

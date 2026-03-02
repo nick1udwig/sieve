@@ -1,5 +1,7 @@
 # Telegram Full-Flow Harness Plan
 
+Status: Implemented in `crates/sieve-app/src/main.rs` test harness (`AppE2eHarness::run_telegram_text_turn`) with deterministic and env-gated live coverage.
+
 ## Goal
 Build a test harness that exercises the real `sieve-app` Telegram turn loop end-to-end without a human in the loop, including ingress via long-poll updates and egress via Telegram reply APIs.
 

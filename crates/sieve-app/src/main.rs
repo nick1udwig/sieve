@@ -2437,17 +2437,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use serde_json::Value;
+    use sieve_interface_telegram::{
+        TelegramAdapter as TestTelegramAdapter, TelegramAdapterConfig, TelegramLongPoll,
+        TelegramMessage as TestTelegramMessage, TelegramUpdate as TestTelegramUpdate,
+    };
     use sieve_llm::{GuidanceModel, LlmError, PlannerModel};
     use sieve_runtime::ApprovalBus;
     use sieve_types::{
         ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CommandSegment, LlmModelConfig,
         LlmProvider, PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceOutput,
-        PlannerGuidanceSignal, PlannerTurnInput, PlannerTurnOutput, PolicyDecision,
-        PolicyDecisionKind, PolicyEvaluatedEvent, Resource,
+        PlannerGuidanceSignal, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput,
+        PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, Resource,
     };
     use std::collections::VecDeque;
     use std::path::Path;
+    use std::sync::mpsc::TryRecvError;
     use std::sync::{Mutex as StdMutex, OnceLock};
+    use tokio::time::{timeout, Duration};
 
     fn env_test_lock() -> &'static StdMutex<()> {
         static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
@@ -2494,6 +2500,46 @@ mod tests {
                 "summary(bytes={},lines={})",
                 request.byte_count, request.line_count
             ))
+        }
+    }
+
+    struct PassThroughSummaryModel;
+
+    #[async_trait]
+    impl SummaryModel for PassThroughSummaryModel {
+        fn config(&self) -> &sieve_types::LlmModelConfig {
+            static CONFIG: OnceLock<sieve_types::LlmModelConfig> = OnceLock::new();
+            CONFIG.get_or_init(|| sieve_types::LlmModelConfig {
+                provider: sieve_types::LlmProvider::OpenAi,
+                model: "summary-pass-through-test".to_string(),
+                api_base: None,
+            })
+        }
+
+        async fn summarize_ref(&self, request: SummaryRequest) -> Result<String, LlmError> {
+            if request.ref_id.starts_with("assistant-compose-quality:") {
+                return Ok("PASS".to_string());
+            }
+            if request.ref_id.starts_with("assistant-compose:")
+                || request.ref_id.starts_with("assistant-compose-retry:")
+            {
+                if let Ok(payload) = serde_json::from_str::<Value>(&request.content) {
+                    if let Some(draft) = payload
+                        .get("assistant_draft_message")
+                        .and_then(Value::as_str)
+                    {
+                        return Ok(draft.to_string());
+                    }
+                    if let Some(previous) = payload
+                        .get("previous_composed_message")
+                        .and_then(Value::as_str)
+                    {
+                        return Ok(previous.to_string());
+                    }
+                }
+                return Ok(String::new());
+            }
+            Ok(request.content)
         }
     }
 
@@ -2681,6 +2727,49 @@ require_trusted_control_for_mutating = true
         }
     }
 
+    struct FirstStdoutSummaryResponseModel {
+        config: LlmModelConfig,
+    }
+
+    impl FirstStdoutSummaryResponseModel {
+        fn new() -> Self {
+            Self {
+                config: LlmModelConfig {
+                    provider: LlmProvider::OpenAi,
+                    model: "response-first-stdout-test".to_string(),
+                    api_base: None,
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ResponseModel for FirstStdoutSummaryResponseModel {
+        fn config(&self) -> &LlmModelConfig {
+            &self.config
+        }
+
+        async fn write_turn_response(
+            &self,
+            input: ResponseTurnInput,
+        ) -> Result<sieve_llm::ResponseTurnOutput, LlmError> {
+            let stdout_ref = input
+                .tool_outcomes
+                .iter()
+                .flat_map(|outcome| outcome.refs.iter())
+                .find(|metadata| metadata.kind == "stdout" && metadata.byte_count > 0)
+                .map(|metadata| metadata.ref_id.clone())
+                .ok_or_else(|| {
+                    LlmError::Backend("missing stdout ref for response rendering".to_string())
+                })?;
+            Ok(sieve_llm::ResponseTurnOutput {
+                message: format!("[[summary:{stdout_ref}]]"),
+                referenced_ref_ids: BTreeSet::new(),
+                summarized_ref_ids: BTreeSet::from([stdout_ref]),
+            })
+        }
+    }
+
     enum E2eModelMode {
         Fake {
             planner: Arc<dyn PlannerModel>,
@@ -2691,16 +2780,91 @@ require_trusted_control_for_mutating = true
         RealOpenAi,
     }
 
+    #[derive(Clone, Default)]
+    struct SharedTelegramPoller {
+        updates: Arc<StdMutex<VecDeque<Vec<TestTelegramUpdate>>>>,
+        sent_messages: Arc<StdMutex<Vec<(i64, String)>>>,
+        sent_chat_actions: Arc<StdMutex<Vec<(i64, String)>>>,
+        next_message_id: Arc<StdMutex<i64>>,
+    }
+
+    impl SharedTelegramPoller {
+        fn push_updates(&self, updates: Vec<TestTelegramUpdate>) {
+            self.updates
+                .lock()
+                .expect("telegram updates mutex poisoned")
+                .push_back(updates);
+        }
+
+        fn sent_messages(&self) -> Vec<(i64, String)> {
+            self.sent_messages
+                .lock()
+                .expect("telegram sent messages mutex poisoned")
+                .clone()
+        }
+
+        fn sent_chat_actions(&self) -> Vec<(i64, String)> {
+            self.sent_chat_actions
+                .lock()
+                .expect("telegram sent chat actions mutex poisoned")
+                .clone()
+        }
+    }
+
+    impl TelegramLongPoll for SharedTelegramPoller {
+        fn get_updates(
+            &mut self,
+            _offset: Option<i64>,
+            _timeout_secs: u16,
+        ) -> Result<Vec<TestTelegramUpdate>, String> {
+            Ok(self
+                .updates
+                .lock()
+                .expect("telegram updates mutex poisoned")
+                .pop_front()
+                .unwrap_or_default())
+        }
+
+        fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String> {
+            self.sent_messages
+                .lock()
+                .expect("telegram sent messages mutex poisoned")
+                .push((chat_id, text.to_string()));
+            let mut next_message_id = self
+                .next_message_id
+                .lock()
+                .expect("telegram next message id mutex poisoned");
+            let message_id = *next_message_id;
+            *next_message_id += 1;
+            Ok(Some(message_id))
+        }
+
+        fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {
+            self.sent_chat_actions
+                .lock()
+                .expect("telegram sent chat actions mutex poisoned")
+                .push((chat_id, action.to_string()));
+            Ok(())
+        }
+    }
+
+    struct TelegramFlowResult {
+        sent_messages: Vec<(i64, String)>,
+        sent_chat_actions: Vec<(i64, String)>,
+    }
+
     struct AppE2eHarness {
         runtime: Arc<RuntimeOrchestrator>,
+        approval_bus: Arc<InProcessApprovalBus>,
         guidance_model: Arc<dyn GuidanceModel>,
         response_model: Arc<dyn ResponseModel>,
         summary_model: Arc<dyn SummaryModel>,
         event_log: Arc<FanoutRuntimeEventLog>,
+        telegram_event_tx: Sender<TelegramLoopEvent>,
+        telegram_event_rx: StdMutex<Receiver<TelegramLoopEvent>>,
         cfg: AppConfig,
         next_run_index: AtomicU64,
         root: PathBuf,
-        _telegram_event_rx: Receiver<TelegramLoopEvent>,
     }
 
     impl Drop for AppE2eHarness {
@@ -2769,9 +2933,10 @@ require_trusted_control_for_mutating = true
                 TomlPolicyEngine::from_toml_str(policy_toml).expect("parse e2e harness policy");
             let (telegram_event_tx, telegram_event_rx) = mpsc::channel();
             let event_log = Arc::new(
-                FanoutRuntimeEventLog::new(event_log_path, telegram_event_tx)
+                FanoutRuntimeEventLog::new(event_log_path, telegram_event_tx.clone())
                     .expect("create e2e fanout event log"),
             );
+            let approval_bus = Arc::new(InProcessApprovalBus::new());
             let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
                 shell: Arc::new(BasicShellAnalyzer),
                 summaries: Arc::new(DefaultCommandSummarizer),
@@ -2779,21 +2944,23 @@ require_trusted_control_for_mutating = true
                 quarantine: Arc::new(BwrapQuarantineRunner::default()),
                 mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
                 planner,
-                approval_bus: Arc::new(InProcessApprovalBus::new()),
+                approval_bus: approval_bus.clone(),
                 event_log: event_log.clone(),
                 clock: Arc::new(RuntimeClock),
             }));
 
             Self {
                 runtime,
+                approval_bus,
                 guidance_model,
                 response_model,
                 summary_model,
                 event_log,
+                telegram_event_tx,
+                telegram_event_rx: StdMutex::new(telegram_event_rx),
                 cfg,
                 next_run_index: AtomicU64::new(1),
                 root,
-                _telegram_event_rx: telegram_event_rx,
             }
         }
 
@@ -2826,6 +2993,99 @@ require_trusted_control_for_mutating = true
             )
             .await
             .map_err(|err| err.to_string())
+        }
+
+        fn drain_telegram_events(
+            &self,
+            adapter: &mut TestTelegramAdapter<RuntimeBridge, SharedTelegramPoller, TelegramClock>,
+        ) -> Result<(), String> {
+            let receiver = self
+                .telegram_event_rx
+                .lock()
+                .expect("telegram event receiver mutex poisoned");
+            loop {
+                match receiver.try_recv() {
+                    Ok(TelegramLoopEvent::Runtime(event)) => {
+                        adapter.publish_runtime_event(event).map_err(|err| {
+                            format!("telegram publish runtime event failed: {err:?}")
+                        })?
+                    }
+                    Ok(TelegramLoopEvent::TypingStart { run_id }) => {
+                        adapter
+                            .start_typing(run_id)
+                            .map_err(|err| format!("telegram start typing failed: {err:?}"))?
+                    }
+                    Ok(TelegramLoopEvent::TypingStop { run_id }) => {
+                        adapter.stop_typing(&run_id);
+                    }
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+                }
+            }
+            Ok(())
+        }
+
+        async fn run_telegram_text_turn(&self, text: &str) -> Result<TelegramFlowResult, String> {
+            let poller = SharedTelegramPoller::default();
+            let (prompt_tx, mut prompt_rx) = tokio_mpsc::unbounded_channel();
+            let bridge = RuntimeBridge::with_prompt_tx(self.approval_bus.clone(), prompt_tx);
+            let mut adapter = TestTelegramAdapter::new(
+                TelegramAdapterConfig {
+                    chat_id: self.cfg.telegram_chat_id,
+                    poll_timeout_secs: self.cfg.telegram_poll_timeout_secs,
+                    allowed_sender_user_ids: self.cfg.telegram_allowed_sender_user_ids.clone(),
+                },
+                bridge,
+                poller.clone(),
+                TelegramClock,
+            );
+
+            poller.push_updates(vec![TestTelegramUpdate {
+                update_id: 1,
+                message: Some(TestTelegramMessage {
+                    chat_id: self.cfg.telegram_chat_id,
+                    sender_user_id: Some(1001),
+                    message_id: 1001,
+                    reply_to_message_id: None,
+                    text: text.to_string(),
+                }),
+                message_reaction: None,
+            }]);
+            adapter
+                .poll_once()
+                .map_err(|err| format!("telegram poll failed: {err:?}"))?;
+
+            let ingress = timeout(Duration::from_secs(1), prompt_rx.recv())
+                .await
+                .map_err(|_| "timed out waiting for telegram ingress prompt".to_string())?
+                .ok_or_else(|| "telegram ingress prompt channel closed".to_string())?;
+
+            let run_index = self.next_run_index.fetch_add(1, Ordering::Relaxed);
+            let typing_guard =
+                TypingGuard::start(self.telegram_event_tx.clone(), format!("run-{run_index}"))
+                    .map(Some)
+                    .unwrap_or(None);
+            run_turn(
+                &self.runtime,
+                self.guidance_model.as_ref(),
+                self.response_model.as_ref(),
+                self.summary_model.as_ref(),
+                &self.event_log,
+                &self.cfg,
+                run_index,
+                PromptSource::Telegram,
+                ingress.modality,
+                ingress.media_file_id,
+                ingress.text,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+            drop(typing_guard);
+
+            self.drain_telegram_events(&mut adapter)?;
+            Ok(TelegramFlowResult {
+                sent_messages: poller.sent_messages(),
+                sent_chat_actions: poller.sent_chat_actions(),
+            })
         }
 
         fn runtime_events(&self) -> Vec<RuntimeEvent> {
@@ -2892,6 +3152,29 @@ require_trusted_control_for_mutating = true
             .collect()
     }
 
+    fn message_contains_plain_url(message: &str) -> bool {
+        message.contains("https://") || message.contains("http://")
+    }
+
+    fn latest_telegram_message(flow: &TelegramFlowResult) -> Option<&str> {
+        flow.sent_messages
+            .last()
+            .map(|(_, message)| message.as_str())
+    }
+
+    fn message_has_weather_signal(message: &str) -> bool {
+        let lower = message.to_ascii_lowercase();
+        lower.contains("temp")
+            || lower.contains("temperature")
+            || lower.contains("°c")
+            || lower.contains("°f")
+            || lower.contains(" c ")
+            || lower.contains(" f ")
+            || lower.contains("rain")
+            || lower.contains("cloud")
+            || lower.contains("wind")
+    }
+
     #[tokio::test]
     async fn e2e_fake_greeting_uses_guided_zero_tool_turn_without_approval() {
         let planner_output = PlannerTurnOutput {
@@ -2951,6 +3234,127 @@ require_trusted_control_for_mutating = true
         assert!(
             assistant_errors_from_conversation(&records).is_empty(),
             "greeting flow should not emit assistant error conversation"
+        );
+    }
+
+    #[tokio::test]
+    async fn telegram_full_flow_greeting_polls_ingress_and_sends_chat_reply() {
+        let planner: Arc<dyn PlannerModel> =
+            Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+                thoughts: Some("chat only".to_string()),
+                tool_calls: Vec::new(),
+            })]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
+        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+            sieve_llm::ResponseTurnOutput {
+                message: "I'm doing well, thank you!".to_string(),
+                referenced_ref_ids: BTreeSet::new(),
+                summarized_ref_ids: BTreeSet::new(),
+            },
+        )]));
+        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                guidance,
+                response,
+                summary,
+            },
+            vec![
+                "bash".to_string(),
+                "endorse".to_string(),
+                "declassify".to_string(),
+            ],
+            E2E_POLICY_BASE,
+        );
+
+        let flow = harness
+            .run_telegram_text_turn("Hi how are you?")
+            .await
+            .expect("telegram full-flow greeting should succeed");
+
+        assert!(
+            flow.sent_messages
+                .iter()
+                .any(|(chat_id, message)| *chat_id == 42
+                    && message.contains("I'm doing well, thank you!")),
+            "assistant message should be sent via telegram sendMessage"
+        );
+        assert!(
+            flow.sent_chat_actions
+                .iter()
+                .any(|(chat_id, action)| *chat_id == 42 && action == "typing"),
+            "telegram typing action should be emitted during turn execution"
+        );
+        assert!(
+            !harness
+                .runtime_events()
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
+            "chat-only greeting should not dispatch tools"
+        );
+    }
+
+    #[tokio::test]
+    async fn telegram_full_flow_weather_runs_bash_and_sends_weather_text() {
+        let planner: Arc<dyn PlannerModel> = Arc::new(QueuedPlannerModel::new(vec![Ok(
+            PlannerTurnOutput {
+                thoughts: Some("fetch weather".to_string()),
+                tool_calls: vec![PlannerToolCall {
+                    tool_name: "bash".to_string(),
+                    args: BTreeMap::from([(
+                        "cmd".to_string(),
+                        serde_json::json!(
+                            "echo 'Dublin weather today: 12C and cloudy'; echo 'https://weather.example.test/dublin-today'"
+                        ),
+                    )]),
+                }],
+            },
+        )]));
+        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+        )]));
+        let response: Arc<dyn ResponseModel> = Arc::new(FirstStdoutSummaryResponseModel::new());
+        let summary: Arc<dyn SummaryModel> = Arc::new(PassThroughSummaryModel);
+        let harness = AppE2eHarness::new(
+            E2eModelMode::Fake {
+                planner,
+                guidance,
+                response,
+                summary,
+            },
+            vec!["bash".to_string()],
+            E2E_POLICY_BASE,
+        );
+
+        let flow = harness
+            .run_telegram_text_turn("weather in dublin ireland today")
+            .await
+            .expect("telegram full-flow weather should succeed");
+
+        assert!(
+            flow.sent_messages.iter().any(|(_, message)| {
+                let lower = message.to_ascii_lowercase();
+                lower.contains("dublin weather today")
+                    && lower.contains("12c")
+                    && message.contains("https://weather.example.test/dublin-today")
+            }),
+            "assistant telegram reply should include rendered weather result and source URL"
+        );
+        assert!(
+            flow.sent_chat_actions
+                .iter()
+                .any(|(chat_id, action)| *chat_id == 42 && action == "typing"),
+            "telegram typing action should be emitted during weather turn"
+        );
+        assert!(
+            harness
+                .runtime_events()
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
+            "weather request should exercise runtime tool/policy path"
         );
     }
 
@@ -3281,6 +3685,120 @@ require_trusted_control_for_mutating = true
         assert!(
             assistant_errors_from_conversation(&records).is_empty(),
             "live greeting must not produce assistant error conversation entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_telegram_full_flow_greeting_env_gated() {
+        let _guard = env_test_lock()
+            .lock()
+            .expect("live e2e env test lock poisoned");
+        let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]) else {
+            return;
+        };
+
+        let flow = harness
+            .run_telegram_text_turn("Hi how are you?")
+            .await
+            .expect("live telegram greeting should succeed");
+        let message =
+            latest_telegram_message(&flow).expect("live telegram greeting should send message");
+
+        assert!(
+            !message.trim().is_empty() && !message.starts_with("error:"),
+            "live telegram greeting must produce a non-error assistant reply"
+        );
+        assert!(
+            !obvious_meta_compose_pattern(message),
+            "live telegram greeting reply should be direct, not third-person meta"
+        );
+        assert!(
+            flow.sent_chat_actions
+                .iter()
+                .any(|(_, action)| action == "typing"),
+            "live telegram greeting should emit typing action"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_telegram_full_flow_weather_today_env_gated() {
+        let _guard = env_test_lock()
+            .lock()
+            .expect("live e2e env test lock poisoned");
+        let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]) else {
+            return;
+        };
+
+        let flow = harness
+            .run_telegram_text_turn("weather in dublin ireland today")
+            .await
+            .expect("live telegram weather today should succeed");
+        let message = latest_telegram_message(&flow)
+            .expect("live telegram weather today should send message");
+        let lower = message.to_ascii_lowercase();
+
+        assert!(
+            !message.starts_with("error:") && !obvious_meta_compose_pattern(message),
+            "live telegram weather today should produce direct non-error response"
+        );
+        assert!(
+            message_contains_plain_url(message),
+            "live telegram weather today response should include at least one plain URL"
+        );
+        assert!(
+            message_has_weather_signal(message),
+            "live telegram weather today response should include concrete weather signal"
+        );
+        assert!(
+            lower.contains("today") || lower.contains("current") || lower.contains("now"),
+            "live telegram weather today response should answer the requested timeframe"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_telegram_full_flow_weather_tomorrow_env_gated() {
+        let _guard = env_test_lock()
+            .lock()
+            .expect("live e2e env test lock poisoned");
+        let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]) else {
+            return;
+        };
+
+        let flow = harness
+            .run_telegram_text_turn("weather in dublin ireland tomorrow")
+            .await
+            .expect("live telegram weather tomorrow should succeed");
+        let message = latest_telegram_message(&flow)
+            .expect("live telegram weather tomorrow should send message");
+        let lower = message.to_ascii_lowercase();
+
+        assert!(
+            !message.starts_with("error:") && !obvious_meta_compose_pattern(message),
+            "live telegram weather tomorrow should produce direct non-error response"
+        );
+        assert!(
+            message_contains_plain_url(message),
+            "live telegram weather tomorrow response should include at least one plain URL"
+        );
+        assert!(
+            message_has_weather_signal(message),
+            "live telegram weather tomorrow response should include concrete weather signal"
+        );
+        assert!(
+            lower.contains("tomorrow"),
+            "live telegram weather tomorrow response should answer the requested timeframe"
         );
     }
 
