@@ -1,11 +1,9 @@
 use crate::{
     make_error, supported_tools, BashArgs, ContractError, ToolContractErrorCode, TypedCall,
-    TOOL_BASH, TOOL_BRAVE_SEARCH, TOOL_DECLASSIFY, TOOL_ENDORSE,
+    TOOL_BASH, TOOL_DECLASSIFY, TOOL_ENDORSE,
 };
 use serde_json::{Map, Value};
-use sieve_types::{
-    BraveSearchRequest, DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ValueRef,
-};
+use sieve_types::{DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ValueRef};
 use url::Url;
 
 pub fn validate(tool_name: &str, args_json: &Value) -> Result<TypedCall, ContractError> {
@@ -25,9 +23,6 @@ pub fn validate_at_index(
         TOOL_DECLASSIFY => {
             parse_declassify(tool_call_index, tool_name, args_json).map(TypedCall::Declassify)
         }
-        TOOL_BRAVE_SEARCH => {
-            parse_brave_search(tool_call_index, tool_name, args_json).map(TypedCall::BraveSearch)
-        }
         _ => Err(make_error(
             ToolContractErrorCode::UnknownTool,
             tool_call_index,
@@ -39,34 +34,6 @@ pub fn validate_at_index(
             Some("use one of ALLOWED_TOOLS"),
         )),
     }
-}
-
-fn parse_brave_search(
-    tool_call_index: usize,
-    tool_name: &str,
-    args_json: &Value,
-) -> Result<BraveSearchRequest, ContractError> {
-    let obj = expect_object(tool_call_index, tool_name, args_json)?;
-    reject_unknown_fields(tool_call_index, tool_name, obj, &["query", "count"])?;
-
-    let query = required_string(tool_call_index, tool_name, obj, "query")?;
-    if query.trim().is_empty() {
-        return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
-            tool_call_index,
-            tool_name,
-            "/query",
-            Some("non-empty string".to_string()),
-            Some("empty string".to_string()),
-            "query must be non-empty".to_string(),
-            Some("pass a search query"),
-        ));
-    }
-
-    let count =
-        optional_u8_with_range(tool_call_index, tool_name, obj, "count", 1, 10)?.unwrap_or(5);
-
-    Ok(BraveSearchRequest { query, count })
 }
 
 fn parse_bash(
@@ -318,47 +285,6 @@ fn optional_string(
     })?;
 
     Ok(Some(value.to_string()))
-}
-
-fn optional_u8_with_range(
-    tool_call_index: usize,
-    tool_name: &str,
-    object: &Map<String, Value>,
-    field: &str,
-    min: u8,
-    max: u8,
-) -> Result<Option<u8>, ContractError> {
-    let Some(value) = object.get(field) else {
-        return Ok(None);
-    };
-
-    let number = value.as_u64().ok_or_else(|| {
-        make_error(
-            ToolContractErrorCode::InvalidType,
-            tool_call_index,
-            tool_name,
-            &format!("/{field}"),
-            Some("integer".to_string()),
-            Some(json_type(value).to_string()),
-            format!("field `{field}` must be an integer"),
-            None,
-        )
-    })?;
-
-    if number < min as u64 || number > max as u64 {
-        return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
-            tool_call_index,
-            tool_name,
-            &format!("/{field}"),
-            Some(format!("integer in [{min}, {max}]")),
-            Some(number.to_string()),
-            format!("field `{field}` must be between {min} and {max}"),
-            None,
-        ));
-    }
-
-    Ok(Some(number as u8))
 }
 
 fn json_type(value: &Value) -> &'static str {

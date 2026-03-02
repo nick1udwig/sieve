@@ -397,28 +397,6 @@ pub struct DeclassifyResponse {
     pub allowed_sinks_added: Vec<SinkKey>,
 }
 
-/// Request payload for `brave_search` tool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BraveSearchRequest {
-    pub query: String,
-    pub count: u8,
-}
-
-/// One Brave search result entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BraveSearchResult {
-    pub title: String,
-    pub url: String,
-    pub description: Option<String>,
-}
-
-/// Response payload for `brave_search` tool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BraveSearchResponse {
-    pub query: String,
-    pub results: Vec<BraveSearchResult>,
-}
-
 /// Supported LLM provider enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -647,32 +625,6 @@ mod tests {
         let request_decoded: DeclassifyRequest =
             serde_json::from_str(&request_encoded).expect("deserialize");
         let response_decoded: DeclassifyResponse =
-            serde_json::from_str(&response_encoded).expect("deserialize");
-
-        assert_eq!(request_decoded, request);
-        assert_eq!(response_decoded, response);
-    }
-
-    #[test]
-    fn brave_search_payload_json_round_trip() {
-        let request = BraveSearchRequest {
-            query: "rust async traits".to_string(),
-            count: 3,
-        };
-        let response = BraveSearchResponse {
-            query: request.query.clone(),
-            results: vec![BraveSearchResult {
-                title: "Rust async in traits".to_string(),
-                url: "https://example.com/rust-async-traits".to_string(),
-                description: Some("Guide to async trait usage in Rust.".to_string()),
-            }],
-        };
-
-        let request_encoded = serde_json::to_string(&request).expect("serialize");
-        let response_encoded = serde_json::to_string(&response).expect("serialize");
-        let request_decoded: BraveSearchRequest =
-            serde_json::from_str(&request_encoded).expect("deserialize");
-        let response_decoded: BraveSearchResponse =
             serde_json::from_str(&response_encoded).expect("deserialize");
 
         assert_eq!(request_decoded, request);

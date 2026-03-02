@@ -1,8 +1,7 @@
 use super::*;
 use serde_json::{json, Value};
 use sieve_types::{
-    BraveSearchRequest, DeclassifyRequest, EndorseRequest, Integrity, SinkKey,
-    ToolContractErrorCode, ValueRef,
+    DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ToolContractErrorCode, ValueRef,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -117,57 +116,6 @@ fn validate_declassify_rejects_invalid_sink() {
 }
 
 #[test]
-fn validate_brave_search_success() {
-    let call = validate(
-        "brave_search",
-        &json!({
-            "query": "rust async trait",
-            "count": 3
-        }),
-    )
-    .expect("valid brave search");
-    assert_eq!(
-        call,
-        TypedCall::BraveSearch(BraveSearchRequest {
-            query: "rust async trait".to_string(),
-            count: 3,
-        })
-    );
-}
-
-#[test]
-fn validate_brave_search_uses_default_count() {
-    let call = validate(
-        "brave_search",
-        &json!({
-            "query": "rust async trait"
-        }),
-    )
-    .expect("valid brave search with default count");
-    assert_eq!(
-        call,
-        TypedCall::BraveSearch(BraveSearchRequest {
-            query: "rust async trait".to_string(),
-            count: 5,
-        })
-    );
-}
-
-#[test]
-fn validate_brave_search_rejects_out_of_range_count() {
-    let err = validate(
-        "brave_search",
-        &json!({
-            "query": "rust async trait",
-            "count": 42
-        }),
-    )
-    .expect_err("invalid count");
-    assert_eq!(err.code, ToolContractErrorCode::InvalidValue);
-    assert_eq!(err.argument_path, "/count");
-}
-
-#[test]
 fn validate_at_index_sets_tool_call_index() {
     let err = validate_at_index(3, "bash", &json!({})).expect_err("missing cmd");
     assert_eq!(err.code, ToolContractErrorCode::MissingRequiredField);
@@ -184,7 +132,6 @@ fn emitted_schema_documents_have_expected_keys() {
         keys,
         vec![
             "bash-args.schema.json".to_string(),
-            "brave-search-args.schema.json".to_string(),
             "declassify-args.schema.json".to_string(),
             "endorse-args.schema.json".to_string(),
             "planner-tool-call.schema.json".to_string(),
@@ -197,7 +144,6 @@ fn emitted_schema_documents_have_expected_keys() {
 fn planner_tool_call_schema_mentions_supported_tools() {
     let schema = planner_tool_call_schema().to_string();
     assert!(schema.contains("\"bash\""));
-    assert!(schema.contains("\"brave_search\""));
     assert!(schema.contains("\"endorse\""));
     assert!(schema.contains("\"declassify\""));
 }

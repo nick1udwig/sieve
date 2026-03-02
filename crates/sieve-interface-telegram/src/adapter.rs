@@ -309,15 +309,15 @@ mod tests {
         EventLogError, InProcessApprovalBus, MainlineRunError, MainlineRunReport,
         MainlineRunRequest, MainlineRunner, PlannerRunRequest, RuntimeDeps, RuntimeDisposition,
         RuntimeError, RuntimeEventLog, RuntimeOrchestrator, ShellRunRequest,
-        SystemClock as RuntimeSystemClock, WebSearchError, WebSearchRunner,
+        SystemClock as RuntimeSystemClock,
     };
     use sieve_shell::BasicShellAnalyzer;
     use sieve_types::{
-        Action, ApprovalRequestId, AssistantMessageEvent, BraveSearchRequest, BraveSearchResponse,
-        Capability, CommandSegment, LlmModelConfig, LlmProvider, PlannerToolCall, PlannerTurnInput,
-        PlannerTurnOutput, PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent,
-        QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, Resource, RunId,
-        UncertainMode, UnixMillis, UnknownMode,
+        Action, ApprovalRequestId, AssistantMessageEvent, Capability, CommandSegment,
+        LlmModelConfig, LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput,
+        PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, QuarantineCompletedEvent,
+        QuarantineReport, QuarantineRunRequest, Resource, RunId, UncertainMode, UnixMillis,
+        UnknownMode,
     };
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::sync::{Arc, Mutex};
@@ -1441,25 +1441,6 @@ mod tests {
         }
     }
 
-    struct NoopWebSearchRunner;
-
-    #[async_trait]
-    impl WebSearchRunner for NoopWebSearchRunner {
-        fn connect_scope(&self) -> String {
-            "https://api.search.brave.com/res/v1/web/search".to_string()
-        }
-
-        async fn search(
-            &self,
-            request: BraveSearchRequest,
-        ) -> Result<BraveSearchResponse, WebSearchError> {
-            Ok(BraveSearchResponse {
-                query: request.query,
-                results: Vec::new(),
-            })
-        }
-    }
-
     struct StaticPlanner {
         config: LlmModelConfig,
         output: PlannerTurnOutput,
@@ -1514,7 +1495,6 @@ reason = "rm -rf requires approval"
             policy: Arc::new(policy),
             quarantine: Arc::new(NoopQuarantineRunner),
             mainline: Arc::new(NoopMainlineRunner),
-            web_search: Arc::new(NoopWebSearchRunner),
             planner: Arc::new(StaticPlanner::new(planner_output)),
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),

@@ -18,15 +18,13 @@ use sieve_runtime::{
     ApprovalBusError, EventLogError, InProcessApprovalBus, JsonlRuntimeEventLog, MainlineArtifact,
     MainlineArtifactKind, MainlineRunError, MainlineRunReport, MainlineRunRequest, MainlineRunner,
     PlannerRunRequest, PlannerRunResult, PlannerToolResult, RuntimeDeps, RuntimeDisposition,
-    RuntimeEventLog, RuntimeOrchestrator, SystemClock as RuntimeClock, WebSearchDisposition,
-    WebSearchError, WebSearchRunner,
+    RuntimeEventLog, RuntimeOrchestrator, SystemClock as RuntimeClock,
 };
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
-    ApprovalResolvedEvent, AssistantMessageEvent, BraveSearchRequest, BraveSearchResponse,
-    BraveSearchResult, Integrity, InteractionModality, ModalityContract, ModalityOverrideReason,
-    PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceSignal, RunId, RuntimeEvent,
-    UncertainMode, UnknownMode,
+    ApprovalResolvedEvent, AssistantMessageEvent, Integrity, InteractionModality, ModalityContract,
+    ModalityOverrideReason, PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceSignal,
+    RunId, RuntimeEvent, UncertainMode, UnknownMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -53,8 +51,6 @@ struct AppConfig {
     event_log_path: PathBuf,
     runtime_cwd: String,
     allowed_tools: Vec<String>,
-    brave_api_key: Option<String>,
-    brave_api_base: String,
     audio_stt_cmd: Option<String>,
     audio_tts_cmd: Option<String>,
     image_ocr_cmd: Option<String>,
@@ -66,7 +62,6 @@ struct AppConfig {
 
 const DEFAULT_POLICY_PATH: &str = "docs/policy/baseline-policy.toml";
 const DEFAULT_SIEVE_DIR_NAME: &str = ".sieve";
-const DEFAULT_BRAVE_API_BASE: &str = "https://api.search.brave.com/res/v1/web/search";
 
 impl AppConfig {
     fn from_env() -> Result<Self, String> {
@@ -89,12 +84,6 @@ impl AppConfig {
         if allowed_tools.is_empty() {
             return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
         }
-        let brave_api_key = optional_env("BRAVE_API_KEY");
-        let brave_api_base = env::var("SIEVE_BRAVE_API_BASE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| DEFAULT_BRAVE_API_BASE.to_string());
         let audio_stt_cmd = optional_env("SIEVE_AUDIO_STT_CMD");
         let audio_tts_cmd = optional_env("SIEVE_AUDIO_TTS_CMD");
         let image_ocr_cmd = optional_env("SIEVE_IMAGE_OCR_CMD");
@@ -117,8 +106,6 @@ impl AppConfig {
             event_log_path,
             runtime_cwd,
             allowed_tools,
-            brave_api_key,
-            brave_api_base,
             audio_stt_cmd,
             audio_tts_cmd,
             image_ocr_cmd,
@@ -480,100 +467,6 @@ fn count_newlines(bytes: &[u8]) -> u64 {
     bytes.iter().filter(|byte| **byte == b'\n').count() as u64
 }
 
-struct AppBraveSearchRunner {
-    api_key: Option<String>,
-    api_base: String,
-}
-
-impl AppBraveSearchRunner {
-    fn new(api_key: Option<String>, api_base: String) -> Self {
-        Self { api_key, api_base }
-    }
-}
-
-#[async_trait]
-impl WebSearchRunner for AppBraveSearchRunner {
-    fn connect_scope(&self) -> String {
-        self.api_base.clone()
-    }
-
-    async fn search(
-        &self,
-        request: BraveSearchRequest,
-    ) -> Result<BraveSearchResponse, WebSearchError> {
-        let api_key = self.api_key.clone().ok_or_else(|| {
-            WebSearchError::Exec("BRAVE_API_KEY is required to use brave_search tool".to_string())
-        })?;
-
-        let output = TokioCommand::new("curl")
-            .arg("-sS")
-            .arg("--fail")
-            .arg("--get")
-            .arg("-H")
-            .arg("Accept: application/json")
-            .arg("-H")
-            .arg(format!("X-Subscription-Token: {api_key}"))
-            .arg("--data-urlencode")
-            .arg(format!("q={}", request.query))
-            .arg("--data-urlencode")
-            .arg(format!("count={}", request.count))
-            .arg(&self.api_base)
-            .output()
-            .await
-            .map_err(|err| WebSearchError::Exec(format!("failed to spawn curl: {err}")))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(WebSearchError::Exec(if stderr.is_empty() {
-                "curl failed calling Brave API".to_string()
-            } else {
-                format!("curl failed calling Brave API: {stderr}")
-            }));
-        }
-
-        decode_brave_search_response(&output.stdout, request.query)
-    }
-}
-
-fn decode_brave_search_response(
-    bytes: &[u8],
-    query: String,
-) -> Result<BraveSearchResponse, WebSearchError> {
-    let payload: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|err| WebSearchError::Exec(format!("invalid Brave API JSON response: {err}")))?;
-    let mut results = Vec::new();
-    if let Some(items) = payload
-        .get("web")
-        .and_then(|web| web.get("results"))
-        .and_then(serde_json::Value::as_array)
-    {
-        for item in items {
-            let Some(url) = item.get("url").and_then(serde_json::Value::as_str) else {
-                continue;
-            };
-            if url.trim().is_empty() {
-                continue;
-            }
-            let title = item
-                .get("title")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(url)
-                .to_string();
-            let description = item
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string);
-            results.push(BraveSearchResult {
-                title,
-                url: url.to_string(),
-                description,
-            });
-        }
-    }
-
-    Ok(BraveSearchResponse { query, results })
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TelegramLoopEvent {
     Runtime(RuntimeEvent),
@@ -764,7 +657,7 @@ fn requires_output_visibility(input: &ResponseTurnInput) -> bool {
 }
 
 fn output_ref_requires_visibility(kind: &str) -> bool {
-    matches!(kind, "stdout" | "stderr" | "web_search_results_json")
+    matches!(kind, "stdout" | "stderr")
 }
 
 fn non_empty_output_ref_ids(input: &ResponseTurnInput) -> BTreeSet<String> {
@@ -931,43 +824,6 @@ fn summarize_tool_result(
                 ],
             }
         }
-        PlannerToolResult::BraveSearch {
-            request,
-            disposition,
-        } => match disposition {
-            WebSearchDisposition::Executed(response) => {
-                let ref_id = format!("web-search:{}-{}", request.count, render_refs.len() + 1);
-                let encoded = serde_json::to_string_pretty(response).unwrap_or_else(|_| {
-                    "{\"error\":\"failed to encode brave search response\"}".to_string()
-                });
-                let bytes = encoded.as_bytes();
-                render_refs.insert(
-                    ref_id.clone(),
-                    RenderRef::Literal {
-                        value: encoded.clone(),
-                    },
-                );
-                ResponseToolOutcome {
-                    tool_name: "brave_search".to_string(),
-                    outcome: format!(
-                        "brave search executed (query={:?}, results={})",
-                        request.query,
-                        response.results.len()
-                    ),
-                    refs: vec![ResponseRefMetadata {
-                        ref_id,
-                        kind: "web_search_results_json".to_string(),
-                        byte_count: bytes.len() as u64,
-                        line_count: count_newlines(bytes),
-                    }],
-                }
-            }
-            WebSearchDisposition::Denied { reason } => ResponseToolOutcome {
-                tool_name: "brave_search".to_string(),
-                outcome: format!("brave search denied ({reason})"),
-                refs: Vec::new(),
-            },
-        },
     }
 }
 
@@ -1048,25 +904,6 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
             "sink_len": request.sink.0.len(),
             "applied": transition.is_some()
         }),
-        PlannerToolResult::BraveSearch {
-            request,
-            disposition,
-        } => match disposition {
-            WebSearchDisposition::Executed(response) => serde_json::json!({
-                "tool": "brave_search",
-                "disposition": "executed",
-                "query_len": request.query.len(),
-                "count_requested": request.count,
-                "results_count": response.results.len()
-            }),
-            WebSearchDisposition::Denied { reason } => serde_json::json!({
-                "tool": "brave_search",
-                "disposition": "denied",
-                "query_len": request.query.len(),
-                "count_requested": request.count,
-                "reason_len": reason.len()
-            }),
-        },
     }
 }
 
@@ -1217,109 +1054,6 @@ async fn resolve_ref_summary_input(
             Some((content, *byte_count, *line_count))
         }
     }
-}
-
-fn web_search_ref_ids(input: &ResponseTurnInput) -> BTreeSet<String> {
-    input
-        .tool_outcomes
-        .iter()
-        .flat_map(|outcome| outcome.refs.iter())
-        .filter(|ref_metadata| {
-            ref_metadata.kind == "web_search_results_json" && ref_metadata.byte_count > 0
-        })
-        .map(|ref_metadata| ref_metadata.ref_id.clone())
-        .collect()
-}
-
-fn sanitize_ref_component(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    let trimmed = out.trim_matches('_');
-    if trimmed.is_empty() {
-        "ref".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-async fn persist_web_search_render_refs_as_artifacts(
-    run_id: &RunId,
-    input: &ResponseTurnInput,
-    render_refs: &mut BTreeMap<String, RenderRef>,
-    artifacts_root: &Path,
-) -> Result<(), String> {
-    let ref_ids = web_search_ref_ids(input);
-    if ref_ids.is_empty() {
-        return Ok(());
-    }
-
-    let run_dir = artifacts_root.join(&run_id.0);
-    tokio::fs::create_dir_all(&run_dir)
-        .await
-        .map_err(|err| format!("failed to create web-search artifact dir: {err}"))?;
-
-    for ref_id in ref_ids {
-        let Some(RenderRef::Literal { value }) = render_refs.get(&ref_id).cloned() else {
-            continue;
-        };
-        let file_name = format!("{}-web-search.json", sanitize_ref_component(&ref_id));
-        let path = run_dir.join(file_name);
-        tokio::fs::write(&path, value.as_bytes())
-            .await
-            .map_err(|err| format!("failed to persist web-search artifact `{ref_id}`: {err}"))?;
-        render_refs.insert(
-            ref_id,
-            RenderRef::Artifact {
-                path,
-                byte_count: value.len() as u64,
-                line_count: count_newlines(value.as_bytes()),
-            },
-        );
-    }
-
-    Ok(())
-}
-
-async fn collect_web_search_results(
-    input: &ResponseTurnInput,
-    render_refs: &BTreeMap<String, RenderRef>,
-) -> Vec<BraveSearchResult> {
-    let mut all = Vec::new();
-    for ref_id in web_search_ref_ids(input) {
-        let Some(raw) = resolve_raw_ref_value(&ref_id, render_refs).await else {
-            continue;
-        };
-        let Ok(parsed) = serde_json::from_str::<BraveSearchResponse>(&raw) else {
-            continue;
-        };
-        for result in parsed.results {
-            if !result.url.trim().is_empty() {
-                all.push(result);
-            }
-        }
-    }
-    all
-}
-
-fn distinct_plain_urls(results: &[BraveSearchResult]) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    for result in results {
-        let url = result.url.trim();
-        if url.is_empty() {
-            continue;
-        }
-        if seen.insert(url.to_string()) {
-            out.push(url.to_string());
-        }
-    }
-    out
 }
 
 fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
@@ -1605,7 +1339,7 @@ async fn write_compose_audit_artifacts(
     run_id: &RunId,
     attempts: &[serde_json::Value],
     final_message: &str,
-    web_search_ref_ids: &[String],
+    output_ref_ids: &[String],
     source_urls: &[String],
     quality_gate: Option<&str>,
     planner_followup_signal: Option<PlannerGuidanceSignal>,
@@ -1647,7 +1381,7 @@ async fn write_compose_audit_artifacts(
             "ref_id": output_ref_id,
             "path": output_path.to_string_lossy(),
         },
-        "web_search_ref_ids": web_search_ref_ids,
+        "output_ref_ids": output_ref_ids,
         "source_urls": source_urls,
         "quality_gate": quality_gate,
         "planner_followup_signal_code": planner_followup_signal.map(PlannerGuidanceSignal::code),
@@ -1661,30 +1395,12 @@ async fn compose_assistant_message(
     run_id: &RunId,
     trusted_user_message: &str,
     response_input: &ResponseTurnInput,
-    render_refs: &BTreeMap<String, RenderRef>,
     draft_message: String,
 ) -> ComposeAssistantOutcome {
-    let web_results = collect_web_search_results(response_input, render_refs).await;
-    let web_search_ref_ids: Vec<String> = web_search_ref_ids(response_input).into_iter().collect();
-    let mut source_urls = distinct_plain_urls(&web_results);
-    source_urls.extend(extract_plain_urls_from_text(&draft_message));
-    let source_urls = dedupe_preserve_order(source_urls);
-
-    let sources: Vec<serde_json::Value> = web_results
-        .iter()
-        .take(5)
-        .map(|result| {
-            serde_json::json!({
-                "title": result.title.trim(),
-                "url": result.url.trim(),
-                "description": result
-                    .description
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty()),
-            })
-        })
+    let output_ref_ids: Vec<String> = non_empty_output_ref_ids(response_input)
+        .into_iter()
         .collect();
+    let source_urls = dedupe_preserve_order(extract_plain_urls_from_text(&draft_message));
     let tool_outcomes: Vec<serde_json::Value> = response_input
         .tool_outcomes
         .iter()
@@ -1711,7 +1427,7 @@ async fn compose_assistant_message(
         "assistant_draft_message": draft_message,
         "planner_thoughts": response_input.planner_thoughts.clone(),
         "tool_outcomes": tool_outcomes,
-        "sources": sources.clone(),
+        "output_ref_ids": output_ref_ids.clone(),
         "available_plain_urls": source_urls.clone(),
     });
     attempt_payloads.push(payload.clone());
@@ -1766,7 +1482,7 @@ async fn compose_assistant_message(
                 .get("tool_outcomes")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
-            "sources": sources,
+            "output_ref_ids": output_ref_ids.clone(),
             "available_plain_urls": source_urls.clone(),
             "compose_diagnostic": diagnostic,
             "previous_composed_message": composed,
@@ -1817,7 +1533,7 @@ async fn compose_assistant_message(
         run_id,
         &attempt_payloads,
         &composed,
-        &web_search_ref_ids,
+        &output_ref_ids,
         &source_urls,
         quality_gate.as_deref(),
         planner_followup_signal,
@@ -2341,21 +2057,8 @@ async fn run_turn(
             }
         }
 
-        let (mut response_input, mut render_refs) =
+        let (mut response_input, render_refs) =
             build_response_turn_input(&run_id, &trusted_user_message, &aggregated_result);
-        if let Err(err) = persist_web_search_render_refs_as_artifacts(
-            &run_id,
-            &response_input,
-            &mut render_refs,
-            &cfg.sieve_home.join("artifacts"),
-        )
-        .await
-        {
-            eprintln!(
-                "failed to persist web-search refs for {}: {}",
-                run_id.0, err
-            );
-        }
         let mut response_output = match response_model
             .write_turn_response(response_input.clone())
             .await
@@ -2376,7 +2079,7 @@ async fn run_turn(
         {
             // One regeneration pass: enforce that non-empty output refs are either shown raw
             // or summarized by Q-LLM, without exposing untrusted strings to the model.
-            let diagnostics = "Non-empty output refs exist (stdout/stderr/web search). Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
+            let diagnostics = "Non-empty output refs exist (stdout/stderr). Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
             response_input.planner_thoughts = Some(match response_input.planner_thoughts.take() {
                 Some(existing) if !existing.trim().is_empty() => {
                     format!("{existing}\n{diagnostics}")
@@ -2443,7 +2146,6 @@ async fn run_turn(
                 &run_id,
                 &trusted_user_message,
                 &response_input,
-                &render_refs,
                 rendered_message,
             )
             .await
@@ -2690,10 +2392,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         policy: Arc::new(policy),
         quarantine: Arc::new(BwrapQuarantineRunner::default()),
         mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
-        web_search: Arc::new(AppBraveSearchRunner::new(
-            cfg.brave_api_key.clone(),
-            cfg.brave_api_base.clone(),
-        )),
         planner: Arc::new(planner),
         approval_bus,
         event_log: event_log.clone(),
@@ -2742,11 +2440,10 @@ mod tests {
     use sieve_llm::{GuidanceModel, LlmError, PlannerModel};
     use sieve_runtime::ApprovalBus;
     use sieve_types::{
-        ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, BraveSearchRequest,
-        BraveSearchResponse, BraveSearchResult, CommandSegment, LlmModelConfig, LlmProvider,
-        PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerGuidanceSignal,
-        PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, PolicyDecisionKind,
-        PolicyEvaluatedEvent, Resource,
+        ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CommandSegment, LlmModelConfig,
+        LlmProvider, PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceOutput,
+        PlannerGuidanceSignal, PlannerTurnInput, PlannerTurnOutput, PolicyDecision,
+        PolicyDecisionKind, PolicyEvaluatedEvent, Resource,
     };
     use std::collections::VecDeque;
     use std::path::Path;
@@ -2837,12 +2534,7 @@ mod tests {
         }
     }
 
-    const E2E_POLICY_ALLOW_BRAVE: &str = r#"
-[[allow_capabilities]]
-resource = "net"
-action = "connect"
-scope = "https://api.search.brave.com/res/v1/web/search"
-
+    const E2E_POLICY_BASE: &str = r#"
 [options]
 violation_mode = "deny"
 trusted_control = true
@@ -2989,50 +2681,6 @@ require_trusted_control_for_mutating = true
         }
     }
 
-    struct RecordingWebSearchRunner {
-        scope: String,
-        result_template: Vec<BraveSearchResult>,
-        requests: StdMutex<Vec<BraveSearchRequest>>,
-    }
-
-    impl RecordingWebSearchRunner {
-        fn new(scope: impl Into<String>, result_template: Vec<BraveSearchResult>) -> Self {
-            Self {
-                scope: scope.into(),
-                result_template,
-                requests: StdMutex::new(Vec::new()),
-            }
-        }
-
-        fn requests(&self) -> Vec<BraveSearchRequest> {
-            self.requests
-                .lock()
-                .expect("web-search requests mutex poisoned")
-                .clone()
-        }
-    }
-
-    #[async_trait]
-    impl sieve_runtime::WebSearchRunner for RecordingWebSearchRunner {
-        fn connect_scope(&self) -> String {
-            self.scope.clone()
-        }
-
-        async fn search(
-            &self,
-            request: BraveSearchRequest,
-        ) -> Result<BraveSearchResponse, WebSearchError> {
-            self.requests
-                .lock()
-                .expect("web-search requests mutex poisoned")
-                .push(request.clone());
-            Ok(BraveSearchResponse {
-                query: request.query,
-                results: self.result_template.clone(),
-            })
-        }
-    }
-
     enum E2eModelMode {
         Fake {
             planner: Arc<dyn PlannerModel>,
@@ -3075,12 +2723,7 @@ require_trusted_control_for_mutating = true
             root
         }
 
-        fn new(
-            model_mode: E2eModelMode,
-            web_search: Arc<dyn sieve_runtime::WebSearchRunner>,
-            allowed_tools: Vec<String>,
-            policy_toml: &str,
-        ) -> Self {
+        fn new(model_mode: E2eModelMode, allowed_tools: Vec<String>, policy_toml: &str) -> Self {
             let root = Self::unique_root("sieve-app-e2e");
             let event_log_path = root.join("logs/runtime-events.jsonl");
             let cfg = AppConfig {
@@ -3093,8 +2736,6 @@ require_trusted_control_for_mutating = true
                 event_log_path: event_log_path.clone(),
                 runtime_cwd: root.to_string_lossy().to_string(),
                 allowed_tools,
-                brave_api_key: None,
-                brave_api_base: DEFAULT_BRAVE_API_BASE.to_string(),
                 audio_stt_cmd: None,
                 audio_tts_cmd: None,
                 image_ocr_cmd: None,
@@ -3137,7 +2778,6 @@ require_trusted_control_for_mutating = true
                 policy: Arc::new(policy),
                 quarantine: Arc::new(BwrapQuarantineRunner::default()),
                 mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
-                web_search,
                 planner,
                 approval_bus: Arc::new(InProcessApprovalBus::new()),
                 event_log: event_log.clone(),
@@ -3157,31 +2797,15 @@ require_trusted_control_for_mutating = true
             }
         }
 
-        fn live_openai_or_skip(
-            allowed_tools: Vec<String>,
-            require_brave_key: bool,
-        ) -> Option<Self> {
+        fn live_openai_or_skip(allowed_tools: Vec<String>) -> Option<Self> {
             if std::env::var("SIEVE_RUN_OPENAI_LIVE").ok().as_deref() != Some("1") {
                 return None;
             }
 
-            let brave_key = optional_env("BRAVE_API_KEY");
-            if require_brave_key && brave_key.is_none() {
-                panic!("SIEVE_RUN_OPENAI_LIVE=1 requires BRAVE_API_KEY for web-search live test");
-            }
-            let brave_api_base = std::env::var("SIEVE_BRAVE_API_BASE")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| DEFAULT_BRAVE_API_BASE.to_string());
-            let web_search: Arc<dyn sieve_runtime::WebSearchRunner> =
-                Arc::new(AppBraveSearchRunner::new(brave_key, brave_api_base));
-
             Some(Self::new(
                 E2eModelMode::RealOpenAi,
-                web_search,
                 allowed_tools,
-                E2E_POLICY_ALLOW_BRAVE,
+                E2E_POLICY_BASE,
             ))
         }
 
@@ -3287,9 +2911,6 @@ require_trusted_control_for_mutating = true
         let response: Arc<dyn ResponseModel> =
             Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
-        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
-            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
-        );
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner,
@@ -3297,14 +2918,12 @@ require_trusted_control_for_mutating = true
                 response,
                 summary,
             },
-            web_search,
             vec![
                 "bash".to_string(),
                 "endorse".to_string(),
                 "declassify".to_string(),
-                "brave_search".to_string(),
             ],
-            E2E_POLICY_ALLOW_BRAVE,
+            E2E_POLICY_BASE,
         );
 
         harness
@@ -3352,9 +2971,6 @@ require_trusted_control_for_mutating = true
         let response: Arc<dyn ResponseModel> =
             Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
-        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
-            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
-        );
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner: planner.clone(),
@@ -3362,14 +2978,12 @@ require_trusted_control_for_mutating = true
                 response,
                 summary,
             },
-            web_search,
             vec![
                 "bash".to_string(),
                 "endorse".to_string(),
                 "declassify".to_string(),
-                "brave_search".to_string(),
             ],
-            E2E_POLICY_ALLOW_BRAVE,
+            E2E_POLICY_BASE,
         );
 
         harness
@@ -3416,9 +3030,6 @@ require_trusted_control_for_mutating = true
             },
         )]));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
-        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
-            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
-        );
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner: planner.clone(),
@@ -3426,9 +3037,8 @@ require_trusted_control_for_mutating = true
                 response,
                 summary,
             },
-            web_search,
-            vec!["bash".to_string(), "brave_search".to_string()],
-            E2E_POLICY_ALLOW_BRAVE,
+            vec!["bash".to_string()],
+            E2E_POLICY_BASE,
         );
 
         harness
@@ -3476,9 +3086,6 @@ require_trusted_control_for_mutating = true
             },
         )]));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
-        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
-            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
-        );
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner: planner.clone(),
@@ -3486,9 +3093,8 @@ require_trusted_control_for_mutating = true
                 response,
                 summary,
             },
-            web_search,
-            vec!["bash".to_string(), "brave_search".to_string()],
-            E2E_POLICY_ALLOW_BRAVE,
+            vec!["bash".to_string()],
+            E2E_POLICY_BASE,
         );
 
         harness
@@ -3525,9 +3131,6 @@ require_trusted_control_for_mutating = true
             Ok("Hello there.".to_string()),
             Ok("PASS".to_string()),
         ]));
-        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
-            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
-        );
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner,
@@ -3535,14 +3138,12 @@ require_trusted_control_for_mutating = true
                 response,
                 summary,
             },
-            web_search,
             vec![
                 "bash".to_string(),
                 "endorse".to_string(),
                 "declassify".to_string(),
-                "brave_search".to_string(),
             ],
-            E2E_POLICY_ALLOW_BRAVE,
+            E2E_POLICY_BASE,
         );
 
         harness
@@ -3575,9 +3176,6 @@ require_trusted_control_for_mutating = true
             Ok("PASS".to_string()),
             Ok("I'm doing well, thanks for asking. How can I help?".to_string()),
         ]));
-        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
-            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
-        );
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner,
@@ -3585,14 +3183,12 @@ require_trusted_control_for_mutating = true
                 response,
                 summary,
             },
-            web_search,
             vec![
                 "bash".to_string(),
                 "endorse".to_string(),
                 "declassify".to_string(),
-                "brave_search".to_string(),
             ],
-            E2E_POLICY_ALLOW_BRAVE,
+            E2E_POLICY_BASE,
         );
 
         harness
@@ -3609,309 +3205,6 @@ require_trusted_control_for_mutating = true
     }
 
     #[tokio::test]
-    async fn e2e_fake_compose_followup_continues_planner_after_insufficient_evidence() {
-        let mut first_args = BTreeMap::new();
-        first_args.insert(
-            "query".to_string(),
-            serde_json::json!("current weather livermore now"),
-        );
-        first_args.insert("count".to_string(), serde_json::json!(1));
-        let mut second_args = BTreeMap::new();
-        second_args.insert(
-            "query".to_string(),
-            serde_json::json!("current temperature livermore station"),
-        );
-        second_args.insert("count".to_string(), serde_json::json!(1));
-
-        let planner = Arc::new(QueuedPlannerModel::new(vec![
-            Ok(PlannerTurnOutput {
-                thoughts: Some("first search".to_string()),
-                tool_calls: vec![PlannerToolCall {
-                    tool_name: "brave_search".to_string(),
-                    args: first_args,
-                }],
-            }),
-            Ok(PlannerTurnOutput {
-                thoughts: Some("second search".to_string()),
-                tool_calls: vec![PlannerToolCall {
-                    tool_name: "brave_search".to_string(),
-                    args: second_args,
-                }],
-            }),
-        ]));
-        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![
-            Ok(guidance_output(
-                PlannerGuidanceSignal::FinalInsufficientEvidence,
-            )),
-            Ok(guidance_output(PlannerGuidanceSignal::FinalAnswerReady)),
-        ]));
-        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![
-            Ok(sieve_llm::ResponseTurnOutput {
-                message: "first raw: [[ref:web-search:1-1]]".to_string(),
-                referenced_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
-                summarized_ref_ids: BTreeSet::new(),
-            }),
-            Ok(sieve_llm::ResponseTurnOutput {
-                message: "second raw: [[ref:web-search:1-2]]".to_string(),
-                referenced_ref_ids: BTreeSet::from(["web-search:1-2".to_string()]),
-                summarized_ref_ids: BTreeSet::new(),
-            }),
-        ]));
-        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
-            Ok("first pass answer".to_string()),
-            Ok("REVISE: doesn't directly answer; more evidence is needed.".to_string()),
-            Ok("still incomplete answer".to_string()),
-            Ok("REVISE: insufficient evidence remains; gather another source.".to_string()),
-            Ok("second pass answer with concrete info".to_string()),
-            Ok("PASS".to_string()),
-        ]));
-        let web_search = Arc::new(RecordingWebSearchRunner::new(
-            DEFAULT_BRAVE_API_BASE,
-            vec![BraveSearchResult {
-                title: "Result".to_string(),
-                url: "https://example.com/weather".to_string(),
-                description: Some("Sample weather source".to_string()),
-            }],
-        ));
-        let harness = AppE2eHarness::new(
-            E2eModelMode::Fake {
-                planner: planner.clone(),
-                guidance,
-                response,
-                summary,
-            },
-            web_search.clone(),
-            vec!["brave_search".to_string()],
-            E2E_POLICY_ALLOW_BRAVE,
-        );
-
-        harness
-            .run_text_turn("What is the weather right now in Livermore?")
-            .await
-            .expect("compose followup turn should succeed");
-
-        assert_eq!(
-            planner.call_count(),
-            2,
-            "compose followup should request another planner cycle"
-        );
-        assert_eq!(web_search.requests().len(), 2);
-        let assistant = assistant_messages(&harness.runtime_events());
-        assert_eq!(
-            assistant,
-            vec!["second pass answer with concrete info".to_string()]
-        );
-    }
-
-    #[tokio::test]
-    async fn e2e_fake_compose_followup_extends_planner_after_budget_exhaustion() {
-        let planner = Arc::new(QueuedPlannerModel::new(vec![
-            Ok(PlannerTurnOutput {
-                thoughts: Some("step-1".to_string()),
-                tool_calls: vec![PlannerToolCall {
-                    tool_name: "brave_search".to_string(),
-                    args: BTreeMap::from([
-                        (
-                            "query".to_string(),
-                            serde_json::json!("current weather livermore right now"),
-                        ),
-                        ("count".to_string(), serde_json::json!(1)),
-                    ]),
-                }],
-            }),
-            Ok(PlannerTurnOutput {
-                thoughts: Some("step-2".to_string()),
-                tool_calls: vec![PlannerToolCall {
-                    tool_name: "brave_search".to_string(),
-                    args: BTreeMap::from([
-                        (
-                            "query".to_string(),
-                            serde_json::json!("current weather livermore right now"),
-                        ),
-                        ("count".to_string(), serde_json::json!(1)),
-                    ]),
-                }],
-            }),
-            Ok(PlannerTurnOutput {
-                thoughts: Some("step-3".to_string()),
-                tool_calls: vec![PlannerToolCall {
-                    tool_name: "brave_search".to_string(),
-                    args: BTreeMap::from([
-                        (
-                            "query".to_string(),
-                            serde_json::json!("current weather livermore right now"),
-                        ),
-                        ("count".to_string(), serde_json::json!(1)),
-                    ]),
-                }],
-            }),
-            Ok(PlannerTurnOutput {
-                thoughts: Some("step-4".to_string()),
-                tool_calls: vec![PlannerToolCall {
-                    tool_name: "brave_search".to_string(),
-                    args: BTreeMap::from([
-                        (
-                            "query".to_string(),
-                            serde_json::json!("live temperature livermore station"),
-                        ),
-                        ("count".to_string(), serde_json::json!(1)),
-                    ]),
-                }],
-            }),
-        ]));
-        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![
-            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
-            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
-            Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
-            Ok(guidance_output(PlannerGuidanceSignal::FinalAnswerReady)),
-        ]));
-        let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![
-            Ok(sieve_llm::ResponseTurnOutput {
-                message: "first cycle [[ref:web-search:1-1]]".to_string(),
-                referenced_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
-                summarized_ref_ids: BTreeSet::new(),
-            }),
-            Ok(sieve_llm::ResponseTurnOutput {
-                message: "second cycle [[ref:web-search:1-4]]".to_string(),
-                referenced_ref_ids: BTreeSet::from(["web-search:1-4".to_string()]),
-                summarized_ref_ids: BTreeSet::new(),
-            }),
-        ]));
-        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
-            Ok("first cycle compose".to_string()),
-            Ok("REVISE: insufficient evidence; needs one more source.".to_string()),
-            Ok("first cycle retry".to_string()),
-            Ok("REVISE: still insufficient evidence; fetch additional source.".to_string()),
-            Ok("final answer with added source".to_string()),
-            Ok("PASS".to_string()),
-        ]));
-        let web_search = Arc::new(RecordingWebSearchRunner::new(
-            DEFAULT_BRAVE_API_BASE,
-            vec![BraveSearchResult {
-                title: "Result".to_string(),
-                url: "https://example.com/weather".to_string(),
-                description: Some("Sample weather source".to_string()),
-            }],
-        ));
-        let harness = AppE2eHarness::new(
-            E2eModelMode::Fake {
-                planner: planner.clone(),
-                guidance,
-                response,
-                summary,
-            },
-            web_search.clone(),
-            vec!["brave_search".to_string()],
-            E2E_POLICY_ALLOW_BRAVE,
-        );
-
-        harness
-            .run_text_turn("What is the weather like right now in Livermore ca")
-            .await
-            .expect("turn should succeed");
-
-        assert_eq!(
-            planner.call_count(),
-            4,
-            "compose continue must extend planner budget by one extra step"
-        );
-        assert_eq!(
-            web_search.requests().len(),
-            4,
-            "extended planner step should execute extra tool call"
-        );
-        let assistant = assistant_messages(&harness.runtime_events());
-        assert_eq!(assistant.len(), 1);
-        assert!(assistant[0].contains("final answer with added source"));
-        assert!(assistant[0].contains("https://example.com/weather"));
-
-        let controller_log_path = harness.root.join("logs/turn-controller-events.jsonl");
-        let controller_records = read_jsonl_records(&controller_log_path);
-        assert!(
-            controller_records.iter().any(|record| {
-                record.get("phase").and_then(Value::as_str) == Some("compose_decision")
-                    && record.pointer("/payload/continue").and_then(Value::as_bool) == Some(true)
-            }),
-            "compose decision log must show continued planner cycle"
-        );
-    }
-
-    #[tokio::test]
-    async fn e2e_fake_web_search_executes_without_approval() {
-        let mut args = BTreeMap::new();
-        args.insert(
-            "query".to_string(),
-            serde_json::json!("rust tokio channels"),
-        );
-        args.insert("count".to_string(), serde_json::json!(1));
-        let planner_output = PlannerTurnOutput {
-            thoughts: Some("search".to_string()),
-            tool_calls: vec![PlannerToolCall {
-                tool_name: "brave_search".to_string(),
-                args,
-            }],
-        };
-        let response_output = sieve_llm::ResponseTurnOutput {
-            message: "Search summary: [[summary:web-search:1-1]]".to_string(),
-            referenced_ref_ids: BTreeSet::new(),
-            summarized_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
-        };
-        let planner: Arc<dyn PlannerModel> =
-            Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
-        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
-            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
-        )]));
-        let response: Arc<dyn ResponseModel> =
-            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
-        let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
-        let web_search = Arc::new(RecordingWebSearchRunner::new(
-            DEFAULT_BRAVE_API_BASE,
-            vec![BraveSearchResult {
-                title: "Tokio".to_string(),
-                url: "https://tokio.rs".to_string(),
-                description: Some("Rust async runtime".to_string()),
-            }],
-        ));
-        let harness = AppE2eHarness::new(
-            E2eModelMode::Fake {
-                planner,
-                guidance,
-                response,
-                summary,
-            },
-            web_search.clone(),
-            vec!["brave_search".to_string()],
-            E2E_POLICY_ALLOW_BRAVE,
-        );
-
-        harness
-            .run_text_turn("Can you use web search?")
-            .await
-            .expect("web-search turn should succeed");
-
-        let events = harness.runtime_events();
-        assert_eq!(count_approval_requested(&events), 0);
-        let policy_events: Vec<&PolicyEvaluatedEvent> = events
-            .iter()
-            .filter_map(|event| match event {
-                RuntimeEvent::PolicyEvaluated(event) => Some(event),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(policy_events.len(), 1);
-        assert_eq!(policy_events[0].decision.kind, PolicyDecisionKind::Allow);
-        assert_eq!(web_search.requests().len(), 1);
-        assert_eq!(web_search.requests()[0].query, "rust tokio channels");
-
-        let assistant = assistant_messages(&events);
-        assert_eq!(assistant.len(), 1);
-        assert!(
-            assistant[0].contains("summary(bytes="),
-            "assistant should include Q-LLM summary token expansion"
-        );
-    }
-
-    #[tokio::test]
     async fn e2e_fake_planner_error_emits_assistant_error_for_user_visibility() {
         let planner: Arc<dyn PlannerModel> = Arc::new(QueuedPlannerModel::new(vec![Err(
             LlmError::Backend("planner boom".to_string()),
@@ -3921,9 +3214,6 @@ require_trusted_control_for_mutating = true
         )]));
         let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(Vec::new()));
         let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
-        let web_search: Arc<dyn sieve_runtime::WebSearchRunner> = Arc::new(
-            RecordingWebSearchRunner::new(DEFAULT_BRAVE_API_BASE, Vec::new()),
-        );
         let harness = AppE2eHarness::new(
             E2eModelMode::Fake {
                 planner,
@@ -3931,9 +3221,8 @@ require_trusted_control_for_mutating = true
                 response,
                 summary,
             },
-            web_search,
             vec!["bash".to_string()],
-            E2E_POLICY_ALLOW_BRAVE,
+            E2E_POLICY_BASE,
         );
 
         let err = harness
@@ -3961,15 +3250,11 @@ require_trusted_control_for_mutating = true
         let _guard = env_test_lock()
             .lock()
             .expect("live e2e env test lock poisoned");
-        let Some(harness) = AppE2eHarness::live_openai_or_skip(
-            vec![
-                "bash".to_string(),
-                "endorse".to_string(),
-                "declassify".to_string(),
-                "brave_search".to_string(),
-            ],
-            false,
-        ) else {
+        let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]) else {
             return;
         };
 
@@ -3996,74 +3281,6 @@ require_trusted_control_for_mutating = true
         assert!(
             assistant_errors_from_conversation(&records).is_empty(),
             "live greeting must not produce assistant error conversation entries"
-        );
-    }
-
-    #[tokio::test]
-    async fn live_e2e_web_search_smoke_validates_policy_and_no_approval_env_gated() {
-        let _guard = env_test_lock()
-            .lock()
-            .expect("live e2e env test lock poisoned");
-        let Some(harness) =
-            AppE2eHarness::live_openai_or_skip(vec!["brave_search".to_string()], true)
-        else {
-            return;
-        };
-
-        harness
-            .run_text_turn(
-                "Use brave_search exactly once with query `OpenAI API docs` and count 1, then answer concisely.",
-            )
-            .await
-            .expect("live web-search smoke should succeed");
-
-        let events = harness.runtime_events();
-        assert_eq!(count_approval_requested(&events), 0);
-        let policy_events: Vec<&PolicyEvaluatedEvent> = events
-            .iter()
-            .filter_map(|event| match event {
-                RuntimeEvent::PolicyEvaluated(event) => Some(event),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            !policy_events.is_empty(),
-            "live web-search smoke must emit policy precheck events"
-        );
-        assert!(
-            policy_events
-                .iter()
-                .all(|event| event.decision.kind == PolicyDecisionKind::Allow),
-            "live web-search smoke should pass policy without approval"
-        );
-        assert!(
-            policy_events.iter().any(|event| {
-                event.inferred_capabilities.iter().any(|capability| {
-                    capability.resource == Resource::Net
-                        && capability.action == sieve_types::Action::Connect
-                        && capability.scope == DEFAULT_BRAVE_API_BASE
-                })
-            }),
-            "live web-search smoke must include connect capability for Brave endpoint"
-        );
-
-        let assistant = assistant_messages(&events);
-        assert_eq!(assistant.len(), 1);
-        assert!(
-            !assistant[0].trim().is_empty() && !assistant[0].starts_with("error:"),
-            "live web-search smoke must produce non-error assistant reply"
-        );
-
-        let records = harness.jsonl_records();
-        let conversation = conversation_messages(&records);
-        assert!(
-            conversation.iter().any(|(role, _)| role == "user")
-                && conversation.iter().any(|(role, _)| role == "assistant"),
-            "live web-search smoke should persist both user and assistant conversation records"
-        );
-        assert!(
-            assistant_errors_from_conversation(&records).is_empty(),
-            "live web-search smoke must not produce assistant error conversation entries"
         );
     }
 
@@ -4363,29 +3580,6 @@ require_trusted_control_for_mutating = true
     }
 
     #[test]
-    fn requires_output_visibility_detects_non_empty_web_search_refs() {
-        let input = ResponseTurnInput {
-            run_id: RunId("run-1".to_string()),
-            trusted_user_message: "weather".to_string(),
-            planner_thoughts: None,
-            tool_outcomes: vec![ResponseToolOutcome {
-                tool_name: "brave_search".to_string(),
-                outcome: "executed".to_string(),
-                refs: vec![ResponseRefMetadata {
-                    ref_id: "web-search-1".to_string(),
-                    kind: "web_search_results_json".to_string(),
-                    byte_count: 128,
-                    line_count: 4,
-                }],
-            }],
-        };
-
-        assert!(requires_output_visibility(&input));
-        let ids = non_empty_output_ref_ids(&input);
-        assert!(ids.contains("web-search-1"));
-    }
-
-    #[test]
     fn response_has_visible_selected_output_requires_message_token() {
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
@@ -4445,32 +3639,6 @@ require_trusted_control_for_mutating = true
     }
 
     #[test]
-    fn response_has_visible_selected_output_accepts_web_search_summary_token() {
-        let input = ResponseTurnInput {
-            run_id: RunId("run-1".to_string()),
-            trusted_user_message: "weather".to_string(),
-            planner_thoughts: None,
-            tool_outcomes: vec![ResponseToolOutcome {
-                tool_name: "brave_search".to_string(),
-                outcome: "executed".to_string(),
-                refs: vec![ResponseRefMetadata {
-                    ref_id: "web-search-1".to_string(),
-                    kind: "web_search_results_json".to_string(),
-                    byte_count: 64,
-                    line_count: 2,
-                }],
-            }],
-        };
-
-        let response = sieve_llm::ResponseTurnOutput {
-            message: "weather summary: [[summary:web-search-1]]".to_string(),
-            referenced_ref_ids: BTreeSet::new(),
-            summarized_ref_ids: BTreeSet::from(["web-search-1".to_string()]),
-        };
-        assert!(response_has_visible_selected_output(&input, &response));
-    }
-
-    #[test]
     fn compose_quality_retry_treats_verbose_pass_as_pass() {
         let composed = "Here is a direct answer.";
         let gate = Some("Quality gate verdict: PASS because the answer is direct.");
@@ -4484,11 +3652,11 @@ require_trusted_control_for_mutating = true
             trusted_user_message: "weather".to_string(),
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
-                tool_name: "brave_search".to_string(),
+                tool_name: "bash".to_string(),
                 outcome: "executed".to_string(),
                 refs: vec![ResponseRefMetadata {
-                    ref_id: "web-search-1".to_string(),
-                    kind: "web_search_results_json".to_string(),
+                    ref_id: "artifact-1".to_string(),
+                    kind: "stdout".to_string(),
                     byte_count: 64,
                     line_count: 1,
                 }],
@@ -4530,114 +3698,6 @@ require_trusted_control_for_mutating = true
         let message = "Top result is ready. Visit the provided link for details.".to_string();
         let enforced = enforce_link_policy(message, &[]);
         assert!(!enforced.to_ascii_lowercase().contains("provided link"));
-    }
-
-    #[tokio::test]
-    async fn e2e_fake_web_search_polish_includes_plain_url_when_draft_omits_it() {
-        let mut args = BTreeMap::new();
-        args.insert(
-            "query".to_string(),
-            serde_json::json!("weather tomorrow livermore"),
-        );
-        args.insert("count".to_string(), serde_json::json!(1));
-        let planner_output = PlannerTurnOutput {
-            thoughts: Some("search then answer".to_string()),
-            tool_calls: vec![PlannerToolCall {
-                tool_name: "brave_search".to_string(),
-                args,
-            }],
-        };
-        let response_output = sieve_llm::ResponseTurnOutput {
-            message: "[[summary:web-search:1-1]]".to_string(),
-            referenced_ref_ids: BTreeSet::new(),
-            summarized_ref_ids: BTreeSet::from(["web-search:1-1".to_string()]),
-        };
-        let planner: Arc<dyn PlannerModel> =
-            Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
-        let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
-            guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
-        )]));
-        let response: Arc<dyn ResponseModel> =
-            Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
-        let summary: Arc<dyn SummaryModel> = Arc::new(QueuedSummaryModel::new(vec![
-            Ok("search summary".to_string()),
-            Ok("For more details, visit the provided link.".to_string()),
-            Ok("REVISE: answer the question directly before linking".to_string()),
-            Ok("Tomorrow in Livermore should stay mild. Source listed below.".to_string()),
-        ]));
-        let web_search = Arc::new(RecordingWebSearchRunner::new(
-            DEFAULT_BRAVE_API_BASE,
-            vec![BraveSearchResult {
-                title: "Weather Underground Livermore".to_string(),
-                url: "https://www.wunderground.com/weather/us/ca/livermore".to_string(),
-                description: Some("Forecast page".to_string()),
-            }],
-        ));
-        let harness = AppE2eHarness::new(
-            E2eModelMode::Fake {
-                planner,
-                guidance,
-                response,
-                summary,
-            },
-            web_search,
-            vec!["brave_search".to_string()],
-            E2E_POLICY_ALLOW_BRAVE,
-        );
-
-        harness
-            .run_text_turn("What is the weather tomorrow in Livermore?")
-            .await
-            .expect("turn should succeed");
-
-        let assistant = assistant_messages(&harness.runtime_events());
-        assert_eq!(assistant.len(), 1);
-        assert!(
-            assistant[0].contains("https://www.wunderground.com/weather/us/ca/livermore"),
-            "assistant reply should include explicit plain URL when mentioning sources"
-        );
-        assert!(
-            assistant[0].contains("Tomorrow in Livermore"),
-            "compose retry should answer directly after quality-gate revise"
-        );
-
-        let compose_log_path = harness.root.join("logs/compose-events.jsonl");
-        let mut compose_records = Vec::new();
-        for _ in 0..20 {
-            compose_records = read_jsonl_records(&compose_log_path);
-            if compose_records
-                .iter()
-                .any(|record| record.get("event").and_then(Value::as_str) == Some("compose_audit"))
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        assert!(
-            compose_records
-                .iter()
-                .any(|record| record.get("event").and_then(Value::as_str) == Some("compose_audit")),
-            "compose audit event must be logged"
-        );
-        assert!(
-            compose_records.iter().any(|record| {
-                record
-                    .get("web_search_ref_ids")
-                    .and_then(Value::as_array)
-                    .map(|ids| ids.iter().any(|id| id.as_str() == Some("web-search:1-1")))
-                    .unwrap_or(false)
-            }),
-            "compose audit must include web-search ref id provenance"
-        );
-        let web_artifact_path = harness
-            .root
-            .join("artifacts")
-            .join("run-1")
-            .join("web-search_1-1-web-search.json");
-        assert!(
-            web_artifact_path.exists(),
-            "web-search raw response should be persisted as artifact for provenance"
-        );
     }
 
     #[test]

@@ -19,12 +19,12 @@ Primary plan: [mvp-completion-plan.md](/root/git/sieve-v3/docs/mvp-completion-pl
 - [ ] `AA` Telegram Full-Flow Harness (Mock Long-Poll + Outbound Assertions)
 : Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: implement a full app/adapter harness that mocks Telegram `getUpdates`, injects user messages, and asserts outbound `sendMessage`/typing behavior through the real flow. Include deterministic and env-gated live cases from [telegram-fullflow-harness-plan.md](/root/git/sieve-v3/docs/telegram-fullflow-harness-plan.md), specifically greeting + `weather in dublin ireland today` + `weather in dublin ireland tomorrow`.
 
-- [ ] `AB` Complete CLI Search Migration (Remove Dedicated `brave_search` Tool Path)
-: Owner: `unclaimed` | Branch: `-` | PR: `-` | Scope: finish migration outlined in [cli-search-migration-notes.md](/root/git/sieve-v3/docs/cli-search-migration-notes.md), including test-suite updates and decision on full codepath removal vs compatibility shim.
-
 ## Claimed
 
 ## Done
+
+- [x] `AB` Complete CLI Search Migration (Remove Dedicated `brave_search` Tool Path)
+: Owner: `codex` | Branch: `master` | PR: `pending` | Scope: fully removed dedicated `brave_search` contracts/types/runtime/app paths; kept only backward-compatible filtering in `parse_allowed_tools`; updated tests and docs for bash/CLI-driven search.
 
 - [x] `Y` Modality Parity Contract (Reply In Same Mode As Input)
 : Owner: `codex` | Branch: `master` | PR: `5f1d5cd` | Scope: define and enforce a modality contract so input modality is tracked (`text|audio|image|...`) and response defaults to same modality unless explicitly overridden by policy/tool failure. Apply this across Telegram ingress, runtime turn context, and response delivery. Files: [lib.rs](/root/git/sieve-v3/crates/sieve-types/src/lib.rs), [main.rs](/root/git/sieve-v3/crates/sieve-app/src/main.rs), [adapter.rs](/root/git/sieve-v3/crates/sieve-interface-telegram/src/adapter.rs), [README.md](/root/git/sieve-v3/README.md). Done when: modality parity is explicit in types/docs and covered by integration tests.

@@ -9,13 +9,12 @@ use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_runtime::{
     Clock, EventLogError, InProcessApprovalBus, MainlineRunError, MainlineRunReport,
     MainlineRunRequest, MainlineRunner, RuntimeDeps, RuntimeEventLog, RuntimeOrchestrator,
-    WebSearchError, WebSearchRunner,
 };
 use sieve_shell::{ShellAnalysis, ShellAnalysisError, ShellAnalyzer};
 use sieve_types::{
-    ApprovalRequestedEvent, BraveSearchRequest, BraveSearchResponse, CapacityType, Integrity,
-    LlmModelConfig, LlmProvider, PlannerTurnInput, PlannerTurnOutput, QuarantineReport,
-    QuarantineRunRequest, RuntimeEvent, SinkKey, Source, ValueLabel,
+    ApprovalRequestedEvent, CapacityType, Integrity, LlmModelConfig, LlmProvider, PlannerTurnInput,
+    PlannerTurnOutput, QuarantineReport, QuarantineRunRequest, RuntimeEvent, SinkKey, Source,
+    ValueLabel,
 };
 use std::collections::BTreeSet;
 use std::fs;
@@ -152,25 +151,6 @@ impl MainlineRunner for NoopMainline {
     }
 }
 
-struct NoopWebSearch;
-
-#[async_trait]
-impl WebSearchRunner for NoopWebSearch {
-    fn connect_scope(&self) -> String {
-        "https://api.search.brave.com/res/v1/web/search".to_string()
-    }
-
-    async fn search(
-        &self,
-        request: BraveSearchRequest,
-    ) -> Result<BraveSearchResponse, WebSearchError> {
-        Ok(BraveSearchResponse {
-            query: request.query,
-            results: Vec::new(),
-        })
-    }
-}
-
 pub fn mk_runtime(
     shell: Arc<dyn ShellAnalyzer>,
     summaries: Arc<dyn CommandSummarizer>,
@@ -197,7 +177,6 @@ pub fn mk_runtime(
         policy,
         quarantine,
         mainline: Arc::new(NoopMainline),
-        web_search: Arc::new(NoopWebSearch),
         planner,
         approval_bus: approval_bus.clone(),
         event_log: event_log.clone(),
