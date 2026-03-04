@@ -6,6 +6,9 @@ use sieve_types::{Action, Capability, Resource, SinkCheck, SinkKey, ValueRef};
 use sieve_types::{CommandKnowledge, CommandSummary};
 use url::{Host, Url};
 
+#[path = "brave-search.rs"]
+mod brave_search;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryOutcome {
     pub knowledge: CommandKnowledge,
@@ -64,6 +67,10 @@ fn summarize_argv(argv: &[String]) -> SummaryOutcome {
     }
 
     if let Some(outcome) = summarize_curl(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = brave_search::summarize_brave_search(argv) {
         return outcome;
     }
 
