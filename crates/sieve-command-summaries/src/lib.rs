@@ -16,6 +16,63 @@ pub struct SummaryOutcome {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlannerCommandDescriptor {
+    pub command: &'static str,
+    pub description: &'static str,
+}
+
+const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
+    PlannerCommandDescriptor {
+        command: "bravesearch",
+        description: "Search Brave index from CLI (web/news/images/videos) and return structured results.",
+    },
+    PlannerCommandDescriptor {
+        command: "brave-search",
+        description: "Alias for `bravesearch`; supports the same search/config/cache subcommands.",
+    },
+    PlannerCommandDescriptor {
+        command: "curl",
+        description: "Send HTTP requests directly (GET/POST/etc.) to fetch remote content or APIs.",
+    },
+    PlannerCommandDescriptor {
+        command: "rm",
+        description: "Remove files/directories; destructive, often policy-gated (for example recursive deletes).",
+    },
+    PlannerCommandDescriptor {
+        command: "cp",
+        description: "Copy files/directories to a destination path.",
+    },
+    PlannerCommandDescriptor {
+        command: "mv",
+        description: "Move or rename files/directories.",
+    },
+    PlannerCommandDescriptor {
+        command: "mkdir",
+        description: "Create directories (supports parent creation flags).",
+    },
+    PlannerCommandDescriptor {
+        command: "touch",
+        description: "Create files or update file timestamps.",
+    },
+    PlannerCommandDescriptor {
+        command: "chmod",
+        description: "Change file permission modes.",
+    },
+    PlannerCommandDescriptor {
+        command: "chown",
+        description: "Change file ownership.",
+    },
+    PlannerCommandDescriptor {
+        command: "tee",
+        description: "Write stdin to one or more files (optionally append).",
+    },
+];
+
+pub fn planner_command_catalog() -> &'static [PlannerCommandDescriptor] {
+    PLANNER_COMMAND_CATALOG
+}
+
 pub trait CommandSummarizer: Send + Sync {
     fn summarize(&self, argv: &[String]) -> SummaryOutcome;
 }
@@ -1420,5 +1477,12 @@ mod tests {
             out.reason.as_deref(),
             Some("dangerous command class lacks explicit summary")
         );
+    }
+
+    #[test]
+    fn planner_command_catalog_includes_bravesearch_entry() {
+        assert!(planner_command_catalog().iter().any(|entry| {
+            entry.command == "bravesearch" && entry.description.contains("Search Brave index")
+        }));
     }
 }

@@ -3039,6 +3039,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sieve-command-summaries",
  "sieve-tool-contracts",
  "sieve-types",
  "thiserror 1.0.69",
