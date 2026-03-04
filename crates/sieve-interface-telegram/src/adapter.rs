@@ -180,7 +180,7 @@ where
                     self.resolve_approval(action, request_id)?;
                 } else {
                     self.send_to_chat(
-                        "approval target unclear; reply to an approval request message or use /approve_once <request_id> or /deny <request_id>",
+                        "approval target unclear; reply to an approval request message or use /approve_once <request_id>, /always <request_id>, or /deny <request_id>",
                     )?;
                 }
                 return Ok(());
@@ -255,6 +255,7 @@ where
 
         let action = match action {
             TelegramApprovalAction::ApproveOnce => ApprovalAction::ApproveOnce,
+            TelegramApprovalAction::ApproveAlways => ApprovalAction::ApproveAlways,
             TelegramApprovalAction::Deny => ApprovalAction::Deny,
         };
 
@@ -1640,6 +1641,7 @@ reason = "rm -rf requires approval"
                 cwd: "/tmp".to_string(),
                 user_message: "dangerous".to_string(),
                 allowed_tools: vec!["bash".to_string()],
+                allowed_net_connect_scopes: Vec::new(),
                 previous_events: Vec::new(),
                 guidance: None,
                 control_value_refs: BTreeSet::new(),

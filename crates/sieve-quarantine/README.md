@@ -2,6 +2,16 @@
 
 `sieve-quarantine` runs accepted unknown/uncertain commands in sandbox (`bwrap` + `strace`) and emits normalized capability attempts.
 
+## Sandbox Controls
+
+- Network mode:
+  - `Isolated` (default): private net namespace (`--unshare-net`)
+  - `LocalOnly`: loopback-only intent (currently equivalent to `Isolated` under bwrap)
+  - `Full`: share host network (no `--unshare-net`)
+- Writable bind paths:
+  - Additional absolute paths can be mounted writable with `--bind <path> <path>`
+  - `/tmp` remains writable via `--tmpfs /tmp`
+
 ## Trace Artifacts
 
 - Per-run directory: `~/.sieve/logs/traces/<run_id>/`

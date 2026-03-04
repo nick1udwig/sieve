@@ -12,9 +12,64 @@ reason = "rm -rf requires explicit approval"
 [[allow_capabilities]]
 resource = "net"
 action = "connect"
-scope = "https://api.search.brave.com/res/v1/web/search"
+scope = "https://api.search.brave.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://markdown.new/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://weather.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://www.weather.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://forecast.weather.gov/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://wunderground.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://www.wunderground.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://google.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://www.google.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://x.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://www.x.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.open-meteo.com/"
 
 [options]
-violation_mode = "deny"
+violation_mode = "ask"
 require_trusted_control_for_mutating = true
 trusted_control = true

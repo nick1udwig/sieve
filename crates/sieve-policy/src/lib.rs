@@ -58,7 +58,7 @@ const fn default_true() -> bool {
 }
 
 const fn default_violation_mode() -> ViolationMode {
-    ViolationMode::Deny
+    ViolationMode::Ask
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -872,6 +872,36 @@ require_trusted_control_for_mutating = true
             r#"
 [options]
 violation_mode = "ask"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+        )
+        .expect("policy parse");
+
+        let mut input = base_input();
+        input.summary = Some(CommandSummary {
+            required_capabilities: vec![Capability {
+                resource: Resource::Net,
+                action: Action::Write,
+                scope: "https://api.example.com/upload".to_string(),
+            }],
+            sink_checks: vec![],
+            unsupported_flags: vec![],
+        });
+
+        let decision = engine.evaluate_precheck(&input);
+        assert_eq!(decision.kind, PolicyDecisionKind::DenyWithApproval);
+        assert_eq!(
+            decision.blocked_rule_id.as_deref(),
+            Some("missing-capability")
+        );
+    }
+
+    #[test]
+    fn default_violation_mode_is_ask() {
+        let engine = TomlPolicyEngine::from_toml_str(
+            r#"
+[options]
 trusted_control = true
 require_trusted_control_for_mutating = true
 "#,

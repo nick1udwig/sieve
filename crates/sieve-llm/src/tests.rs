@@ -81,6 +81,7 @@ fn serialize_planner_input_only_sends_safe_shape() {
         run_id: RunId("run-1".to_string()),
         user_message: "list files".to_string(),
         allowed_tools: vec!["bash".to_string()],
+        allowed_net_connect_scopes: Vec::new(),
         previous_events: vec![event],
         guidance: None,
     };
@@ -226,6 +227,8 @@ fn response_turn_round_trip_uses_safe_shape() {
         tool_outcomes: vec![crate::ResponseToolOutcome {
             tool_name: "bash".to_string(),
             outcome: "execute_mainline exit_code=0".to_string(),
+            attempted_command: Some("pwd".to_string()),
+            failure_reason: None,
             refs: vec![crate::ResponseRefMetadata {
                 ref_id: "ref-1".to_string(),
                 kind: "stdout".to_string(),
@@ -237,6 +240,7 @@ fn response_turn_round_trip_uses_safe_shape() {
     .expect("serialize response input");
     assert!(payload.get("tool_outcomes").is_some());
     assert!(payload.to_string().contains("trusted_user_message"));
+    assert!(payload.to_string().contains("attempted_command"));
 
     let out = decode_response_output(json!({
         "message": "done [[ref:ref-1]]",
@@ -310,6 +314,7 @@ async fn openai_live_planner_smoke_env_gated() {
             run_id: RunId("live-planner".to_string()),
             user_message: "Use bash to print hello world.".to_string(),
             allowed_tools: vec!["bash".to_string()],
+            allowed_net_connect_scopes: Vec::new(),
             previous_events: vec![],
             guidance: None,
         })

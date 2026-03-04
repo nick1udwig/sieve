@@ -25,15 +25,15 @@ pub struct PlannerCommandDescriptor {
 const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
     PlannerCommandDescriptor {
         command: "bravesearch",
-        description: "Search Brave index from CLI (web/news/images/videos) and return structured results.",
+        description: "Search Brave index from CLI for discovery. Preferred pattern: `bravesearch search --query \"...\" --count N --output json` (`--output`, not `--format`). After discovery, fetch selected result URLs with `curl` for grounded facts.",
     },
     PlannerCommandDescriptor {
         command: "brave-search",
-        description: "Alias for `bravesearch`; supports the same search/config/cache subcommands.",
+        description: "Alias for `bravesearch` with the same subcommands and flags (`--output`, not `--format`).",
     },
     PlannerCommandDescriptor {
         command: "curl",
-        description: "Send HTTP requests directly (GET/POST/etc.) to fetch remote content or APIs.",
+        description: "Send HTTP requests directly (GET/POST/etc.) to fetch remote content or APIs. For webpage content, prefer `curl -sS \"https://markdown.new/<url>\"` over raw HTML for cleaner extraction. Avoid piping to uncataloged commands (for example `| head`) because policy may deny them.",
     },
     PlannerCommandDescriptor {
         command: "rm",
@@ -697,6 +697,11 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
+            if is_short_flag_cluster(arg, &['s', 'S', 'L', 'k', 'f']) {
+                i += 1;
+                continue;
+            }
+
             if arg == "-H" || arg == "--header" {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl header flag missing value"));
@@ -735,6 +740,23 @@ fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             "POST".to_string()
         }
     });
+    if matches!(method.as_str(), "GET" | "HEAD") {
+        let Some(url) = url_raw else {
+            return Some(unknown_outcome("curl request missing URL"));
+        };
+        let Some(sink) = canonicalize_url_connect_scope(&url) else {
+            return Some(unknown_outcome("curl request has invalid URL sink"));
+        };
+        return Some(known_outcome(CommandSummary {
+            required_capabilities: vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: sink.0.clone(),
+            }],
+            sink_checks: Vec::new(),
+            unsupported_flags: Vec::new(),
+        }));
+    }
     if !matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
         return None;
     }
@@ -865,6 +887,26 @@ fn basename(s: Option<&String>) -> Option<&str> {
     std::path::Path::new(s)
         .file_name()
         .and_then(|part| part.to_str())
+}
+
+pub(crate) fn canonicalize_url_connect_scope(raw: &str) -> Option<SinkKey> {
+    let url = Url::parse(raw).ok()?;
+    let scheme = url.scheme().to_ascii_lowercase();
+    let host = match url.host()? {
+        Host::Domain(domain) => domain.to_ascii_lowercase(),
+        Host::Ipv4(addr) => addr.to_string(),
+        Host::Ipv6(addr) => format!("[{addr}]"),
+    };
+    let port = url
+        .port()
+        .filter(|p| Some(*p) != default_port_for_scheme(&scheme));
+    let mut out = format!("{scheme}://{host}");
+    if let Some(port) = port {
+        out.push(':');
+        out.push_str(&port.to_string());
+    }
+    out.push('/');
+    Some(SinkKey(out))
 }
 
 fn canonicalize_url_sink(raw: &str) -> Option<SinkKey> {
@@ -1397,6 +1439,51 @@ mod tests {
     }
 
     #[test]
+    fn curl_get_url_requires_net_connect_capability() {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            "-sS",
+            "https://api.open-meteo.com/v1/forecast?latitude=1&longitude=2",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.sink_checks, Vec::<SinkCheck>::new());
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.open-meteo.com/".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn curl_get_connect_scope_keeps_non_default_port() {
+        let out = summarize_argv(&argv(&["curl", "https://example.com:8443/path?q=1"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://example.com:8443/".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn curl_get_missing_url_routes_to_unknown() {
+        let out = summarize_argv(&argv(&["curl", "-sS"]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+        assert_eq!(out.reason.as_deref(), Some("curl request missing URL"));
+    }
+
+    #[test]
     fn curl_post_encoded_slash_stays_encoded() {
         let out = summarize_argv(&argv(&[
             "curl",
@@ -1484,5 +1571,24 @@ mod tests {
         assert!(planner_command_catalog().iter().any(|entry| {
             entry.command == "bravesearch" && entry.description.contains("Search Brave index")
         }));
+    }
+
+    #[test]
+    fn planner_command_catalog_bravesearch_mentions_discovery_followup() {
+        let entry = planner_command_catalog()
+            .iter()
+            .find(|entry| entry.command == "bravesearch")
+            .expect("bravesearch catalog entry");
+        assert!(entry.description.contains("After discovery"));
+        assert!(entry.description.contains("curl"));
+    }
+
+    #[test]
+    fn planner_command_catalog_curl_mentions_markdown_new() {
+        let entry = planner_command_catalog()
+            .iter()
+            .find(|entry| entry.command == "curl")
+            .expect("curl catalog entry");
+        assert!(entry.description.contains("markdown.new"));
     }
 }

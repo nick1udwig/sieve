@@ -23,7 +23,7 @@
     },
     "action": {
       "type": "string",
-      "enum": ["approve_once", "deny"]
+      "enum": ["approve_once", "approve_always", "deny"]
     },
     "created_at_ms": {
       "type": "integer",

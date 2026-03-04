@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
 use crate::error::{llm_err, CapTraceError};
-use crate::fixture::{TOKEN_IN_FILE, TOKEN_IN_FILE_2, TOKEN_OUT_FILE, TOKEN_TMP_DIR};
+use crate::fixture::{
+    TOKEN_ARG, TOKEN_DATA, TOKEN_HEADER, TOKEN_IN_FILE, TOKEN_IN_FILE_2, TOKEN_KV, TOKEN_OUT_FILE,
+    TOKEN_TMP_DIR, TOKEN_URL,
+};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -10,6 +13,7 @@ use sieve_shell::{BasicShellAnalyzer, ShellAnalyzer};
 use sieve_tool_contracts::{validate_at_index, TypedCall};
 use sieve_types::{CommandKnowledge, PlannerTurnInput, RunId};
 use std::collections::{BTreeSet, VecDeque};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
@@ -97,6 +101,7 @@ impl CaseGenerator for PlannerCaseGenerator {
                 run_id: RunId(format!("captrace-llm-{}", now_ms())),
                 user_message,
                 allowed_tools: vec!["bash".to_string()],
+                allowed_net_connect_scopes: Vec::new(),
                 previous_events: Vec::new(),
                 guidance: None,
             })
@@ -545,7 +550,7 @@ fn cases_from_json(value: Value) -> Result<Vec<String>, CapTraceError> {
 
 fn generation_prompt(command: &str, max_cases: usize) -> String {
     format!(
-        "Return JSON only with shape {{\"cases\": [string...]}}. Generate up to {max_cases} shell command strings. Each command must invoke `{command}` only. No pipes, no control operators, no shell variables. Use placeholders {TOKEN_TMP_DIR} {TOKEN_IN_FILE} {TOKEN_IN_FILE_2} {TOKEN_OUT_FILE} for file paths. Prefer safe, varied flags."
+        "Return JSON only with shape {{\"cases\": [string...]}}. Generate up to {max_cases} shell command strings. Each command must invoke `{command}` only. No pipes, no control operators, no shell variables. Use placeholders {TOKEN_TMP_DIR} {TOKEN_IN_FILE} {TOKEN_IN_FILE_2} {TOKEN_OUT_FILE} {TOKEN_URL} {TOKEN_HEADER} {TOKEN_DATA} {TOKEN_KV} {TOKEN_ARG}. Focus on valid command usage that should run successfully. Explore different subcommands and meaningful flag combinations. Avoid help/version and flags likely to be unsupported by the command unless no other runnable forms exist."
     )
 }
 
@@ -567,17 +572,28 @@ pub(crate) fn argv_matches_command(argv: &[String], command: &str) -> bool {
         return false;
     };
 
-    if first == command || first.ends_with(&format!("/{command}")) {
+    if token_matches_command(first, command) {
         return true;
     }
 
     if first == "sudo" {
         if let Some(second) = argv.get(1) {
-            return second == command || second.ends_with(&format!("/{command}"));
+            return token_matches_command(second, command);
         }
     }
 
     false
+}
+
+fn token_matches_command(token: &str, command: &str) -> bool {
+    if token == command || token.ends_with(&format!("/{command}")) {
+        return true;
+    }
+
+    let Some(command_basename) = Path::new(command).file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    token == command_basename || token.ends_with(&format!("/{command_basename}"))
 }
 
 fn now_ms() -> u64 {

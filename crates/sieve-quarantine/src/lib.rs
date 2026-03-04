@@ -35,6 +35,18 @@ pub struct BwrapQuarantineRunner {
     bwrap_program: String,
     strace_program: String,
     shell_program: String,
+    network_mode: QuarantineNetworkMode,
+    writable_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuarantineNetworkMode {
+    /// Isolate the command in a private network namespace.
+    Isolated,
+    /// Loopback-only intent (currently equivalent to `Isolated` under bwrap).
+    LocalOnly,
+    /// Share host networking with the sandboxed command.
+    Full,
 }
 
 impl Default for BwrapQuarantineRunner {
@@ -44,6 +56,8 @@ impl Default for BwrapQuarantineRunner {
             bwrap_program: "bwrap".to_string(),
             strace_program: "strace".to_string(),
             shell_program: "bash".to_string(),
+            network_mode: QuarantineNetworkMode::Isolated,
+            writable_paths: Vec::new(),
         }
     }
 }
@@ -67,6 +81,21 @@ impl BwrapQuarantineRunner {
             bwrap_program: bwrap_program.into(),
             strace_program: strace_program.into(),
             shell_program: shell_program.into(),
+            network_mode: QuarantineNetworkMode::Isolated,
+            writable_paths: Vec::new(),
+        }
+    }
+
+    pub fn with_sandbox(
+        logs_root: PathBuf,
+        network_mode: QuarantineNetworkMode,
+        writable_paths: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            logs_root,
+            network_mode,
+            writable_paths,
+            ..Self::default()
         }
     }
 
@@ -123,10 +152,11 @@ impl BwrapQuarantineRunner {
         trace_base: &Path,
         command_script: &str,
     ) -> Result<Output, QuarantineRunError> {
-        let bwrap_args = vec![
-            "--die-with-parent".to_string(),
-            "--new-session".to_string(),
-            "--unshare-net".to_string(),
+        let mut bwrap_args = vec!["--die-with-parent".to_string(), "--new-session".to_string()];
+        if self.network_mode != QuarantineNetworkMode::Full {
+            bwrap_args.push("--unshare-net".to_string());
+        }
+        bwrap_args.extend([
             "--ro-bind".to_string(),
             "/".to_string(),
             "/".to_string(),
@@ -136,6 +166,21 @@ impl BwrapQuarantineRunner {
             "/proc".to_string(),
             "--tmpfs".to_string(),
             "/tmp".to_string(),
+        ]);
+        for writable_path in &self.writable_paths {
+            if !writable_path.exists() {
+                return Err(QuarantineRunError::Exec(format!(
+                    "writable path does not exist: {}",
+                    writable_path.display()
+                )));
+            }
+            bwrap_args.extend([
+                "--bind".to_string(),
+                writable_path.to_string_lossy().to_string(),
+                writable_path.to_string_lossy().to_string(),
+            ]);
+        }
+        bwrap_args.extend([
             "--bind".to_string(),
             run_dir.to_string_lossy().to_string(),
             run_dir.to_string_lossy().to_string(),
@@ -151,7 +196,7 @@ impl BwrapQuarantineRunner {
             self.shell_program.clone(),
             "-lc".to_string(),
             command_script.to_string(),
-        ];
+        ]);
 
         Command::new(&self.bwrap_program)
             .args(bwrap_args)

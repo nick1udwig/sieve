@@ -369,11 +369,14 @@ fn latest_value(parsed: &ParsedFlags, key: &str, default: &str) -> String {
 }
 
 fn known_net_connect_outcome(scope: &str) -> SummaryOutcome {
+    let scope = super::canonicalize_url_connect_scope(scope)
+        .map(|sink| sink.0)
+        .unwrap_or_else(|| scope.to_string());
     super::known_outcome(CommandSummary {
         required_capabilities: vec![Capability {
             resource: Resource::Net,
             action: Action::Connect,
-            scope: scope.to_string(),
+            scope,
         }],
         sink_checks: Vec::new(),
         unsupported_flags: Vec::new(),
@@ -412,7 +415,7 @@ mod tests {
             vec![Capability {
                 resource: Resource::Net,
                 action: Action::Connect,
-                scope: WEB_SEARCH_ENDPOINT.to_string(),
+                scope: "https://api.search.brave.com/".to_string(),
             }]
         );
         assert!(summary.sink_checks.is_empty());
@@ -429,7 +432,7 @@ mod tests {
             Capability {
                 resource: Resource::Net,
                 action: Action::Connect,
-                scope: NEWS_SEARCH_ENDPOINT.to_string(),
+                scope: "https://api.search.brave.com/".to_string(),
             }
         );
     }

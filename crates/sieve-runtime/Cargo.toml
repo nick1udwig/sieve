@@ -16,3 +16,4 @@ sieve-types = { path = "../sieve-types" }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+url = "2.5.8"

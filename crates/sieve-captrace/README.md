@@ -4,6 +4,7 @@ Standalone capability-definition generator for one CLI command.
 
 Flow:
 - collect argument variants (seed cases + optional planner LLM)
+- when only default `<command> --help` is available, recursively parse help text for subcommands and synthesize subcommand exercise variants (`--help`, usage-tail args, representative flags)
 - run each variant through quarantine tracing (`bwrap + strace`)
 - emit Sieve-compatible `summary_outcome.summary` definitions per variant
 
@@ -18,12 +19,22 @@ Runtime behavior:
 cargo run -p sieve-captrace -- mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --output /tmp/mkdir-definition.json --rust-output /tmp/mkdir-generated.rs
 ```
 
+Escalation flags:
+- `--allow-local-network` (loopback-only intent)
+- `--allow-full-network` (share host outbound network)
+- `--allow-write <absolute path>` (repeatable writable bind mount)
+
 ### Placeholders
 
 - `{{TMP_DIR}}`
 - `{{IN_FILE}}`
 - `{{IN_FILE_2}}`
 - `{{OUT_FILE}}`
+- `{{URL}}`
+- `{{HEADER}}`
+- `{{DATA}}`
+- `{{KV}}`
+- `{{ARG}}`
 
 ## LLM Mode
 
@@ -42,4 +53,7 @@ Optional:
 
 Output includes:
 - JSON artifact (`GeneratedCommandDefinition`) with per-variant summaries
+- per-subcommand aggregate report (`subcommand_reports`) with success/failure counts + capability union
 - Rust snippet string (`rust_snippet`) suitable for adapting into `sieve-command-summaries`
+- escalation guidance in `notes` when traces indicate blocked capabilities (also emitted on stderr as `next:`/`hint:` lines)
+- normalized network capability scopes (`network=local|network=remote`) to avoid host-specific IP hardcoding

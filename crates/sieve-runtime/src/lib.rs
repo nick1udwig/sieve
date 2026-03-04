@@ -8,12 +8,12 @@ use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
-    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
-    CommandKnowledge, CommandSegment, CommandSummary, ControlContext, DeclassifyRequest,
-    DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity,
+    Action, ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
+    Capability, CommandKnowledge, CommandSegment, CommandSummary, ControlContext,
+    DeclassifyRequest, DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity,
     PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, PolicyDecision, PolicyDecisionKind,
     PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent, QuarantineReport,
-    QuarantineRunRequest, RunId, RuntimeEvent, RuntimePolicyContext, SinkKey,
+    QuarantineRunRequest, Resource, RunId, RuntimeEvent, RuntimePolicyContext, SinkKey,
     SinkPermissionContext, ToolContractValidationReport, UncertainMode, UnknownMode, ValueLabel,
     ValueRef,
 };
@@ -27,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::oneshot;
+use url::Url;
 
 #[derive(Debug, Error)]
 pub enum ApprovalBusError {
@@ -423,6 +424,7 @@ pub struct PlannerRunRequest {
     pub cwd: String,
     pub user_message: String,
     pub allowed_tools: Vec<String>,
+    pub allowed_net_connect_scopes: Vec<String>,
     pub previous_events: Vec<RuntimeEvent>,
     pub guidance: Option<PlannerGuidanceFrame>,
     pub control_value_refs: BTreeSet<ValueRef>,
@@ -472,6 +474,14 @@ pub struct RuntimeOrchestrator {
     clock: Arc<dyn Clock>,
     next_request: AtomicU64,
     value_state: Mutex<RuntimeValueState>,
+    persistent_approval_allowances: Mutex<BTreeSet<ApprovalAllowanceKey>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ApprovalAllowanceKey {
+    resource: Resource,
+    action: Action,
+    scope: String,
 }
 
 pub struct RuntimeDeps {
@@ -502,6 +512,7 @@ impl RuntimeOrchestrator {
             clock: deps.clock,
             next_request: AtomicU64::new(1),
             value_state: Mutex::new(RuntimeValueState::default()),
+            persistent_approval_allowances: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -524,6 +535,39 @@ impl RuntimeOrchestrator {
             .lock()
             .map_err(|_| ValueStateError::LockPoisoned)?;
         Ok(state.labels_by_value.get(value_ref).cloned())
+    }
+
+    pub fn has_known_value_refs(&self) -> Result<bool, RuntimeError> {
+        let state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(!state.labels_by_value.is_empty())
+    }
+
+    pub fn persistent_approval_allowances(&self) -> Result<Vec<Capability>, RuntimeError> {
+        let allowances = self
+            .persistent_approval_allowances
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(allowances
+            .iter()
+            .map(ApprovalAllowanceKey::as_capability)
+            .collect())
+    }
+
+    pub fn restore_persistent_approval_allowances(
+        &self,
+        capabilities: &[Capability],
+    ) -> Result<(), RuntimeError> {
+        let mut allowances = self
+            .persistent_approval_allowances
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        for capability in capabilities {
+            allowances.insert(ApprovalAllowanceKey::for_capability(capability));
+        }
+        Ok(())
     }
 
     pub fn runtime_policy_context_for_control(
@@ -549,6 +593,7 @@ impl RuntimeOrchestrator {
                 run_id: request.run_id.clone(),
                 user_message: request.user_message.clone(),
                 allowed_tools: request.allowed_tools.clone(),
+                allowed_net_connect_scopes: request.allowed_net_connect_scopes.clone(),
                 previous_events: request.previous_events.clone(),
                 guidance: request.guidance.clone(),
             })
@@ -681,21 +726,35 @@ impl RuntimeOrchestrator {
                 reason: decision.reason,
             }),
             PolicyDecisionKind::DenyWithApproval => {
+                if decision.blocked_rule_id.as_deref() == Some("missing-capability")
+                    && self.capabilities_persistently_allowed(&inferred_capabilities)?
+                {
+                    return self
+                        .execute_mainline(
+                            request.run_id,
+                            request.cwd,
+                            request.script,
+                            command_segments,
+                        )
+                        .await;
+                }
                 let blocked_rule_id = decision
                     .blocked_rule_id
                     .unwrap_or_else(|| "deny_with_approval".to_string());
-                match self
+                let resolution = self
                     .request_approval(
                         request.run_id.clone(),
                         command_segments.clone(),
-                        inferred_capabilities,
+                        inferred_capabilities.clone(),
                         blocked_rule_id,
                         decision.reason,
                     )
-                    .await?
-                    .action
-                {
-                    ApprovalAction::ApproveOnce => {
+                    .await?;
+                match resolution.action {
+                    ApprovalAction::ApproveOnce | ApprovalAction::ApproveAlways => {
+                        if resolution.action == ApprovalAction::ApproveAlways {
+                            self.remember_persistent_approval_allowances(&inferred_capabilities)?;
+                        }
                         self.execute_mainline(
                             request.run_id,
                             request.cwd,
@@ -943,6 +1002,40 @@ impl RuntimeOrchestrator {
         }
     }
 
+    fn remember_persistent_approval_allowances(
+        &self,
+        capabilities: &[Capability],
+    ) -> Result<(), RuntimeError> {
+        if capabilities.is_empty() {
+            return Ok(());
+        }
+        let mut allowances = self
+            .persistent_approval_allowances
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        for capability in capabilities {
+            allowances.insert(ApprovalAllowanceKey::for_capability(capability));
+        }
+        Ok(())
+    }
+
+    fn capabilities_persistently_allowed(
+        &self,
+        capabilities: &[Capability],
+    ) -> Result<bool, RuntimeError> {
+        if capabilities.is_empty() {
+            return Ok(false);
+        }
+        let allowances = self
+            .persistent_approval_allowances
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(capabilities
+            .iter()
+            .map(ApprovalAllowanceKey::for_capability)
+            .all(|key| allowances.contains(&key)))
+    }
+
     async fn handle_unknown_or_uncertain(
         &self,
         request: &ShellRunRequest,
@@ -989,7 +1082,7 @@ impl RuntimeOrchestrator {
                     .await?
                     .action;
                 match action {
-                    ApprovalAction::ApproveOnce => {
+                    ApprovalAction::ApproveOnce | ApprovalAction::ApproveAlways => {
                         let report = self
                             .run_quarantine(request.run_id.clone(), request.cwd.clone(), segments)
                             .await?;
@@ -1170,6 +1263,50 @@ impl RuntimeOrchestrator {
         let next = self.next_request.fetch_add(1, Ordering::Relaxed);
         ApprovalRequestId(format!("approval-{next}"))
     }
+}
+
+impl ApprovalAllowanceKey {
+    fn for_capability(capability: &Capability) -> Self {
+        Self {
+            resource: capability.resource,
+            action: capability.action,
+            scope: canonical_approval_scope(capability),
+        }
+    }
+
+    fn as_capability(&self) -> Capability {
+        Capability {
+            resource: self.resource,
+            action: self.action,
+            scope: self.scope.clone(),
+        }
+    }
+}
+
+fn canonical_approval_scope(capability: &Capability) -> String {
+    match (capability.resource, capability.action) {
+        (Resource::Net, Action::Connect) => canonical_net_origin_scope(&capability.scope)
+            .unwrap_or_else(|| capability.scope.clone()),
+        _ => capability.scope.clone(),
+    }
+}
+
+fn canonical_net_origin_scope(scope: &str) -> Option<String> {
+    let url = Url::parse(scope).ok()?;
+    let host = url.host_str()?;
+    let mut origin = format!("{}://{}", url.scheme(), host.to_ascii_lowercase());
+    if let Some(port) = url.port() {
+        let default_port = match url.scheme() {
+            "http" => Some(80),
+            "https" => Some(443),
+            _ => None,
+        };
+        if Some(port) != default_port {
+            origin.push(':');
+            origin.push_str(&port.to_string());
+        }
+    }
+    Some(origin)
 }
 
 struct ApprovalResolution {
@@ -1960,6 +2097,7 @@ mod tests {
                         cwd: "/tmp".to_string(),
                         user_message: "delete tmp".to_string(),
                         allowed_tools: vec!["bash".to_string()],
+                        allowed_net_connect_scopes: Vec::new(),
                         previous_events,
                         guidance: None,
                         control_value_refs: BTreeSet::new(),
@@ -2015,6 +2153,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approve_always_whitelists_missing_capability_by_net_origin() {
+        let (runtime, approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+            r#"
+[options]
+violation_mode = "ask"
+require_trusted_control_for_mutating = false
+trusted_control = true
+"#,
+        );
+
+        let first_run = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_shell(ShellRunRequest {
+                        run_id: RunId("run-allow-always-1".to_string()),
+                        cwd: "/tmp".to_string(),
+                        script: "curl https://example.com/one".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Deny,
+                    })
+                    .await
+            })
+        };
+        let first_requested = wait_for_approval_count(&approval_bus, 1).await[0].clone();
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: first_requested.request_id.clone(),
+                run_id: first_requested.run_id.clone(),
+                action: ApprovalAction::ApproveAlways,
+                created_at_ms: 1001,
+            })
+            .expect("resolve first approval as always");
+        let first_disposition = first_run.await.expect("first run task join").expect("first run");
+        assert!(matches!(
+            first_disposition,
+            RuntimeDisposition::ExecuteMainline(_)
+        ));
+
+        let second_disposition = runtime
+            .orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-allow-always-2".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "curl https://example.com/two".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Deny,
+            })
+            .await
+            .expect("second run");
+        assert!(matches!(
+            second_disposition,
+            RuntimeDisposition::ExecuteMainline(_)
+        ));
+        assert_eq!(
+            approval_bus
+                .published_events()
+                .expect("published approvals")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn restore_persistent_approval_allowances_normalizes_net_connect_scope_to_origin() {
+        let (runtime, _approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Known,
+            vec![CommandSegment {
+                argv: vec!["echo".to_string(), "ok".to_string()],
+                operator_before: None,
+            }],
+            CommandKnowledge::Known,
+            PolicyDecisionKind::Allow,
+        );
+
+        runtime
+            .restore_persistent_approval_allowances(&[Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://example.com/path?x=1".to_string(),
+            }])
+            .expect("restore allowances");
+
+        let allowances = runtime
+            .persistent_approval_allowances()
+            .expect("snapshot allowances");
+        assert_eq!(allowances.len(), 1);
+        assert_eq!(
+            allowances[0],
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://example.com".to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn orchestrate_planner_turn_runs_unknown_bash_in_quarantine_when_accepted() {
         let mut args = BTreeMap::new();
         args.insert("cmd".to_string(), json!("custom-cmd --flag"));
@@ -2043,6 +2283,7 @@ mod tests {
                 cwd: "/tmp".to_string(),
                 user_message: "run custom command".to_string(),
                 allowed_tools: vec!["bash".to_string()],
+                allowed_net_connect_scopes: Vec::new(),
                 previous_events: Vec::new(),
                 guidance: None,
                 control_value_refs: BTreeSet::new(),
@@ -2098,6 +2339,7 @@ mod tests {
                 cwd: "/tmp".to_string(),
                 user_message: "run".to_string(),
                 allowed_tools: vec!["bash".to_string()],
+                allowed_net_connect_scopes: Vec::new(),
                 previous_events: Vec::new(),
                 guidance: None,
                 control_value_refs: BTreeSet::new(),
@@ -2150,6 +2392,7 @@ mod tests {
                 cwd: "/tmp".to_string(),
                 user_message: "run echo".to_string(),
                 allowed_tools: vec!["endorse".to_string()],
+                allowed_net_connect_scopes: Vec::new(),
                 previous_events: Vec::new(),
                 guidance: None,
                 control_value_refs: BTreeSet::new(),
@@ -2220,6 +2463,7 @@ mod tests {
                         cwd: "/tmp".to_string(),
                         user_message: "endorse control".to_string(),
                         allowed_tools: vec!["endorse".to_string()],
+                        allowed_net_connect_scopes: Vec::new(),
                         previous_events: Vec::new(),
                         guidance: None,
                         control_value_refs: BTreeSet::new(),

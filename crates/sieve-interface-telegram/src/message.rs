@@ -3,6 +3,7 @@ use sieve_types::ApprovalRequestedEvent;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TelegramApprovalAction {
     ApproveOnce,
+    ApproveAlways,
     Deny,
 }
 
@@ -28,6 +29,9 @@ pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
         "/approve" | "/approve_once" | "approve" | "approve_once" => {
             TelegramApprovalAction::ApproveOnce
         }
+        "/always" | "/approve_always" | "always" | "approve_always" => {
+            TelegramApprovalAction::ApproveAlways
+        }
         "/deny" | "deny" => TelegramApprovalAction::Deny,
         _ => return None,
     };
@@ -38,6 +42,7 @@ pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
 pub(crate) fn parse_short_action(text: &str) -> Option<TelegramApprovalAction> {
     match text.trim().to_ascii_lowercase().as_str() {
         "yes" | "y" | "👍" => Some(TelegramApprovalAction::ApproveOnce),
+        "always" | "a" | "❤️" | "❤" | "♥️" => Some(TelegramApprovalAction::ApproveAlways),
         "no" | "n" | "👎" => Some(TelegramApprovalAction::Deny),
         _ => None,
     }
@@ -47,6 +52,7 @@ pub(crate) fn parse_reaction_action(emoji: &[String]) -> Option<TelegramApproval
     for entry in emoji {
         match entry.as_str() {
             "👍" => return Some(TelegramApprovalAction::ApproveOnce),
+            "❤️" | "❤" | "♥️" => return Some(TelegramApprovalAction::ApproveAlways),
             "👎" => return Some(TelegramApprovalAction::Deny),
             _ => {}
         }
@@ -63,7 +69,7 @@ pub(crate) fn format_approval_requested(event: &ApprovalRequestedEvent) -> Strin
         .join(" ; ");
 
     format!(
-        "approval needed to run:\n`{}`\nbecause {}\n\napprove: reply yes/y or react 👍\nreject: reply no/n or react 👎",
+        "approval needed to run:\n`{}`\nbecause {}\n\napprove once: reply yes/y or react 👍\napprove always: reply always/a or react ❤️\nreject: reply no/n or react 👎",
         segments,
         event.reason,
     )
@@ -85,6 +91,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_command_supports_approve_always() {
+        let parsed = parse_command("/always approval-2").expect("command parse");
+        assert_eq!(parsed.action, TelegramApprovalAction::ApproveAlways);
+        assert_eq!(parsed.request_id, "approval-2");
+    }
+
+    #[test]
     fn parse_short_action_supports_yes_and_no() {
         assert_eq!(
             parse_short_action("yes"),
@@ -98,6 +111,18 @@ mod tests {
             parse_short_action("👍"),
             Some(TelegramApprovalAction::ApproveOnce)
         );
+        assert_eq!(
+            parse_short_action("always"),
+            Some(TelegramApprovalAction::ApproveAlways)
+        );
+        assert_eq!(
+            parse_short_action("a"),
+            Some(TelegramApprovalAction::ApproveAlways)
+        );
+        assert_eq!(
+            parse_short_action("❤️"),
+            Some(TelegramApprovalAction::ApproveAlways)
+        );
         assert_eq!(parse_short_action("n"), Some(TelegramApprovalAction::Deny));
         assert_eq!(parse_short_action("👎"), Some(TelegramApprovalAction::Deny));
         assert_eq!(parse_short_action("maybe"), None);
@@ -108,6 +133,10 @@ mod tests {
         assert_eq!(
             parse_reaction_action(&["👍".to_string()]),
             Some(TelegramApprovalAction::ApproveOnce)
+        );
+        assert_eq!(
+            parse_reaction_action(&["❤️".to_string()]),
+            Some(TelegramApprovalAction::ApproveAlways)
         );
         assert_eq!(
             parse_reaction_action(&["👎".to_string()]),
@@ -147,7 +176,8 @@ mod tests {
         assert!(message.contains("approval needed to run:"));
         assert!(message.contains("`rm -rf /tmp/sieve-live-deny-target`"));
         assert!(message.contains("because rm -rf requires explicit approval"));
-        assert!(message.contains("approve: reply yes/y or react 👍"));
+        assert!(message.contains("approve once: reply yes/y or react 👍"));
+        assert!(message.contains("approve always: reply always/a or react ❤️"));
         assert!(message.contains("reject: reply no/n or react 👎"));
         assert!(!message.contains("request_id:"));
         assert!(!message.contains("blocked_rule_id:"));

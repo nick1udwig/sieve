@@ -23,6 +23,13 @@ Inspired by:
    - optional: `SIEVE_HOME` (defaults to `~/.sieve`)
    - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
    - optional: `SIEVE_MAX_PLANNER_STEPS` (defaults to `3`)
+   - optional: `SIEVE_MAX_SUMMARY_CALLS_PER_TURN` (defaults to `12`; caps compose/evidence/gate summary calls per turn)
+   - optional: `SIEVE_LCM_ENABLED` (defaults to `1`; dual-lane LCM memory integration)
+   - optional: `SIEVE_LCM_ENABLE_UNTRUSTED_REFS` (defaults to `1`; can disable untrusted LCM refs in response path)
+   - optional: `SIEVE_LCM_GLOBAL_SESSION_ID` (defaults to `global`; all turns map to one memory key)
+   - optional: `SIEVE_LCM_TRUSTED_DB_PATH` / `SIEVE_LCM_UNTRUSTED_DB_PATH` (defaults under `$SIEVE_HOME/lcm/`)
+   - optional: `SIEVE_LCM_PLANNER_CONTEXT_TOKENS` / `SIEVE_LCM_UNTRUSTED_REF_TOKENS` (defaults `12000`)
+   - optional: `SIEVE_LCM_SUMMARY_MODEL` (fallback: `SIEVE_QUARANTINE_MODEL` then planner model)
    - optional: `SIEVE_LLM_EXCHANGE_LOG_PATH` (exact OpenAI request/response JSONL; defaults to `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl`)
    - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
    - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to planner model when unset)
@@ -89,10 +96,17 @@ LLM provider wire logs are also written by default to
 response bodies per attempt.
 Turns run in a planner act-observe loop bounded by `SIEVE_MAX_PLANNER_STEPS`, with typed
 Q-LLM guidance signals controlling whether to continue tool actions or finalize. Planner never sees
-raw untrusted stdout/stderr strings.
+raw untrusted stdout/stderr strings. Compose-stage quarantine calls are capped per turn by
+`SIEVE_MAX_SUMMARY_CALLS_PER_TURN`.
 Mainline `bash` execution now stores stdout/stderr as untrusted artifacts under
 `$SIEVE_HOME/artifacts`, and the response writer decides whether to inline raw refs or request a
 Q-LLM summary by ref (planner never receives raw output strings).
+
+LCM memory integration is dual-lane:
+- trusted lane: stores trusted user prompts only and injects assembled context into planner turns
+- trusted lane context is also forwarded into response composition so recall questions can be answered without tool calls
+- untrusted lane: stores user + assistant turns and produces untrusted refs via delegated `lcm_expand_query` for Q-LLM use
+- global memory mode: all turns map to one configured session key (`SIEVE_LCM_GLOBAL_SESSION_ID`)
 
 Baseline policy file: `docs/policy/baseline-policy.toml`.
 

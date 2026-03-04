@@ -5,11 +5,14 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+anyhow = "1"
 async-trait.workspace = true
 dotenvy = "0.15"
+reqwest = { version = "0.12", features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 sieve-command-summaries = { path = "../sieve-command-summaries" }
+sieve-lcm = { git = "file:///root/git/sieve-lcm", rev = "c773ed9" }
 sieve-interface-telegram = { path = "../sieve-interface-telegram" }
 sieve-llm = { path = "../sieve-llm" }
 sieve-policy = { path = "../sieve-policy" }
@@ -18,3 +21,4 @@ sieve-runtime = { path = "../sieve-runtime" }
 sieve-shell = { path = "../sieve-shell" }
 sieve-types = { path = "../sieve-types" }
 tokio.workspace = true
+uuid = { version = "1", features = ["v4"] }

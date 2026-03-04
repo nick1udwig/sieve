@@ -27,7 +27,7 @@ pub struct ApprovalRequestId(pub String);
 pub struct SinkKey(pub String);
 
 /// Capability resource dimension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Resource {
     Fs,
@@ -38,7 +38,7 @@ pub enum Resource {
 }
 
 /// Capability action dimension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Read,
@@ -109,11 +109,25 @@ pub enum PlannerGuidanceSignal {
     ContinueFetchPrimarySource = 101,
     ContinueFetchAdditionalSource = 102,
     ContinueRefineApproach = 103,
+    ContinueNeedRequiredParameter = 104,
+    ContinueNeedFreshOrTimeBoundEvidence = 105,
+    ContinueNeedPreferenceOrConstraint = 106,
+    ContinueToolDeniedTryAlternativeAllowedTool = 107,
+    ContinueNeedHigherQualitySource = 108,
+    ContinueResolveSourceConflict = 109,
+    ContinueNeedPrimaryContentFetch = 110,
+    ContinueNeedUrlExtraction = 111,
+    ContinueNeedCanonicalNonAssetUrl = 112,
+    ContinueNoProgressTryDifferentAction = 113,
     FinalAnswerReady = 200,
     FinalAnswerPartial = 201,
     FinalInsufficientEvidence = 202,
+    FinalSingleFactReady = 203,
+    FinalConflictingFactsWithRange = 204,
+    FinalNoToolActionNeeded = 205,
     StopPolicyBlocked = 300,
     StopBudgetExhausted = 301,
+    StopNoAllowedToolCanSatisfyTask = 302,
     ErrorContractViolation = 900,
 }
 
@@ -132,11 +146,25 @@ impl TryFrom<u16> for PlannerGuidanceSignal {
             101 => Ok(Self::ContinueFetchPrimarySource),
             102 => Ok(Self::ContinueFetchAdditionalSource),
             103 => Ok(Self::ContinueRefineApproach),
+            104 => Ok(Self::ContinueNeedRequiredParameter),
+            105 => Ok(Self::ContinueNeedFreshOrTimeBoundEvidence),
+            106 => Ok(Self::ContinueNeedPreferenceOrConstraint),
+            107 => Ok(Self::ContinueToolDeniedTryAlternativeAllowedTool),
+            108 => Ok(Self::ContinueNeedHigherQualitySource),
+            109 => Ok(Self::ContinueResolveSourceConflict),
+            110 => Ok(Self::ContinueNeedPrimaryContentFetch),
+            111 => Ok(Self::ContinueNeedUrlExtraction),
+            112 => Ok(Self::ContinueNeedCanonicalNonAssetUrl),
+            113 => Ok(Self::ContinueNoProgressTryDifferentAction),
             200 => Ok(Self::FinalAnswerReady),
             201 => Ok(Self::FinalAnswerPartial),
             202 => Ok(Self::FinalInsufficientEvidence),
+            203 => Ok(Self::FinalSingleFactReady),
+            204 => Ok(Self::FinalConflictingFactsWithRange),
+            205 => Ok(Self::FinalNoToolActionNeeded),
             300 => Ok(Self::StopPolicyBlocked),
             301 => Ok(Self::StopBudgetExhausted),
+            302 => Ok(Self::StopNoAllowedToolCanSatisfyTask),
             900 => Ok(Self::ErrorContractViolation),
             _ => Err(format!("unknown planner guidance signal code `{value}`")),
         }
@@ -282,6 +310,7 @@ pub struct PolicyDecision {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalAction {
     ApproveOnce,
+    ApproveAlways,
     Deny,
 }
 
@@ -418,6 +447,8 @@ pub struct PlannerTurnInput {
     pub run_id: RunId,
     pub user_message: String,
     pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub allowed_net_connect_scopes: Vec<String>,
     pub previous_events: Vec<RuntimeEvent>,
     #[serde(default)]
     pub guidance: Option<PlannerGuidanceFrame>,
@@ -629,6 +660,59 @@ mod tests {
 
         assert_eq!(request_decoded, request);
         assert_eq!(response_decoded, response);
+    }
+
+    #[test]
+    fn planner_guidance_signal_new_codes_round_trip() {
+        let cases = vec![
+            (104u16, PlannerGuidanceSignal::ContinueNeedRequiredParameter),
+            (
+                105u16,
+                PlannerGuidanceSignal::ContinueNeedFreshOrTimeBoundEvidence,
+            ),
+            (
+                106u16,
+                PlannerGuidanceSignal::ContinueNeedPreferenceOrConstraint,
+            ),
+            (
+                107u16,
+                PlannerGuidanceSignal::ContinueToolDeniedTryAlternativeAllowedTool,
+            ),
+            (
+                108u16,
+                PlannerGuidanceSignal::ContinueNeedHigherQualitySource,
+            ),
+            (109u16, PlannerGuidanceSignal::ContinueResolveSourceConflict),
+            (
+                110u16,
+                PlannerGuidanceSignal::ContinueNeedPrimaryContentFetch,
+            ),
+            (111u16, PlannerGuidanceSignal::ContinueNeedUrlExtraction),
+            (
+                112u16,
+                PlannerGuidanceSignal::ContinueNeedCanonicalNonAssetUrl,
+            ),
+            (
+                113u16,
+                PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction,
+            ),
+            (203u16, PlannerGuidanceSignal::FinalSingleFactReady),
+            (
+                204u16,
+                PlannerGuidanceSignal::FinalConflictingFactsWithRange,
+            ),
+            (205u16, PlannerGuidanceSignal::FinalNoToolActionNeeded),
+            (
+                302u16,
+                PlannerGuidanceSignal::StopNoAllowedToolCanSatisfyTask,
+            ),
+        ];
+
+        for (code, expected) in cases {
+            let signal = PlannerGuidanceSignal::try_from(code).expect("must parse new signal");
+            assert_eq!(signal, expected);
+            assert_eq!(signal.code(), code);
+        }
     }
 
     #[test]

@@ -67,6 +67,8 @@ pub struct ResponseRefMetadata {
 pub struct ResponseToolOutcome {
     pub tool_name: String,
     pub outcome: String,
+    pub attempted_command: Option<String>,
+    pub failure_reason: Option<String>,
     pub refs: Vec<ResponseRefMetadata>,
 }
 

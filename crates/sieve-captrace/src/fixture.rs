@@ -9,6 +9,11 @@ pub const TOKEN_TMP_DIR: &str = "{{TMP_DIR}}";
 pub const TOKEN_IN_FILE: &str = "{{IN_FILE}}";
 pub const TOKEN_IN_FILE_2: &str = "{{IN_FILE_2}}";
 pub const TOKEN_OUT_FILE: &str = "{{OUT_FILE}}";
+pub const TOKEN_URL: &str = "{{URL}}";
+pub const TOKEN_HEADER: &str = "{{HEADER}}";
+pub const TOKEN_DATA: &str = "{{DATA}}";
+pub const TOKEN_KV: &str = "{{KV}}";
+pub const TOKEN_ARG: &str = "{{ARG}}";
 
 #[derive(Debug, Clone)]
 pub struct FixtureLayout {
@@ -60,6 +65,11 @@ impl FixtureLayout {
             .replace(TOKEN_IN_FILE, in_file.as_ref())
             .replace(TOKEN_IN_FILE_2, in_file_2.as_ref())
             .replace(TOKEN_OUT_FILE, out_file.as_ref())
+            .replace(TOKEN_URL, "https://example.com/resource")
+            .replace(TOKEN_HEADER, "Authorization: Bearer token")
+            .replace(TOKEN_DATA, "payload=example")
+            .replace(TOKEN_KV, "key=value")
+            .replace(TOKEN_ARG, "example")
     }
 }
 
