@@ -654,6 +654,20 @@ fn build_response_turn_input(
 
 fn requires_output_visibility(input: &ResponseTurnInput) -> bool {
     !non_empty_output_ref_ids(input).is_empty()
+        && user_explicitly_requests_output_visibility(&input.trusted_user_message)
+}
+
+fn user_explicitly_requests_output_visibility(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("output")
+        || lower.contains("stdout")
+        || lower.contains("stderr")
+        || lower.contains("contents of")
+        || lower.contains("content of")
+        || lower.contains("show the result")
+        || lower.contains("show me the result")
+        || lower.contains("run exactly")
+        || (lower.contains("what did") && lower.contains("return"))
 }
 
 fn output_ref_requires_visibility(kind: &str) -> bool {
@@ -692,11 +706,13 @@ fn summarize_tool_result(
     match result {
         PlannerToolResult::Bash {
             disposition,
-            command: _,
+            command,
         } => match disposition {
             RuntimeDisposition::ExecuteMainline(report) => ResponseToolOutcome {
                 tool_name: "bash".to_string(),
                 outcome: format!("executed mainline (exit_code={:?})", report.exit_code),
+                attempted_command: Some(command.clone()),
+                failure_reason: None,
                 refs: report
                     .artifacts
                     .iter()
@@ -732,6 +748,8 @@ fn summarize_tool_result(
                         "executed in quarantine (exit_code={:?}, trace=[[ref:{}]])",
                         report.exit_code, trace_ref
                     ),
+                    attempted_command: Some(command.clone()),
+                    failure_reason: None,
                     refs: vec![ResponseRefMetadata {
                         ref_id: trace_ref,
                         kind: "trace_path".to_string(),
@@ -742,7 +760,9 @@ fn summarize_tool_result(
             }
             RuntimeDisposition::Denied { reason } => ResponseToolOutcome {
                 tool_name: "bash".to_string(),
-                outcome: format!("denied ({reason})"),
+                outcome: "denied".to_string(),
+                attempted_command: Some(command.clone()),
+                failure_reason: Some(reason.clone()),
                 refs: Vec::new(),
             },
         },
@@ -769,6 +789,8 @@ fn summarize_tool_result(
             ResponseToolOutcome {
                 tool_name: "endorse".to_string(),
                 outcome,
+                attempted_command: None,
+                failure_reason: None,
                 refs: vec![ResponseRefMetadata {
                     ref_id: value_ref_id,
                     kind: "value_ref".to_string(),
@@ -808,6 +830,8 @@ fn summarize_tool_result(
             ResponseToolOutcome {
                 tool_name: "declassify".to_string(),
                 outcome,
+                attempted_command: None,
+                failure_reason: None,
                 refs: vec![
                     ResponseRefMetadata {
                         ref_id: value_ref_id,
@@ -904,6 +928,80 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
             "sink_len": request.sink.0.len(),
             "applied": transition.is_some()
         }),
+    }
+}
+
+fn normalize_bash_command_for_repeat_guard(command: &str) -> String {
+    let compact = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = compact.to_ascii_lowercase();
+    if lower == "bravesearch search"
+        || lower.starts_with("bravesearch search ")
+        || lower == "brave-search search"
+        || lower.starts_with("brave-search search ")
+    {
+        lower
+    } else {
+        compact
+    }
+}
+
+fn mainline_artifact_signature(report: &MainlineRunReport) -> Vec<(String, u64, u64)> {
+    let mut signature = report
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            (
+                mainline_artifact_kind_name(artifact.kind).to_string(),
+                artifact.byte_count,
+                artifact.line_count,
+            )
+        })
+        .collect::<Vec<_>>();
+    signature.sort();
+    signature
+}
+
+fn has_repeated_bash_outcome(tool_results: &[PlannerToolResult]) -> bool {
+    if tool_results.len() < 2 {
+        return false;
+    }
+
+    let prev = &tool_results[tool_results.len() - 2];
+    let last = &tool_results[tool_results.len() - 1];
+    match (prev, last) {
+        (
+            PlannerToolResult::Bash {
+                command: left_command,
+                disposition: left_disposition,
+            },
+            PlannerToolResult::Bash {
+                command: right_command,
+                disposition: right_disposition,
+            },
+        ) if normalize_bash_command_for_repeat_guard(left_command)
+            == normalize_bash_command_for_repeat_guard(right_command) =>
+        {
+            match (left_disposition, right_disposition) {
+                (
+                    RuntimeDisposition::ExecuteMainline(left_report),
+                    RuntimeDisposition::ExecuteMainline(right_report),
+                ) => {
+                    left_report.exit_code == right_report.exit_code
+                        && mainline_artifact_signature(left_report)
+                            == mainline_artifact_signature(right_report)
+                }
+                (
+                    RuntimeDisposition::Denied {
+                        reason: left_reason,
+                    },
+                    RuntimeDisposition::Denied {
+                        reason: right_reason,
+                    },
+                ) => left_reason == right_reason,
+                _ => false,
+            }
+        }
+        _ => false,
     }
 }
 
@@ -1071,32 +1169,55 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
     out
 }
 
-fn extract_plain_urls_from_text(message: &str) -> Vec<String> {
-    let mut urls = Vec::new();
-    for token in message.split_whitespace() {
-        let trimmed = token.trim_matches(|ch: char| {
-            matches!(
-                ch,
-                '"' | '\''
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | '<'
-                    | '>'
-                    | ','
-                    | '.'
-                    | ';'
-                    | ':'
-                    | '!'
-                    | '?'
-            )
-        });
-        if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
-            urls.push(trimmed.to_string());
+fn trim_url_candidate(candidate: &str) -> &str {
+    let mut end = candidate.len();
+    while end > 0 {
+        let Some(ch) = candidate[..end].chars().next_back() else {
+            break;
+        };
+        if matches!(
+            ch,
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\'' | '`'
+        ) {
+            end = end.saturating_sub(ch.len_utf8());
+            continue;
         }
+        break;
+    }
+    &candidate[..end]
+}
+
+fn extract_plain_urls_from_text(message: &str) -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < message.len() {
+        let remaining = &message[cursor..];
+        let http_pos = remaining.find("http://");
+        let https_pos = remaining.find("https://");
+        let Some(rel_start) = (match (http_pos, https_pos) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }) else {
+            break;
+        };
+        let start = cursor + rel_start;
+        let mut end = message.len();
+        for (offset, ch) in message[start..].char_indices() {
+            if offset == 0 {
+                continue;
+            }
+            if ch.is_whitespace() || matches!(ch, '"' | '\'' | '<' | '>' | '\\' | '`') {
+                end = start + offset;
+                break;
+            }
+        }
+        let candidate = trim_url_candidate(&message[start..end]);
+        if candidate.starts_with("https://") || candidate.starts_with("http://") {
+            urls.push(candidate.to_string());
+        }
+        cursor = end.max(start.saturating_add(1));
     }
     dedupe_preserve_order(urls)
 }
@@ -1179,9 +1300,97 @@ fn obvious_meta_compose_pattern(message: &str) -> bool {
     let normalized = message.trim().to_ascii_lowercase();
     normalized.starts_with("the assistant ")
         || normalized.starts_with("assistant is ")
+        || normalized.starts_with("user asks")
+        || normalized.starts_with("the user asks")
         || normalized.contains("the user has")
         || normalized.contains("user has asked")
+        || normalized.contains("diagnostic notes")
+        || normalized.contains("draft reply says")
         || normalized.contains("the assistant is ready to help")
+}
+
+fn compact_single_line(input: &str, max_len: usize) -> String {
+    let compact = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max_len {
+        return compact;
+    }
+    let mut out = String::new();
+    for ch in compact.chars().take(max_len.saturating_sub(1)) {
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+fn denied_outcomes_only_message(response_input: &ResponseTurnInput) -> Option<String> {
+    if response_input.tool_outcomes.is_empty() {
+        return None;
+    }
+
+    let all_denied = response_input
+        .tool_outcomes
+        .iter()
+        .all(|outcome| outcome.failure_reason.is_some());
+    if !all_denied {
+        return None;
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut details = Vec::new();
+    for outcome in &response_input.tool_outcomes {
+        let reason = match outcome.failure_reason.as_deref() {
+            Some(value) => compact_single_line(value, 120),
+            None => continue,
+        };
+        let command = compact_single_line(
+            outcome
+                .attempted_command
+                .as_deref()
+                .unwrap_or(&outcome.tool_name),
+            140,
+        );
+        if seen.insert((command.clone(), reason.clone())) {
+            details.push((command, reason));
+        }
+    }
+
+    if details.is_empty() {
+        return None;
+    }
+
+    let mut message = details
+        .iter()
+        .take(2)
+        .map(|(command, reason)| format!("I tried `{command}`, but it was blocked: {reason}."))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if details.len() > 2 {
+        message.push_str(" I hit the same restriction on additional attempts.");
+    }
+    message.push_str(" I can try a different command path if you want.");
+    Some(message)
+}
+
+fn strip_unexpanded_render_tokens(message: &str) -> String {
+    let mut remaining = message;
+    let mut out = String::new();
+    loop {
+        let Some(start) = remaining.find("[[") else {
+            out.push_str(remaining);
+            break;
+        };
+        out.push_str(&remaining[..start]);
+        let tail = &remaining[start..];
+        if tail.starts_with("[[ref:") || tail.starts_with("[[summary:") {
+            if let Some(end) = tail.find("]]") {
+                remaining = &tail[end + 2..];
+                continue;
+            }
+        }
+        out.push_str("[[");
+        remaining = &tail[2..];
+    }
+    out.trim().to_string()
 }
 
 async fn append_jsonl_record(path: &Path, value: &serde_json::Value) -> Result<(), String> {
@@ -1262,15 +1471,33 @@ fn compose_quality_requires_retry(
             "response used third-person meta narration; respond directly to user".to_string(),
         );
     }
-    let gate = quality_gate.unwrap_or("").trim();
-    if gate.is_empty() {
-        return None;
+    match parse_gate_verdict(quality_gate) {
+        None | Some(GateVerdict::Pass) => None,
+        Some(GateVerdict::Revise(reason)) => Some(reason),
     }
-    let lower = gate.to_ascii_lowercase();
-    if lower.starts_with("pass") || (lower.contains("pass") && !lower.contains("revise")) {
+}
+
+fn gate_requires_retry(gate: Option<&str>) -> Option<String> {
+    match parse_gate_verdict(gate) {
+        None | Some(GateVerdict::Pass) => None,
+        Some(GateVerdict::Revise(reason)) => Some(reason),
+    }
+}
+
+fn combine_gate_reasons(gates: &[Option<String>]) -> Option<String> {
+    let mut combined = Vec::new();
+    for gate in gates {
+        if let Some(gate) = gate.as_deref() {
+            let trimmed = gate.trim();
+            if !trimmed.is_empty() {
+                combined.push(trimmed.to_string());
+            }
+        }
+    }
+    if combined.is_empty() {
         None
     } else {
-        Some(gate.to_string())
+        Some(combined.join(" | "))
     }
 }
 
@@ -1286,19 +1513,44 @@ struct ComposeAssistantOutcome {
     planner_decision: ComposePlannerDecision,
 }
 
-fn compose_quality_followup_signal(
-    quality_gate: Option<&str>,
-    response_input: &ResponseTurnInput,
-) -> Option<PlannerGuidanceSignal> {
-    let gate = quality_gate.unwrap_or("").trim();
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GateVerdict {
+    Pass,
+    Revise(String),
+}
+
+fn parse_gate_verdict(gate: Option<&str>) -> Option<GateVerdict> {
+    let gate = gate.unwrap_or("").trim();
     if gate.is_empty() {
         return None;
     }
     let lower = gate.to_ascii_lowercase();
-    if lower.starts_with("pass") || (lower.contains("pass") && !lower.contains("revise")) {
-        return None;
+    if let Some(revise_idx) = lower.find("revise") {
+        let reason = gate[revise_idx + "revise".len()..]
+            .trim_start_matches(|ch: char| ch == ':' || ch == '-' || ch.is_whitespace())
+            .trim();
+        if reason.is_empty() {
+            return Some(GateVerdict::Revise("requested revision".to_string()));
+        }
+        return Some(GateVerdict::Revise(reason.to_string()));
     }
+    if lower.starts_with("pass") || (lower.contains("pass") && !lower.contains("revise")) {
+        return Some(GateVerdict::Pass);
+    }
+    Some(GateVerdict::Revise(format!(
+        "unstructured gate output: {}",
+        compact_single_line(gate, 200)
+    )))
+}
 
+fn compose_quality_followup_signal(
+    quality_gate: Option<&str>,
+    response_input: &ResponseTurnInput,
+) -> Option<PlannerGuidanceSignal> {
+    let reason = match parse_gate_verdict(quality_gate) {
+        None | Some(GateVerdict::Pass) => return None,
+        Some(GateVerdict::Revise(reason)) => reason,
+    };
     let has_non_empty_refs = response_input
         .tool_outcomes
         .iter()
@@ -1307,6 +1559,7 @@ fn compose_quality_followup_signal(
         return None;
     }
 
+    let lower = reason.to_ascii_lowercase();
     let is_style_only = lower.contains("third-person")
         || lower.contains("third person")
         || lower.contains("meta narration")
@@ -1318,6 +1571,11 @@ fn compose_quality_followup_signal(
     let missing_evidence = lower.contains("insufficient")
         || lower.contains("not enough")
         || lower.contains("missing")
+        || lower.contains("not grounded")
+        || lower.contains("unsupported")
+        || lower.contains("not supported by evidence")
+        || lower.contains("not in evidence")
+        || lower.contains("not present in evidence")
         || lower.contains("doesn't directly answer")
         || lower.contains("does not directly answer")
         || lower.contains("doesn’t directly answer")
@@ -1325,13 +1583,18 @@ fn compose_quality_followup_signal(
         || lower.contains("cannot")
         || lower.contains("can’t")
         || lower.contains("no actual")
+        || lower.contains("lacks specific")
+        || lower.contains("lacks concrete")
+        || lower.contains("no concrete")
+        || lower.contains("not concrete")
+        || lower.contains("lacks weather")
         || lower.contains("real-time")
         || lower.contains("right now");
     if missing_evidence {
         return Some(PlannerGuidanceSignal::ContinueFetchAdditionalSource);
     }
 
-    None
+    Some(PlannerGuidanceSignal::ContinueFetchAdditionalSource)
 }
 
 async fn write_compose_audit_artifacts(
@@ -1342,6 +1605,7 @@ async fn write_compose_audit_artifacts(
     output_ref_ids: &[String],
     source_urls: &[String],
     quality_gate: Option<&str>,
+    grounding_gate: Option<&str>,
     planner_followup_signal: Option<PlannerGuidanceSignal>,
 ) -> Result<(), String> {
     let run_dir = sieve_home.join("artifacts").join(&run_id.0);
@@ -1384,9 +1648,107 @@ async fn write_compose_audit_artifacts(
         "output_ref_ids": output_ref_ids,
         "source_urls": source_urls,
         "quality_gate": quality_gate,
+        "grounding_gate": grounding_gate,
         "planner_followup_signal_code": planner_followup_signal.map(PlannerGuidanceSignal::code),
     });
     append_jsonl_record(&logs_path, &record).await
+}
+
+async fn collect_source_urls_from_refs(
+    response_input: &ResponseTurnInput,
+    render_refs: &BTreeMap<String, RenderRef>,
+) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut seen = BTreeSet::new();
+    for outcome in &response_input.tool_outcomes {
+        for metadata in &outcome.refs {
+            if metadata.byte_count == 0 {
+                continue;
+            }
+            let Some((content, _, _)) =
+                resolve_ref_summary_input(&metadata.ref_id, render_refs).await
+            else {
+                continue;
+            };
+            for url in extract_plain_urls_from_text(&content) {
+                if seen.insert(url.clone()) {
+                    urls.push(url);
+                }
+                if urls.len() >= 8 {
+                    return urls;
+                }
+            }
+        }
+    }
+    urls
+}
+
+async fn build_compose_evidence_summaries(
+    summary_model: &dyn SummaryModel,
+    run_id: &RunId,
+    trusted_user_message: &str,
+    response_input: &ResponseTurnInput,
+    render_refs: &BTreeMap<String, RenderRef>,
+) -> Vec<String> {
+    let mut summaries = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (idx, metadata) in response_input
+        .tool_outcomes
+        .iter()
+        .flat_map(|outcome| outcome.refs.iter())
+        .filter(|metadata| metadata.byte_count > 0)
+        .enumerate()
+    {
+        if idx >= 4 {
+            break;
+        }
+        if !seen.insert(metadata.ref_id.clone()) {
+            continue;
+        }
+        let Some((content, _, _)) = resolve_ref_summary_input(&metadata.ref_id, render_refs).await
+        else {
+            continue;
+        };
+        let payload = serde_json::json!({
+            "task": "compose_evidence_extract",
+            "trusted_user_message": trusted_user_message,
+            "ref_id": metadata.ref_id,
+            "content": content,
+        });
+        let ref_id = format!("assistant-compose-evidence:{}:{}", run_id.0, idx + 1);
+        if let Some(summary) = summarize_with_ref_id(summary_model, run_id, &ref_id, &payload).await
+        {
+            let trimmed = summary.trim();
+            if !trimmed.is_empty() {
+                summaries.push(trimmed.to_string());
+            }
+        }
+    }
+    summaries
+}
+
+async fn run_compose_grounding_gate(
+    summary_model: &dyn SummaryModel,
+    run_id: &RunId,
+    trusted_user_message: &str,
+    composed_message: &str,
+    evidence_summaries: &[String],
+    source_urls: &[String],
+) -> Option<String> {
+    let payload = serde_json::json!({
+        "task": "compose_grounding_gate",
+        "trusted_user_message": trusted_user_message,
+        "composed_message": composed_message,
+        "evidence_summaries": evidence_summaries,
+        "source_urls": source_urls,
+    });
+    summarize_with_ref_id(
+        summary_model,
+        run_id,
+        &format!("assistant-compose-grounding:{}", run_id.0),
+        &payload,
+    )
+    .await
 }
 
 async fn compose_assistant_message(
@@ -1395,12 +1757,23 @@ async fn compose_assistant_message(
     run_id: &RunId,
     trusted_user_message: &str,
     response_input: &ResponseTurnInput,
+    render_refs: &BTreeMap<String, RenderRef>,
     draft_message: String,
 ) -> ComposeAssistantOutcome {
     let output_ref_ids: Vec<String> = non_empty_output_ref_ids(response_input)
         .into_iter()
         .collect();
-    let source_urls = dedupe_preserve_order(extract_plain_urls_from_text(&draft_message));
+    let mut source_urls = dedupe_preserve_order(extract_plain_urls_from_text(&draft_message));
+    source_urls.extend(collect_source_urls_from_refs(response_input, render_refs).await);
+    source_urls = dedupe_preserve_order(source_urls);
+    let evidence_summaries = build_compose_evidence_summaries(
+        summary_model,
+        run_id,
+        trusted_user_message,
+        response_input,
+        render_refs,
+    )
+    .await;
     let tool_outcomes: Vec<serde_json::Value> = response_input
         .tool_outcomes
         .iter()
@@ -1408,6 +1781,8 @@ async fn compose_assistant_message(
             serde_json::json!({
                 "tool_name": outcome.tool_name,
                 "outcome": outcome.outcome,
+                "attempted_command": outcome.attempted_command,
+                "failure_reason": outcome.failure_reason,
                 "refs": outcome.refs.iter().map(|ref_metadata| {
                     serde_json::json!({
                         "ref_id": ref_metadata.ref_id,
@@ -1429,6 +1804,7 @@ async fn compose_assistant_message(
         "tool_outcomes": tool_outcomes,
         "output_ref_ids": output_ref_ids.clone(),
         "available_plain_urls": source_urls.clone(),
+        "evidence_summaries": evidence_summaries.clone(),
     });
     attempt_payloads.push(payload.clone());
 
@@ -1459,17 +1835,37 @@ async fn compose_assistant_message(
         &quality_payload,
     )
     .await;
+    let first_grounding_gate = if evidence_summaries.is_empty() {
+        None
+    } else {
+        run_compose_grounding_gate(
+            summary_model,
+            run_id,
+            trusted_user_message,
+            &first_composed,
+            &evidence_summaries,
+            &source_urls,
+        )
+        .await
+    };
 
     let mut composed = quality_payload
         .get("composed_message")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let mut did_retry = false;
+    let mut retry_diagnostics = Vec::new();
     if let Some(diagnostic) =
         compose_quality_requires_retry(&composed, first_quality_gate.as_deref())
     {
-        did_retry = true;
+        retry_diagnostics.push(diagnostic);
+    }
+    if let Some(diagnostic) = gate_requires_retry(first_grounding_gate.as_deref()) {
+        retry_diagnostics.push(format!("Grounding gate: {diagnostic}"));
+    }
+    let did_retry = !retry_diagnostics.is_empty();
+    if did_retry {
+        let retry_diagnostic = retry_diagnostics.join(" | ");
         let retry_payload = serde_json::json!({
             "task": "compose_user_reply",
             "trusted_user_message": trusted_user_message,
@@ -1484,7 +1880,8 @@ async fn compose_assistant_message(
                 .unwrap_or_else(|| serde_json::json!([])),
             "output_ref_ids": output_ref_ids.clone(),
             "available_plain_urls": source_urls.clone(),
-            "compose_diagnostic": diagnostic,
+            "evidence_summaries": evidence_summaries.clone(),
+            "compose_diagnostic": retry_diagnostic,
             "previous_composed_message": composed,
         });
         attempt_payloads.push(retry_payload.clone());
@@ -1504,7 +1901,7 @@ async fn compose_assistant_message(
         });
     }
 
-    let quality_gate = if did_retry {
+    let mut quality_gate = if did_retry {
         let final_quality_payload = serde_json::json!({
             "task": "compose_quality_gate",
             "trusted_user_message": trusted_user_message,
@@ -1520,14 +1917,97 @@ async fn compose_assistant_message(
     } else {
         first_quality_gate.clone()
     };
+    let mut grounding_gate = if evidence_summaries.is_empty() {
+        None
+    } else {
+        run_compose_grounding_gate(
+            summary_model,
+            run_id,
+            trusted_user_message,
+            &composed,
+            &evidence_summaries,
+            &source_urls,
+        )
+        .await
+    };
 
+    if let Some(grounding_diagnostic) = gate_requires_retry(grounding_gate.as_deref()) {
+        let grounded_retry_payload = serde_json::json!({
+            "task": "compose_user_reply",
+            "trusted_user_message": trusted_user_message,
+            "assistant_draft_message": payload
+                .get("assistant_draft_message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            "planner_thoughts": response_input.planner_thoughts.clone(),
+            "tool_outcomes": payload
+                .get("tool_outcomes")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "output_ref_ids": output_ref_ids.clone(),
+            "available_plain_urls": source_urls.clone(),
+            "evidence_summaries": evidence_summaries.clone(),
+            "compose_diagnostic": format!("Grounding gate failed. Rewrite using only evidence summaries. If exact details are missing, state that clearly and avoid guessing. {grounding_diagnostic}"),
+            "previous_composed_message": composed,
+        });
+        attempt_payloads.push(grounded_retry_payload.clone());
+        let grounded_retry = summarize_with_ref_id(
+            summary_model,
+            run_id,
+            &format!("assistant-compose-grounded-retry:{}", run_id.0),
+            &grounded_retry_payload,
+        )
+        .await
+        .unwrap_or_else(|| {
+            grounded_retry_payload
+                .get("previous_composed_message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        });
+        let grounded_retry_gate = run_compose_grounding_gate(
+            summary_model,
+            run_id,
+            trusted_user_message,
+            &grounded_retry,
+            &evidence_summaries,
+            &source_urls,
+        )
+        .await;
+        if gate_requires_retry(grounded_retry_gate.as_deref()).is_none() {
+            composed = grounded_retry;
+            grounding_gate = grounded_retry_gate;
+            quality_gate = Some("PASS".to_string());
+        }
+    }
+
+    let combined_gate = combine_gate_reasons(&[quality_gate.clone(), grounding_gate.clone()]);
     let planner_followup_signal =
-        compose_quality_followup_signal(quality_gate.as_deref(), response_input);
+        compose_quality_followup_signal(combined_gate.as_deref(), response_input);
     let planner_decision = planner_followup_signal
         .map(ComposePlannerDecision::Continue)
         .unwrap_or(ComposePlannerDecision::Finalize);
 
-    let composed = enforce_link_policy(composed, &source_urls);
+    let mut composed = enforce_link_policy(composed, &source_urls);
+    if let Some(message) = denied_outcomes_only_message(response_input) {
+        composed = message;
+    }
+    if obvious_meta_compose_pattern(&composed) {
+        if let Some(message) = denied_outcomes_only_message(response_input) {
+            composed = message;
+        } else {
+            let draft_fallback = payload
+                .get("assistant_draft_message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !draft_fallback.is_empty() && !obvious_meta_compose_pattern(&draft_fallback) {
+                composed = draft_fallback;
+            }
+        }
+    }
+    composed = strip_unexpanded_render_tokens(&composed);
     if let Err(err) = write_compose_audit_artifacts(
         sieve_home,
         run_id,
@@ -1536,6 +2016,7 @@ async fn compose_assistant_message(
         &output_ref_ids,
         &source_urls,
         quality_gate.as_deref(),
+        grounding_gate.as_deref(),
         planner_followup_signal,
     )
     .await
@@ -1544,7 +2025,7 @@ async fn compose_assistant_message(
     }
     ComposeAssistantOutcome {
         message: composed,
-        quality_gate,
+        quality_gate: combined_gate,
         planner_decision,
     }
 }
@@ -1979,6 +2460,21 @@ async fn run_turn(
                 let step_results = step_result.tool_results;
                 aggregated_result.tool_results.extend(step_results.clone());
 
+                if has_repeated_bash_outcome(&aggregated_result.tool_results) {
+                    append_turn_controller_event(
+                        &cfg.sieve_home,
+                        &run_id,
+                        "planner_repeat_guard",
+                        serde_json::json!({
+                            "step_number": step_number,
+                            "planner_steps_taken": planner_steps_taken,
+                            "reason": "detected repeated bash command/result; short-circuiting additional planner steps",
+                        }),
+                    )
+                    .await;
+                    break;
+                }
+
                 let guidance_prompt = build_guidance_prompt(
                     &trusted_user_message,
                     step_number,
@@ -2123,30 +2619,57 @@ async fn run_turn(
             }
         }
 
-        let rendered_message = render_assistant_message(
-            &response_output.message,
-            &response_output.referenced_ref_ids,
-            &response_output.summarized_ref_ids,
-            &render_refs,
-            summary_model,
-            &run_id,
-        )
-        .await;
-
+        let output_visibility_required = requires_output_visibility(&response_input);
         let composed = if chat_only_turn {
+            let rendered_message = render_assistant_message(
+                &response_output.message,
+                &response_output.referenced_ref_ids,
+                &response_output.summarized_ref_ids,
+                &render_refs,
+                summary_model,
+                &run_id,
+            )
+            .await;
             ComposeAssistantOutcome {
                 message: rendered_message,
                 quality_gate: None,
                 planner_decision: ComposePlannerDecision::Finalize,
             }
         } else {
+            let draft_message = if output_visibility_required {
+                render_assistant_message(
+                    &response_output.message,
+                    &response_output.referenced_ref_ids,
+                    &response_output.summarized_ref_ids,
+                    &render_refs,
+                    summary_model,
+                    &run_id,
+                )
+                .await
+            } else {
+                let stripped = strip_unexpanded_render_tokens(&response_output.message);
+                if stripped.trim().is_empty() {
+                    render_assistant_message(
+                        &response_output.message,
+                        &response_output.referenced_ref_ids,
+                        &response_output.summarized_ref_ids,
+                        &render_refs,
+                        summary_model,
+                        &run_id,
+                    )
+                    .await
+                } else {
+                    stripped
+                }
+            };
             compose_assistant_message(
                 summary_model,
                 &cfg.sieve_home,
                 &run_id,
                 &trusted_user_message,
                 &response_input,
-                rendered_message,
+                &render_refs,
+                draft_message,
             )
             .await
         };
@@ -2477,8 +3000,14 @@ mod tests {
             if request.ref_id.starts_with("assistant-compose-quality:") {
                 return Ok("PASS".to_string());
             }
+            if request.ref_id.starts_with("assistant-compose-grounding:") {
+                return Ok("PASS".to_string());
+            }
             if request.ref_id.starts_with("assistant-compose:")
                 || request.ref_id.starts_with("assistant-compose-retry:")
+                || request
+                    .ref_id
+                    .starts_with("assistant-compose-grounded-retry:")
             {
                 if let Ok(payload) = serde_json::from_str::<Value>(&request.content) {
                     if let Some(draft) = payload
@@ -2520,8 +3049,14 @@ mod tests {
             if request.ref_id.starts_with("assistant-compose-quality:") {
                 return Ok("PASS".to_string());
             }
+            if request.ref_id.starts_with("assistant-compose-grounding:") {
+                return Ok("PASS".to_string());
+            }
             if request.ref_id.starts_with("assistant-compose:")
                 || request.ref_id.starts_with("assistant-compose-retry:")
+                || request
+                    .ref_id
+                    .starts_with("assistant-compose-grounded-retry:")
             {
                 if let Ok(payload) = serde_json::from_str::<Value>(&request.content) {
                     if let Some(draft) = payload
@@ -2585,6 +3120,11 @@ mod tests {
 violation_mode = "deny"
 trusted_control = true
 require_trusted_control_for_mutating = true
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.search.brave.com/res/v1/web/search"
 "#;
 
     struct QueuedPlannerModel {
@@ -3171,6 +3711,9 @@ require_trusted_control_for_mutating = true
             || lower.contains(" c ")
             || lower.contains(" f ")
             || lower.contains("rain")
+            || lower.contains("precipitation")
+            || lower.contains("high")
+            || lower.contains("low")
             || lower.contains("cloud")
             || lower.contains("wind")
     }
@@ -4077,6 +4620,8 @@ require_trusted_control_for_mutating = true
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
                 outcome: "executed".to_string(),
+                attempted_command: Some("pwd".to_string()),
+                failure_reason: None,
                 refs: vec![
                     ResponseRefMetadata {
                         ref_id: "artifact-1".to_string(),
@@ -4098,6 +4643,32 @@ require_trusted_control_for_mutating = true
     }
 
     #[test]
+    fn requires_output_visibility_skips_when_user_did_not_ask_for_output() {
+        let input = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "What is the weather tomorrow in Livermore?".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed".to_string(),
+                attempted_command: Some(
+                    "bravesearch search --query \"Livermore CA weather tomorrow\" --count 5 --output json"
+                        .to_string(),
+                ),
+                failure_reason: None,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-1".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 1024,
+                    line_count: 12,
+                }],
+            }],
+        };
+
+        assert!(!requires_output_visibility(&input));
+    }
+
+    #[test]
     fn response_has_visible_selected_output_requires_message_token() {
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
@@ -4106,6 +4677,8 @@ require_trusted_control_for_mutating = true
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
                 outcome: "executed".to_string(),
+                attempted_command: Some("pwd".to_string()),
+                failure_reason: None,
                 refs: vec![ResponseRefMetadata {
                     ref_id: "artifact-1".to_string(),
                     kind: "stdout".to_string(),
@@ -4139,6 +4712,8 @@ require_trusted_control_for_mutating = true
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
                 outcome: "executed".to_string(),
+                attempted_command: Some("pwd".to_string()),
+                failure_reason: None,
                 refs: vec![ResponseRefMetadata {
                     ref_id: "artifact-2".to_string(),
                     kind: "stderr".to_string(),
@@ -4164,6 +4739,183 @@ require_trusted_control_for_mutating = true
     }
 
     #[test]
+    fn gate_requires_retry_treats_pass_as_no_retry() {
+        assert!(gate_requires_retry(Some("PASS")).is_none());
+        assert!(gate_requires_retry(Some("verdict: pass")).is_none());
+        assert!(gate_requires_retry(Some("REVISE: unsupported claim")).is_some());
+        assert!(
+            gate_requires_retry(Some("This response lacks specific weather details.")).is_some()
+        );
+    }
+
+    #[test]
+    fn combine_gate_reasons_joins_non_empty_reasons() {
+        let combined = combine_gate_reasons(&[
+            Some("REVISE: quality".to_string()),
+            None,
+            Some("REVISE: grounding".to_string()),
+        ]);
+        assert_eq!(
+            combined.as_deref(),
+            Some("REVISE: quality | REVISE: grounding")
+        );
+    }
+
+    #[test]
+    fn denied_outcomes_only_message_reports_attempt_and_reason() {
+        let input = ResponseTurnInput {
+            run_id: RunId("run-1".to_string()),
+            trusted_user_message: "weather".to_string(),
+            planner_thoughts: None,
+            tool_outcomes: vec![ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "denied".to_string(),
+                attempted_command: Some(
+                    "bravesearch search \"Livermore CA weather tomorrow\" --count 5 --format json"
+                        .to_string(),
+                ),
+                failure_reason: Some("unknown command denied by mode".to_string()),
+                refs: vec![],
+            }],
+        };
+
+        let message = denied_outcomes_only_message(&input).expect("must generate denied message");
+        assert!(message.contains("I tried `bravesearch search"));
+        assert!(message.contains("unknown command denied by mode"));
+        assert!(message.contains("different command path"));
+    }
+
+    #[test]
+    fn obvious_meta_compose_pattern_catches_user_asks_diagnostic_format() {
+        let message = "User asks: “What is the weather?” Diagnostic notes the draft is weak.";
+        assert!(obvious_meta_compose_pattern(message));
+    }
+
+    #[test]
+    fn strip_unexpanded_render_tokens_removes_ref_markers() {
+        let message = "answer [[ref:artifact-1]] and [[summary:artifact-2]] done";
+        assert_eq!(strip_unexpanded_render_tokens(message), "answer  and  done");
+    }
+
+    #[test]
+    fn has_repeated_bash_outcome_detects_duplicate_mainline_command() {
+        let tool_results = vec![
+            PlannerToolResult::Bash {
+                command: "bravesearch search --query \"x\" --count 5 --output json".to_string(),
+                disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                    run_id: RunId("run-1".to_string()),
+                    exit_code: Some(0),
+                    artifacts: vec![],
+                }),
+            },
+            PlannerToolResult::Bash {
+                command: "bravesearch search --query \"x\" --count 5 --output json".to_string(),
+                disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                    run_id: RunId("run-1".to_string()),
+                    exit_code: Some(0),
+                    artifacts: vec![],
+                }),
+            },
+        ];
+        assert!(has_repeated_bash_outcome(&tool_results));
+    }
+
+    #[test]
+    fn has_repeated_bash_outcome_ignores_different_commands() {
+        let tool_results = vec![
+            PlannerToolResult::Bash {
+                command: "bravesearch search --query \"x\" --count 5 --output json".to_string(),
+                disposition: RuntimeDisposition::Denied {
+                    reason: "unknown command denied by mode".to_string(),
+                },
+            },
+            PlannerToolResult::Bash {
+                command: "bravesearch search --query \"y\" --count 5 --output json".to_string(),
+                disposition: RuntimeDisposition::Denied {
+                    reason: "unknown command denied by mode".to_string(),
+                },
+            },
+        ];
+        assert!(!has_repeated_bash_outcome(&tool_results));
+    }
+
+    #[test]
+    fn has_repeated_bash_outcome_detects_case_only_query_variants() {
+        let tool_results = vec![
+            PlannerToolResult::Bash {
+                command:
+                    "bravesearch search --query \"weather Livermore CA tomorrow\" --count 1 --output json"
+                        .to_string(),
+                disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                    run_id: RunId("run-1".to_string()),
+                    exit_code: Some(0),
+                    artifacts: vec![MainlineArtifact {
+                        ref_id: "artifact-1".to_string(),
+                        kind: MainlineArtifactKind::Stdout,
+                        path: "/tmp/a".to_string(),
+                        byte_count: 2830,
+                        line_count: 1,
+                    }],
+                }),
+            },
+            PlannerToolResult::Bash {
+                command:
+                    "bravesearch search --query \"weather Livermore ca tomorrow\" --count 1 --output json"
+                        .to_string(),
+                disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                    run_id: RunId("run-1".to_string()),
+                    exit_code: Some(0),
+                    artifacts: vec![MainlineArtifact {
+                        ref_id: "artifact-2".to_string(),
+                        kind: MainlineArtifactKind::Stdout,
+                        path: "/tmp/b".to_string(),
+                        byte_count: 2830,
+                        line_count: 1,
+                    }],
+                }),
+            },
+        ];
+
+        assert!(has_repeated_bash_outcome(&tool_results));
+    }
+
+    #[test]
+    fn has_repeated_bash_outcome_ignores_changed_artifact_signature() {
+        let tool_results = vec![
+            PlannerToolResult::Bash {
+                command: "bravesearch search --query \"x\" --count 1 --output json".to_string(),
+                disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                    run_id: RunId("run-1".to_string()),
+                    exit_code: Some(0),
+                    artifacts: vec![MainlineArtifact {
+                        ref_id: "artifact-1".to_string(),
+                        kind: MainlineArtifactKind::Stdout,
+                        path: "/tmp/a".to_string(),
+                        byte_count: 100,
+                        line_count: 1,
+                    }],
+                }),
+            },
+            PlannerToolResult::Bash {
+                command: "bravesearch search --query \"x\" --count 1 --output json".to_string(),
+                disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                    run_id: RunId("run-1".to_string()),
+                    exit_code: Some(0),
+                    artifacts: vec![MainlineArtifact {
+                        ref_id: "artifact-2".to_string(),
+                        kind: MainlineArtifactKind::Stdout,
+                        path: "/tmp/b".to_string(),
+                        byte_count: 101,
+                        line_count: 1,
+                    }],
+                }),
+            },
+        ];
+
+        assert!(!has_repeated_bash_outcome(&tool_results));
+    }
+
+    #[test]
     fn compose_quality_followup_only_triggers_for_missing_evidence() {
         let with_refs = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
@@ -4172,6 +4924,10 @@ require_trusted_control_for_mutating = true
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
                 outcome: "executed".to_string(),
+                attempted_command: Some(
+                    "bravesearch search --query \"weather\" --count 5 --output json".to_string(),
+                ),
+                failure_reason: None,
                 refs: vec![ResponseRefMetadata {
                     ref_id: "artifact-1".to_string(),
                     kind: "stdout".to_string(),
@@ -4186,6 +4942,15 @@ require_trusted_control_for_mutating = true
         );
         assert_eq!(
             signal,
+            Some(PlannerGuidanceSignal::ContinueFetchAdditionalSource)
+        );
+
+        let generic_signal = compose_quality_followup_signal(
+            Some("The response lacks specific weather details."),
+            &with_refs,
+        );
+        assert_eq!(
+            generic_signal,
             Some(PlannerGuidanceSignal::ContinueFetchAdditionalSource)
         );
 
@@ -4216,6 +4981,16 @@ require_trusted_control_for_mutating = true
         let message = "Top result is ready. Visit the provided link for details.".to_string();
         let enforced = enforce_link_policy(message, &[]);
         assert!(!enforced.to_ascii_lowercase().contains("provided link"));
+    }
+
+    #[test]
+    fn extract_plain_urls_from_text_handles_jsonish_tokens() {
+        let text = "{\"url\":\"https://weather.com/weather/tenday/l/Dublin\",\"other\":\"x\"}";
+        let urls = extract_plain_urls_from_text(text);
+        assert_eq!(
+            urls,
+            vec!["https://weather.com/weather/tenday/l/Dublin".to_string()]
+        );
     }
 
     #[test]
