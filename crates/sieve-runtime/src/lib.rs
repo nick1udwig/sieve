@@ -1036,6 +1036,37 @@ impl RuntimeOrchestrator {
             .all(|key| allowances.contains(&key)))
     }
 
+    fn remember_unknown_or_uncertain_allowance(
+        &self,
+        kind: UnknownOrUncertain,
+        command_segments: &[CommandSegment],
+    ) -> Result<(), RuntimeError> {
+        let mut allowances = self
+            .persistent_approval_allowances
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        allowances.insert(ApprovalAllowanceKey::for_unknown_or_uncertain(
+            kind,
+            command_segments,
+        ));
+        Ok(())
+    }
+
+    fn unknown_or_uncertain_persistently_allowed(
+        &self,
+        kind: UnknownOrUncertain,
+        command_segments: &[CommandSegment],
+    ) -> Result<bool, RuntimeError> {
+        let allowances = self
+            .persistent_approval_allowances
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(allowances.contains(&ApprovalAllowanceKey::for_unknown_or_uncertain(
+            kind,
+            command_segments,
+        )))
+    }
+
     async fn handle_unknown_or_uncertain(
         &self,
         request: &ShellRunRequest,
@@ -1071,18 +1102,27 @@ impl RuntimeOrchestrator {
             }),
             PolicyDecisionKind::DenyWithApproval => {
                 let blocked_rule_id = kind.to_blocked_rule_id().to_string();
+                if self.unknown_or_uncertain_persistently_allowed(kind, &segments)? {
+                    let report = self
+                        .run_quarantine(request.run_id.clone(), request.cwd.clone(), segments)
+                        .await?;
+                    return Ok(RuntimeDisposition::ExecuteQuarantine(report));
+                }
                 let action = self
                     .request_approval(
                         request.run_id.clone(),
                         segments.clone(),
                         Vec::new(),
-                        blocked_rule_id,
+                        blocked_rule_id.clone(),
                         decision.reason,
                     )
                     .await?
                     .action;
                 match action {
                     ApprovalAction::ApproveOnce | ApprovalAction::ApproveAlways => {
+                        if action == ApprovalAction::ApproveAlways {
+                            self.remember_unknown_or_uncertain_allowance(kind, &segments)?;
+                        }
                         let report = self
                             .run_quarantine(request.run_id.clone(), request.cwd.clone(), segments)
                             .await?;
@@ -1274,6 +1314,17 @@ impl ApprovalAllowanceKey {
         }
     }
 
+    fn for_unknown_or_uncertain(
+        kind: UnknownOrUncertain,
+        command_segments: &[CommandSegment],
+    ) -> Self {
+        Self {
+            resource: Resource::Proc,
+            action: Action::Exec,
+            scope: canonical_unknown_or_uncertain_scope(kind, command_segments),
+        }
+    }
+
     fn as_capability(&self) -> Capability {
         Capability {
             resource: self.resource,
@@ -1307,6 +1358,20 @@ fn canonical_net_origin_scope(scope: &str) -> Option<String> {
         }
     }
     Some(origin)
+}
+
+fn canonical_unknown_or_uncertain_scope(
+    kind: UnknownOrUncertain,
+    command_segments: &[CommandSegment],
+) -> String {
+    let encoded = serde_json::to_string(command_segments).unwrap_or_else(|_| {
+        command_segments
+            .iter()
+            .map(|segment| segment.argv.join(" "))
+            .collect::<Vec<_>>()
+            .join(" && ")
+    });
+    format!("{}::{encoded}", kind.to_blocked_rule_id())
 }
 
 struct ApprovalResolution {
@@ -1354,7 +1419,7 @@ mod tests {
     use std::env::temp_dir;
     use std::fs::{read_to_string, remove_file};
     use std::sync::Mutex as StdMutex;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{sleep, timeout, Duration};
 
     struct StubShell {
         analysis: ShellAnalysis,
@@ -3357,6 +3422,81 @@ require_trusted_control_for_mutating = true
     }
 
     #[tokio::test]
+    async fn unknown_ask_approve_always_skips_repeat_approval_for_same_command() {
+        let segments = vec![CommandSegment {
+            argv: vec!["custom-cmd".to_string(), "--flag".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Unknown,
+            segments,
+            CommandKnowledge::Unknown,
+            PolicyDecisionKind::Allow,
+        );
+
+        let first_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_shell(ShellRunRequest {
+                        run_id: RunId("run-1".to_string()),
+                        cwd: "/tmp".to_string(),
+                        script: "custom-cmd --flag".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
+                        unknown_mode: UnknownMode::Ask,
+                        uncertain_mode: UncertainMode::Deny,
+                    })
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id,
+                run_id: RunId("run-1".to_string()),
+                action: ApprovalAction::ApproveAlways,
+                created_at_ms: 2000,
+            })
+            .expect("resolve approval");
+
+        let first_disposition = first_task.await.expect("task join").expect("runtime ok");
+        assert!(matches!(
+            first_disposition,
+            RuntimeDisposition::ExecuteQuarantine(_)
+        ));
+
+        let second_disposition = timeout(
+            Duration::from_millis(300),
+            runtime.orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-2".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "custom-cmd --flag".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Ask,
+                uncertain_mode: UncertainMode::Deny,
+            }),
+        )
+        .await
+        .expect("second run should complete without waiting for approval")
+        .expect("runtime ok");
+        assert!(matches!(
+            second_disposition,
+            RuntimeDisposition::ExecuteQuarantine(_)
+        ));
+        assert_eq!(
+            approval_bus
+                .published_events()
+                .expect("published approvals")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn uncertain_ask_requires_approval_before_quarantine() {
         let segments = vec![CommandSegment {
             argv: vec!["weird-shell-construct".to_string()],
@@ -3409,6 +3549,81 @@ require_trusted_control_for_mutating = true
         assert!(matches!(events[1], RuntimeEvent::ApprovalRequested(_)));
         assert!(matches!(events[2], RuntimeEvent::ApprovalResolved(_)));
         assert!(matches!(events[3], RuntimeEvent::QuarantineCompleted(_)));
+    }
+
+    #[tokio::test]
+    async fn uncertain_ask_approve_always_skips_repeat_approval_for_same_command() {
+        let segments = vec![CommandSegment {
+            argv: vec!["weird-shell-construct".to_string()],
+            operator_before: None,
+        }];
+        let (runtime, approval_bus, _event_log) = mk_runtime(
+            CommandKnowledge::Uncertain,
+            segments,
+            CommandKnowledge::Uncertain,
+            PolicyDecisionKind::Allow,
+        );
+
+        let first_task = {
+            let runtime = runtime.clone();
+            tokio::spawn(async move {
+                runtime
+                    .orchestrate_shell(ShellRunRequest {
+                        run_id: RunId("run-1".to_string()),
+                        cwd: "/tmp".to_string(),
+                        script: "weird-shell-construct".to_string(),
+                        control_value_refs: BTreeSet::new(),
+                        control_endorsed_by: None,
+                        unknown_mode: UnknownMode::Deny,
+                        uncertain_mode: UncertainMode::Ask,
+                    })
+                    .await
+            })
+        };
+
+        let requested = wait_for_approval(&approval_bus).await;
+        approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id,
+                run_id: RunId("run-1".to_string()),
+                action: ApprovalAction::ApproveAlways,
+                created_at_ms: 2000,
+            })
+            .expect("resolve approval");
+
+        let first_disposition = first_task.await.expect("task join").expect("runtime ok");
+        assert!(matches!(
+            first_disposition,
+            RuntimeDisposition::ExecuteQuarantine(_)
+        ));
+
+        let second_disposition = timeout(
+            Duration::from_millis(300),
+            runtime.orchestrate_shell(ShellRunRequest {
+                run_id: RunId("run-2".to_string()),
+                cwd: "/tmp".to_string(),
+                script: "weird-shell-construct".to_string(),
+                control_value_refs: BTreeSet::new(),
+                control_endorsed_by: None,
+                unknown_mode: UnknownMode::Deny,
+                uncertain_mode: UncertainMode::Ask,
+            }),
+        )
+        .await
+        .expect("second run should complete without waiting for approval")
+        .expect("runtime ok");
+        assert!(matches!(
+            second_disposition,
+            RuntimeDisposition::ExecuteQuarantine(_)
+        ));
+        assert_eq!(
+            approval_bus
+                .published_events()
+                .expect("published approvals")
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]

@@ -68,6 +68,7 @@ struct AppConfig {
 
 const DEFAULT_POLICY_PATH: &str = "docs/policy/baseline-policy.toml";
 const DEFAULT_SIEVE_DIR_NAME: &str = ".sieve";
+static APPROVAL_ALLOWANCES_TMP_NONCE: AtomicU64 = AtomicU64::new(1);
 
 impl AppConfig {
     fn from_env() -> Result<Self, String> {
@@ -202,7 +203,8 @@ fn save_approval_allowances(path: &std::path::Path, allowances: &[Capability]) -
     };
     let encoded = serde_json::to_string_pretty(&payload)
         .map_err(|err| format!("failed encoding approval allowances: {err}"))?;
-    let tmp_path = path.with_extension("json.tmp");
+    let nonce = APPROVAL_ALLOWANCES_TMP_NONCE.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = path.with_extension(format!("json.tmp.{}.{}", std::process::id(), nonce));
     fs::write(&tmp_path, encoded).map_err(|err| format!("failed writing {}: {err}", tmp_path.display()))?;
     fs::rename(&tmp_path, path).map_err(|err| {
         format!(
@@ -5967,6 +5969,52 @@ scope = "/tmp/input.txt"
         save_approval_allowances(&path, &allowances).expect("save allowances");
         let loaded = load_approval_allowances(&path).expect("load allowances");
         assert_eq!(loaded, allowances);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn approval_allowances_parallel_saves_do_not_fail() {
+        let root = std::env::temp_dir().join(format!(
+            "sieve-app-allowances-parallel-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let path = approval_allowances_path(&root);
+        let workers = 16usize;
+        let rounds_per_worker = 12usize;
+        let start = Arc::new(std::sync::Barrier::new(workers));
+        let errors = Arc::new(StdMutex::new(Vec::new()));
+
+        std::thread::scope(|scope| {
+            for worker_idx in 0..workers {
+                let path = path.clone();
+                let start = Arc::clone(&start);
+                let errors = Arc::clone(&errors);
+                scope.spawn(move || {
+                    start.wait();
+                    for round in 0..rounds_per_worker {
+                        let allowances = vec![Capability {
+                            resource: Resource::Fs,
+                            action: Action::Read,
+                            scope: format!("/tmp/input-{worker_idx}-{round}.txt"),
+                        }];
+                        if let Err(err) = save_approval_allowances(&path, &allowances) {
+                            errors.lock().expect("errors lock").push(err);
+                        }
+                    }
+                });
+            }
+        });
+
+        let failures = errors.lock().expect("errors lock").clone();
+        assert!(
+            failures.is_empty(),
+            "parallel save failures: {}",
+            failures.join("; ")
+        );
+        let loaded = load_approval_allowances(&path).expect("load final allowances");
+        assert!(!loaded.is_empty(), "final allowances must exist");
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir_all(&root);
     }
