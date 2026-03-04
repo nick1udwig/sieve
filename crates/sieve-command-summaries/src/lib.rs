@@ -8,6 +8,7 @@ use url::{Host, Url};
 
 #[path = "brave-search.rs"]
 mod brave_search;
+mod codex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryOutcome {
@@ -67,6 +68,10 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
         command: "tee",
         description: "Write stdin to one or more files (optionally append).",
     },
+    PlannerCommandDescriptor {
+        command: "codex",
+        description: "Run Codex non-interactively with `codex exec`. Read-only pattern: `codex exec --sandbox read-only --ephemeral \"...\"` (stdout only; optional `--search` and `--image PATH`). Workspace-write pattern: `codex exec --sandbox workspace-write -C <repo> [--add-dir <dir>] \"...\"`. `codex app-server` is intentionally unsupported here.",
+    },
 ];
 
 pub fn planner_command_catalog() -> &'static [PlannerCommandDescriptor] {
@@ -124,6 +129,10 @@ fn summarize_argv(argv: &[String]) -> SummaryOutcome {
     }
 
     if let Some(outcome) = summarize_curl(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = codex::summarize_codex_exec(argv) {
         return outcome;
     }
 
@@ -1590,5 +1599,25 @@ mod tests {
             .find(|entry| entry.command == "curl")
             .expect("curl catalog entry");
         assert!(entry.description.contains("markdown.new"));
+    }
+
+    #[test]
+    fn planner_command_catalog_includes_codex_exec_entry() {
+        let entry = planner_command_catalog()
+            .iter()
+            .find(|entry| entry.command == "codex")
+            .expect("codex catalog entry");
+        assert!(entry.description.contains("codex exec"));
+    }
+
+    #[test]
+    fn planner_command_catalog_codex_mentions_read_only_and_workspace_write() {
+        let entry = planner_command_catalog()
+            .iter()
+            .find(|entry| entry.command == "codex")
+            .expect("codex catalog entry");
+        assert!(entry.description.contains("--sandbox read-only"));
+        assert!(entry.description.contains("--sandbox workspace-write"));
+        assert!(entry.description.contains("--ephemeral"));
     }
 }
