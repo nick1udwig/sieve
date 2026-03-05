@@ -1,12 +1,12 @@
 use sieve_types::{Action, Capability, CommandSummary, Resource};
 
 use crate::{
-    collect_positionals_with_no_value_flags, flag_value, is_named_command, is_short_flag_cluster,
+    collect_positionals_with_no_value_flags, is_named_command, is_short_flag_cluster,
     known_fs_outcome, known_outcome, strip_sudo, unknown_outcome, unknown_with_flags,
     SummaryOutcome,
 };
 
-pub(crate) fn summarize_builtin(argv: &[String]) -> Option<SummaryOutcome> {
+pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
     summarize_rm(argv)
         .or_else(|| summarize_cp(argv))
         .or_else(|| summarize_mv(argv))
@@ -15,7 +15,6 @@ pub(crate) fn summarize_builtin(argv: &[String]) -> Option<SummaryOutcome> {
         .or_else(|| summarize_chmod(argv))
         .or_else(|| summarize_chown(argv))
         .or_else(|| summarize_tee(argv))
-        .or_else(|| summarize_sieve_lcm_cli(argv))
 }
 
 fn summarize_rm(argv: &[String]) -> Option<SummaryOutcome> {
@@ -150,30 +149,6 @@ fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {
     let mut scopes = positionals[..positionals.len() - 1].to_vec();
     scopes.push(positionals.last().cloned().expect("checked above"));
     Some(known_fs_outcome(scopes, Action::Write))
-}
-
-fn summarize_sieve_lcm_cli(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "sieve-lcm-cli") {
-        return None;
-    }
-
-    let Some(subcommand) = inner.get(1).map(String::as_str) else {
-        return Some(unknown_outcome("sieve-lcm-cli missing subcommand"));
-    };
-
-    match subcommand {
-        "query" | "expand" => Some(known_outcome(CommandSummary {
-            required_capabilities: Vec::new(),
-            sink_checks: Vec::new(),
-            unsupported_flags: Vec::new(),
-        })),
-        "ingest" => {
-            let db_path = flag_value(inner, "--db").unwrap_or_else(|| "~/.sieve/lcm".to_string());
-            Some(known_fs_outcome(vec![db_path], Action::Write))
-        }
-        _ => Some(unknown_outcome("unknown sieve-lcm-cli command")),
-    }
 }
 
 fn summarize_mkdir(argv: &[String]) -> Option<SummaryOutcome> {
