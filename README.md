@@ -1,6 +1,6 @@
-# sieve-v3
+# sieve
 
-A Rust-based general-purpose agent that is resistant to prompt injection *by design*.
+A general-purpose agent that is resistant to prompt injection *by design*, in Rust.
 
 Currently pre-Alpha.
 Use at your own risk.
@@ -18,25 +18,6 @@ Inspired by:
    - `SIEVE_PLANNER_MODEL`
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
-   - optional: `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` (CSV Telegram user IDs allowed to prompt/approve)
-   - optional: `SIEVE_POLICY_PATH` (defaults to `docs/policy/baseline-policy.toml`)
-   - optional: `SIEVE_HOME` (defaults to `~/.sieve`)
-   - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
-   - optional: `SIEVE_MAX_PLANNER_STEPS` (defaults to `3`)
-   - optional: `SIEVE_MAX_SUMMARY_CALLS_PER_TURN` (defaults to `12`; caps compose/evidence/gate summary calls per turn)
-   - optional: `SIEVE_LCM_ENABLED` (defaults to `1`; dual-lane LCM memory integration)
-   - optional: `SIEVE_LCM_ENABLE_UNTRUSTED_REFS` (defaults to `1`; can disable untrusted LCM refs in response path)
-   - optional: `SIEVE_LCM_GLOBAL_SESSION_ID` (defaults to `global`; all turns map to one memory key)
-   - optional: `SIEVE_LCM_TRUSTED_DB_PATH` / `SIEVE_LCM_UNTRUSTED_DB_PATH` (defaults under `$SIEVE_HOME/lcm/`)
-   - optional: `SIEVE_LCM_PLANNER_CONTEXT_TOKENS` / `SIEVE_LCM_UNTRUSTED_REF_TOKENS` (defaults `12000`)
-   - optional: `SIEVE_LCM_SUMMARY_MODEL` (fallback: `SIEVE_QUARANTINE_MODEL` then planner model)
-   - optional: `SIEVE_LLM_EXCHANGE_LOG_PATH` (exact OpenAI request/response JSONL; defaults to `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl`)
-   - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
-   - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to planner model when unset)
-   - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
-   - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (for bash/CLI-based Brave search commands)
-   - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
-   - optional: `SIEVE_IMAGE_OCR_CMD` (required for Telegram photo/image input)
 2. Start the app:
 
 ```bash
