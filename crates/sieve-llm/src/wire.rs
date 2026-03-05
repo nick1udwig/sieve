@@ -16,6 +16,7 @@ Rules:
 - If `bash` is allowed, use BASH_COMMAND_CATALOG as the trusted list of supported CLI tools.
 - Prefer cataloged commands that directly match the user task.
 - Do not assume commandline tools exist unless listed in BASH_COMMAND_CATALOG.
+- For requests that depend on prior conversation memory, use cataloged memory commands (for example `sieve-lcm-cli query --lane both --query \"...\" --json`) instead of guessing.
 - `ALLOWED_NET_CONNECT_SCOPES` is a trusted allowlist for network connect origins/scopes.
 - Prefer URLs whose origin is in `ALLOWED_NET_CONNECT_SCOPES`.
 - Only use non-allowlist origins when no allowlist path can satisfy the task.
@@ -611,10 +612,7 @@ mod tests {
             .and_then(Value::as_array)
             .expect("net connect scopes array");
         assert_eq!(net_scopes.len(), 1);
-        assert_eq!(
-            net_scopes[0].as_str(),
-            Some("https://api.open-meteo.com")
-        );
+        assert_eq!(net_scopes[0].as_str(), Some("https://api.open-meteo.com"));
 
         let catalog = payload
             .pointer("/BASH_COMMAND_CATALOG")

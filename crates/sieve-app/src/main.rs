@@ -1989,6 +1989,97 @@ fn planner_policy_feedback(tool_results: &[PlannerToolResult]) -> Option<String>
     Some(lines.join("\n"))
 }
 
+fn is_sieve_lcm_query_command(command: &str) -> bool {
+    let mut parts = command.split_whitespace();
+    matches!(
+        (parts.next(), parts.next()),
+        (Some("sieve-lcm-cli"), Some("query"))
+    )
+}
+
+fn trim_for_prompt(value: &str, max_chars: usize) -> String {
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut out = String::new();
+    for ch in trimmed.chars().take(max_chars.saturating_sub(3)) {
+        out.push(ch);
+    }
+    out.push_str("...");
+    out
+}
+
+async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) -> Option<String> {
+    for result in tool_results.iter().rev().take(8) {
+        let PlannerToolResult::Bash {
+            command,
+            disposition: RuntimeDisposition::ExecuteMainline(report),
+        } = result
+        else {
+            continue;
+        };
+        if report.exit_code.unwrap_or(1) != 0 || !is_sieve_lcm_query_command(command) {
+            continue;
+        }
+        let stdout_artifact = report
+            .artifacts
+            .iter()
+            .find(|artifact| {
+                matches!(artifact.kind, MainlineArtifactKind::Stdout) && artifact.byte_count > 0
+            })?;
+        let stdout = read_artifact_as_string(Path::new(&stdout_artifact.path))
+            .await
+            .ok()?;
+        let payload: serde_json::Value = serde_json::from_str(&stdout).ok()?;
+
+        let trusted_excerpts = payload
+            .get("trusted_hits")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("excerpt").and_then(serde_json::Value::as_str))
+                    .map(|value| trim_for_prompt(value, 220))
+                    .filter(|value| !value.is_empty())
+                    .take(3)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let untrusted_refs = payload
+            .get("untrusted_refs")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("ref").and_then(serde_json::Value::as_str))
+                    .map(str::to_string)
+                    .take(5)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if trusted_excerpts.is_empty() && untrusted_refs.is_empty() {
+            continue;
+        }
+
+        let mut lines = Vec::new();
+        lines.push(
+            "Memory query feedback (trusted): use trusted excerpts below as evidence; untrusted refs are opaque."
+                .to_string(),
+        );
+        for excerpt in trusted_excerpts {
+            lines.push(format!("- trusted excerpt: {excerpt}"));
+        }
+        for reference in untrusted_refs {
+            lines.push(format!("- untrusted ref: {reference}"));
+        }
+        return Some(lines.join("\n"));
+    }
+    None
+}
+
 async fn append_jsonl_record(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     let parent = path
         .parent()
@@ -3235,39 +3326,21 @@ async fn run_turn(
         .max_planner_steps
         .saturating_add(max_compose_followup_cycles);
     let mut planner_step_limit = cfg.max_planner_steps.max(1);
-    let trusted_memory_context = if let Some(memory) = lcm.as_ref() {
-        match memory.trusted_planner_context(&trusted_user_message).await {
-            Ok(Some(context)) if !context.trim().is_empty() => Some(context),
-            Ok(_) => None,
-            Err(err) => {
-                eprintln!(
-                    "lcm trusted planner context failed for {}: {}",
-                    run_id.0, err
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let planner_user_message = if let Some(context) = trusted_memory_context.as_ref() {
-        format!(
-            "Trusted memory context (trusted user prompts only):\n{}\n\nCurrent trusted user message:\n{}",
-            context, trusted_user_message
-        )
-    } else {
-        trusted_user_message.clone()
-    };
+    let planner_user_message = trusted_user_message.clone();
 
     let assistant_message = loop {
         while planner_steps_taken < planner_step_limit {
             let step_number = planner_steps_taken + 1;
-            let planner_turn_user_message =
-                if let Some(feedback) = planner_policy_feedback(&aggregated_result.tool_results) {
-                    format!("{planner_user_message}\n\n{feedback}")
-                } else {
-                    planner_user_message.clone()
-                };
+            let policy_feedback = planner_policy_feedback(&aggregated_result.tool_results);
+            let memory_feedback = planner_memory_feedback(&aggregated_result.tool_results).await;
+            let planner_turn_user_message = match (policy_feedback, memory_feedback) {
+                (Some(policy), Some(memory)) => {
+                    format!("{planner_user_message}\n\n{policy}\n\n{memory}")
+                }
+                (Some(policy), None) => format!("{planner_user_message}\n\n{policy}"),
+                (None, Some(memory)) => format!("{planner_user_message}\n\n{memory}"),
+                (None, None) => planner_user_message.clone(),
+            };
             let has_known_value_refs = runtime.has_known_value_refs()?;
             let allowed_tools_for_turn =
                 planner_allowed_tools_for_turn(&cfg.allowed_tools, has_known_value_refs);
@@ -3443,52 +3516,9 @@ async fn run_turn(
             }
         }
 
-        let (mut response_input, mut render_refs) =
+        let (response_input, render_refs) =
             build_response_turn_input(&run_id, &trusted_user_message, &aggregated_result);
-        if let Some(context) = trusted_memory_context.as_ref() {
-            let context_note =
-                format!("Trusted memory context (trusted user prompts only):\n{context}");
-            response_input.planner_thoughts = Some(match response_input.planner_thoughts.take() {
-                Some(existing) if !existing.trim().is_empty() => {
-                    format!("{existing}\n\n{context_note}")
-                }
-                _ => context_note,
-            });
-        }
-        if let Some(memory) = lcm.as_ref() {
-            match memory
-                .build_untrusted_ref_for_qllm(&run_id, &cfg.sieve_home, &trusted_user_message)
-                .await
-            {
-                Ok(Some(memory_ref)) => {
-                    render_refs.insert(
-                        memory_ref.ref_id.clone(),
-                        RenderRef::Artifact {
-                            path: memory_ref.path.clone(),
-                            byte_count: memory_ref.byte_count,
-                            line_count: memory_ref.line_count,
-                        },
-                    );
-                    response_input.tool_outcomes.push(ResponseToolOutcome {
-                        tool_name: "lcm_expand_query".to_string(),
-                        outcome: "untrusted delegated memory retrieval snapshot available by ref"
-                            .to_string(),
-                        attempted_command: None,
-                        failure_reason: None,
-                        refs: vec![ResponseRefMetadata {
-                            ref_id: memory_ref.ref_id,
-                            kind: "lcm_untrusted_context".to_string(),
-                            byte_count: memory_ref.byte_count,
-                            line_count: memory_ref.line_count,
-                        }],
-                    });
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    eprintln!("lcm untrusted ref build failed for {}: {}", run_id.0, err);
-                }
-            }
-        }
+        let mut response_input = response_input;
         let mut response_output = match response_model
             .write_turn_response(response_input.clone())
             .await
@@ -4904,7 +4934,7 @@ scope = "https://api.open-meteo.com/"
     }
 
     #[tokio::test]
-    async fn e2e_fake_lcm_memory_recall_where_do_i_live() {
+    async fn e2e_fake_lcm_does_not_auto_inject_trusted_memory_into_planner() {
         let _guard = env_test_lock()
             .lock()
             .expect("lcm recall env test lock poisoned");
@@ -4946,7 +4976,6 @@ scope = "https://api.open-meteo.com/"
 
         let mut lcm_config = LcmIntegrationConfig::from_sieve_home(&harness.root);
         lcm_config.enabled = true;
-        lcm_config.enable_untrusted_refs = false;
         let lcm = Arc::new(LcmIntegration::new(lcm_config).expect("initialize lcm integration"));
         let harness = harness.with_lcm(Some(lcm));
 
@@ -4957,14 +4986,14 @@ scope = "https://api.open-meteo.com/"
         harness
             .run_text_turn("Where do I live?")
             .await
-            .expect("memory recall turn should succeed");
+            .expect("follow-up turn should succeed");
 
         let assistant = assistant_messages(&harness.runtime_events());
         assert!(
             assistant
                 .iter()
-                .any(|message| message.contains("You live in Livermore ca")),
-            "second turn should recall location from trusted prior user memory"
+                .any(|message| message.contains("I don't know where you live")),
+            "without explicit memory tool use, planner should not receive injected trusted memory"
         );
 
         match previous_openai {
@@ -6464,6 +6493,64 @@ scope = "/tmp/input.txt"
             }),
         }];
         assert!(planner_policy_feedback(&tool_results).is_none());
+    }
+
+    #[tokio::test]
+    async fn planner_memory_feedback_extracts_sieve_lcm_query_payload() {
+        let path =
+            std::env::temp_dir().join(format!("sieve-lcm-query-feedback-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "trusted_hits": [
+                    {"excerpt": "You live in Livermore, California."}
+                ],
+                "untrusted_refs": [
+                    {"ref": "lcm:untrusted:summary:sum_abc"}
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write artifact payload");
+
+        let tool_results = vec![PlannerToolResult::Bash {
+            command: "sieve-lcm-cli query --lane both --query \"where do i live\" --json"
+                .to_string(),
+            disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                run_id: RunId("run-1".to_string()),
+                exit_code: Some(0),
+                artifacts: vec![MainlineArtifact {
+                    ref_id: "artifact-1".to_string(),
+                    kind: MainlineArtifactKind::Stdout,
+                    path: path.to_string_lossy().to_string(),
+                    byte_count: 128,
+                    line_count: 1,
+                }],
+            }),
+        }];
+
+        let feedback = planner_memory_feedback(&tool_results)
+            .await
+            .expect("feedback expected");
+        assert!(feedback.contains("trusted excerpt"));
+        assert!(feedback.contains("Livermore"));
+        assert!(feedback.contains("lcm:untrusted:summary:sum_abc"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn planner_memory_feedback_ignores_non_memory_commands() {
+        let tool_results = vec![PlannerToolResult::Bash {
+            command: "curl -sS \"https://example.com\"".to_string(),
+            disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                run_id: RunId("run-1".to_string()),
+                exit_code: Some(0),
+                artifacts: vec![],
+            }),
+        }];
+
+        assert!(planner_memory_feedback(&tool_results).await.is_none());
     }
 
     #[test]

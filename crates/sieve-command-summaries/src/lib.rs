@@ -72,6 +72,10 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
         command: "codex",
         description: "Run Codex non-interactively with `codex exec`. Read-only pattern: `codex exec --sandbox read-only --ephemeral \"...\"` (stdout only; optional `--search` and `--image PATH`). Workspace-write pattern: `codex exec --sandbox workspace-write -C <repo> [--add-dir <dir>] \"...\"`. `codex app-server` is intentionally unsupported here.",
     },
+    PlannerCommandDescriptor {
+        command: "sieve-lcm-cli",
+        description: "Query persistent memory via CLI. Read path for planner: `sieve-lcm-cli query --lane both --query \"...\" --json` (trusted excerpts + untrusted refs). Resolve untrusted refs with `sieve-lcm-cli expand --ref <ref> --json` for qLLM/ref workflows.",
+    },
 ];
 
 pub fn planner_command_catalog() -> &'static [PlannerCommandDescriptor] {
@@ -133,6 +137,10 @@ fn summarize_argv(argv: &[String]) -> SummaryOutcome {
     }
 
     if let Some(outcome) = codex::summarize_codex_exec(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = summarize_sieve_lcm_cli(argv) {
         return outcome;
     }
 
@@ -287,6 +295,36 @@ fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {
     let mut scopes = positionals[..positionals.len() - 1].to_vec();
     scopes.push(positionals.last().cloned().expect("checked above"));
     Some(known_fs_outcome(scopes, Action::Write))
+}
+
+fn summarize_sieve_lcm_cli(argv: &[String]) -> Option<SummaryOutcome> {
+    let inner = strip_sudo(argv);
+    if !is_named_command(inner, "sieve-lcm-cli") {
+        return None;
+    }
+
+    let Some(subcommand) = inner.get(1).map(String::as_str) else {
+        return Some(unknown_outcome("sieve-lcm-cli missing subcommand"));
+    };
+
+    match subcommand {
+        "query" | "expand" => Some(known_outcome(CommandSummary {
+            required_capabilities: Vec::new(),
+            sink_checks: Vec::new(),
+            unsupported_flags: Vec::new(),
+        })),
+        "ingest" => {
+            let db_path = flag_value(inner, "--db").unwrap_or_else(|| "~/.sieve/lcm".to_string());
+            Some(known_fs_outcome(vec![db_path], Action::Write))
+        }
+        _ => Some(unknown_outcome("unknown sieve-lcm-cli command")),
+    }
+}
+
+fn flag_value(argv: &[String], flag: &str) -> Option<String> {
+    argv.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].clone())
 }
 
 fn summarize_mkdir(argv: &[String]) -> Option<SummaryOutcome> {
@@ -1619,5 +1657,56 @@ mod tests {
         assert!(entry.description.contains("--sandbox read-only"));
         assert!(entry.description.contains("--sandbox workspace-write"));
         assert!(entry.description.contains("--ephemeral"));
+    }
+
+    #[test]
+    fn planner_command_catalog_includes_sieve_lcm_cli_entry() {
+        let entry = planner_command_catalog()
+            .iter()
+            .find(|entry| entry.command == "sieve-lcm-cli")
+            .expect("sieve-lcm-cli catalog entry");
+        assert!(entry.description.contains("query --lane both"));
+        assert!(entry.description.contains("expand --ref"));
+    }
+
+    #[test]
+    fn sieve_lcm_cli_query_is_known_no_capabilities() {
+        let out = summarize_argv(&argv(&[
+            "sieve-lcm-cli",
+            "query",
+            "--lane",
+            "both",
+            "--query",
+            "where do i live",
+            "--json",
+        ]));
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert!(summary.required_capabilities.is_empty());
+    }
+
+    #[test]
+    fn sieve_lcm_cli_ingest_requires_fs_write_capability() {
+        let out = summarize_argv(&argv(&[
+            "sieve-lcm-cli",
+            "ingest",
+            "--db",
+            "/tmp/memory.db",
+            "--conversation",
+            "global",
+            "--role",
+            "user",
+            "--content",
+            "hello",
+        ]));
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.required_capabilities.len(), 1);
+        assert_eq!(summary.required_capabilities[0].resource, Resource::Fs);
+        assert_eq!(summary.required_capabilities[0].action, Action::Write);
+        assert_eq!(
+            summary.required_capabilities[0].scope,
+            "/tmp/memory.db".to_string()
+        );
     }
 }
