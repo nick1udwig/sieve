@@ -7,8 +7,8 @@ use crate::config::{
 use crate::wire::{
     decode_guidance_output, decode_response_output, extract_openai_message_content_json,
     guidance_output_schema, response_output_schema, serialize_planner_input,
-    serialize_response_input,
-    GUIDANCE_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT, RESPONSE_SYSTEM_PROMPT,
+    serialize_response_input, GUIDANCE_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT,
+    RESPONSE_SYSTEM_PROMPT,
 };
 use crate::{
     GuidanceModel, LlmError, PlannerModel, ResponseModel, ResponseTurnInput, ResponseTurnOutput,

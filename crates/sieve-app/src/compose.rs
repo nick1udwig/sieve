@@ -1,12 +1,12 @@
 use crate::{
     append_jsonl_record, combine_gate_reasons, compose_gate_followup_signal,
-    compose_gate_requires_retry, denied_outcomes_only_message, dedupe_preserve_order,
+    compose_gate_requires_retry, dedupe_preserve_order, denied_outcomes_only_message,
     enforce_link_policy, extract_plain_urls_from_text, extract_trusted_evidence_lines,
     filter_non_asset_urls, non_empty_output_ref_ids, now_ms, obvious_meta_compose_pattern,
     parse_compose_gate_output, resolve_ref_summary_input, strip_asset_urls_from_message,
-    strip_unexpanded_render_tokens, summarize_with_ref_id_counted,
-    user_requested_detailed_output, user_requested_sources, ComposeGateOutput,
-    PlannerGuidanceSignal, RenderRef, ResponseTurnInput, RunId, SummaryModel,
+    strip_unexpanded_render_tokens, summarize_with_ref_id_counted, user_requested_detailed_output,
+    user_requested_sources, ComposeGateOutput, PlannerGuidanceSignal, RenderRef, ResponseTurnInput,
+    RunId, SummaryModel,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

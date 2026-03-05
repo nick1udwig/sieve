@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-mod config;
 mod compose;
 mod compose_gate;
+mod config;
 mod ingress;
 mod lcm_integration;
 mod logging;

@@ -5,8 +5,8 @@ mod approval_bus;
 mod event_log;
 mod value_state;
 
-use async_trait::async_trait;
 use approval_allowance::{ApprovalAllowanceKey, UnknownOrUncertain};
+use async_trait::async_trait;
 use sieve_command_summaries::{CommandSummarizer, SummaryOutcome};
 use sieve_llm::{LlmError, PlannerModel};
 use sieve_policy::PolicyEngine;
@@ -14,13 +14,13 @@ use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
-    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability,
-    CommandKnowledge, CommandSegment, CommandSummary, DeclassifyRequest, DeclassifyStateTransition,
-    EndorseRequest, EndorseStateTransition, PlannerGuidanceFrame, PlannerToolCall,
-    PlannerTurnInput, PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput,
-    QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, RunId,
-    RuntimeEvent, RuntimePolicyContext, ToolContractValidationReport, UncertainMode, UnknownMode,
-    ValueLabel, ValueRef,
+    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability, CommandKnowledge,
+    CommandSegment, CommandSummary, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
+    EndorseStateTransition, PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput,
+    PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput,
+    QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent,
+    RuntimePolicyContext, ToolContractValidationReport, UncertainMode, UnknownMode, ValueLabel,
+    ValueRef,
 };
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};

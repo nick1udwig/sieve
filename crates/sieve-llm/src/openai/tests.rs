@@ -90,8 +90,8 @@ fn exchange_logger_writes_transport_error_event() {
 
 #[tokio::test]
 async fn planner_request_includes_openai_native_tools_payload() {
-    let responses = Arc::new(Mutex::new(VecDeque::from(vec![planner_native_tool_response(
-        json!([
+    let responses = Arc::new(Mutex::new(VecDeque::from(vec![
+        planner_native_tool_response(json!([
             {
                 "id": "call_1",
                 "type": "function",
@@ -100,8 +100,8 @@ async fn planner_request_includes_openai_native_tools_payload() {
                     "arguments": "{\"cmd\":\"ls -la\"}"
                 }
             }
-        ]),
-    )])));
+        ])),
+    ])));
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
 
     let _ = run_planner_with_one_regeneration(
@@ -184,8 +184,8 @@ async fn planner_request_without_allowed_tools_omits_tools_payload() {
 
 #[tokio::test]
 async fn planner_accepts_openai_native_tool_call_response_shape() {
-    let responses = Arc::new(Mutex::new(VecDeque::from(vec![planner_native_tool_response(
-        json!([
+    let responses = Arc::new(Mutex::new(VecDeque::from(vec![
+        planner_native_tool_response(json!([
             {
                 "id": "call_1",
                 "type": "function",
@@ -194,8 +194,8 @@ async fn planner_accepts_openai_native_tool_call_response_shape() {
                     "arguments": "{\"cmd\":\"ls -la\"}"
                 }
             }
-        ]),
-    )])));
+        ])),
+    ])));
 
     let output = run_planner_with_one_regeneration(
         "gpt-test",

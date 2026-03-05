@@ -1,6 +1,6 @@
 use crate::{
-    format_integrity, mainline_artifact_kind_name, user_requested_sources,
-    MainlineArtifactKind, MainlineRunReport, PlannerToolResult, RuntimeDisposition,
+    format_integrity, mainline_artifact_kind_name, user_requested_sources, MainlineArtifactKind,
+    MainlineRunReport, PlannerToolResult, RuntimeDisposition,
 };
 use sieve_types::PlannerGuidanceSignal;
 
@@ -111,9 +111,8 @@ fn summarize_tool_progress(tool_results: &[PlannerToolResult]) -> ToolProgressSu
                                     summary.fetch_success_count =
                                         summary.fetch_success_count.saturating_add(1);
                                     if has_output && !command_targets_likely_asset(command) {
-                                        summary.non_asset_fetch_output_count = summary
-                                            .non_asset_fetch_output_count
-                                            .saturating_add(1);
+                                        summary.non_asset_fetch_output_count =
+                                            summary.non_asset_fetch_output_count.saturating_add(1);
                                         if stdout_bytes >= MIN_PRIMARY_FETCH_STDOUT_BYTES {
                                             summary.primary_fetch_output_count = summary
                                                 .primary_fetch_output_count
@@ -121,9 +120,8 @@ fn summarize_tool_progress(tool_results: &[PlannerToolResult]) -> ToolProgressSu
                                         }
                                     }
                                     if has_output && command_targets_markdown_view(command) {
-                                        summary.markdown_fetch_output_count = summary
-                                            .markdown_fetch_output_count
-                                            .saturating_add(1);
+                                        summary.markdown_fetch_output_count =
+                                            summary.markdown_fetch_output_count.saturating_add(1);
                                     }
                                 }
                                 BashActionClass::Extract | BashActionClass::Other => {}
