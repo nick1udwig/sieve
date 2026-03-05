@@ -23,16 +23,22 @@ use compose_gate::{
     compose_quality_followup_signal, compose_quality_requires_retry, gate_requires_retry,
 };
 use config::{
-    approval_allowances_path, load_approval_allowances, load_dotenv_from_path,
-    load_dotenv_if_present, parse_policy_path, parse_sieve_home,
-    parse_telegram_allowed_sender_user_ids, persist_runtime_approval_allowances,
-    runtime_event_log_path, save_approval_allowances, AppConfig, DEFAULT_POLICY_PATH,
+    approval_allowances_path, load_approval_allowances, load_dotenv_if_present,
+    persist_runtime_approval_allowances, AppConfig,
+};
+#[cfg(test)]
+use config::{
+    load_dotenv_from_path, parse_policy_path, parse_sieve_home,
+    parse_telegram_allowed_sender_user_ids, runtime_event_log_path, save_approval_allowances,
+    DEFAULT_POLICY_PATH,
 };
 use ingress::{
     spawn_stdin_prompt_loop, spawn_telegram_loop, IngressPrompt, PromptSource, RuntimeBridge,
     TypingGuard,
 };
-use lcm_integration::{LcmIntegration, LcmIntegrationConfig};
+use lcm_integration::LcmIntegration;
+#[cfg(test)]
+use lcm_integration::LcmIntegrationConfig;
 use logging::{
     append_jsonl_record, append_turn_controller_event, now_ms, ConversationLogRecord,
     ConversationRole, FanoutRuntimeEventLog, TelegramLoopEvent,
@@ -69,11 +75,12 @@ use sieve_runtime::{
 };
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
-    Action, ApprovalResolvedEvent, AssistantMessageEvent, Capability, Integrity,
-    InteractionModality, ModalityContract, ModalityOverrideReason, PlannerGuidanceFrame,
-    PlannerGuidanceInput, PlannerGuidanceSignal, Resource, RunId, RuntimeEvent, UncertainMode,
-    UnknownMode,
+    Action, AssistantMessageEvent, Integrity, InteractionModality, ModalityContract,
+    ModalityOverrideReason, PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceSignal,
+    Resource, RunId, RuntimeEvent,
 };
+#[cfg(test)]
+use sieve_types::{ApprovalResolvedEvent, Capability, UncertainMode, UnknownMode};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
