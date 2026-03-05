@@ -3151,8 +3151,8 @@ name = "sieve-command-summaries"
 version = "0.1.0"
 dependencies = [
  "codex-shell-command",
+ "sieve-policy",
  "sieve-types",
- "url",
 ]
 
 [[package]]
