@@ -2889,6 +2889,7 @@ fn codex_image_ocr_args(input_path: &Path) -> Vec<std::ffi::OsString> {
         "--ephemeral".into(),
         "--image".into(),
         input_path.as_os_str().to_owned(),
+        "--".into(),
         CODEX_IMAGE_OCR_PROMPT.into(),
     ]
 }
@@ -5872,6 +5873,7 @@ scope = "https://api.open-meteo.com/"
                 "--ephemeral".to_string(),
                 "--image".to_string(),
                 "/tmp/photo.png".to_string(),
+                "--".to_string(),
                 CODEX_IMAGE_OCR_PROMPT.to_string(),
             ]
         );
