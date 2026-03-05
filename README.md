@@ -1,6 +1,6 @@
-# sieve-v3
+# sieve
 
-A Rust-based general-purpose agent that is resistant to prompt injection *by design*.
+A general-purpose agent that is resistant to prompt injection *by design*, in Rust.
 
 Currently pre-Alpha.
 Use at your own risk.
