@@ -15,45 +15,58 @@ mod response_style;
 mod turn;
 
 use agent_loop::run_agent_loop;
-use async_trait::async_trait;
-use compose_gate::{
-    combine_gate_reasons, compose_gate_followup_signal, compose_gate_requires_retry,
-    extract_trusted_evidence_lines, parse_compose_gate_output, ComposeGateOutput,
-};
 #[cfg(test)]
-use compose_gate::{
-    compose_quality_followup_signal, compose_quality_requires_retry, gate_requires_retry,
+use async_trait::async_trait;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use compose_gate::{
+    combine_gate_reasons, compose_gate_followup_signal, compose_gate_requires_retry,
+    compose_quality_followup_signal, compose_quality_requires_retry,
+    extract_trusted_evidence_lines, gate_requires_retry, parse_compose_gate_output,
+    ComposeGateOutput,
 };
 use config::{
     approval_allowances_path, load_approval_allowances, load_dotenv_if_present, AppConfig,
 };
 #[cfg(test)]
-use config::{
+#[allow(unused_imports)]
+pub(crate) use config::{
     load_dotenv_from_path, parse_policy_path, parse_sieve_home,
     parse_telegram_allowed_sender_user_ids, runtime_event_log_path, save_approval_allowances,
     DEFAULT_POLICY_PATH,
 };
-use ingress::{
-    spawn_stdin_prompt_loop, spawn_telegram_loop, IngressPrompt, PromptSource, RuntimeBridge,
-    TypingGuard,
-};
+use ingress::{spawn_stdin_prompt_loop, spawn_telegram_loop, PromptSource, RuntimeBridge};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use ingress::{IngressPrompt, TypingGuard};
 use lcm_integration::LcmIntegration;
 #[cfg(test)]
-use lcm_integration::LcmIntegrationConfig;
-use logging::{
-    append_jsonl_record, now_ms, ConversationLogRecord, ConversationRole, FanoutRuntimeEventLog,
-    TelegramLoopEvent,
+#[allow(unused_imports)]
+pub(crate) use lcm_integration::LcmIntegrationConfig;
+use logging::FanoutRuntimeEventLog;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use logging::{
+    append_jsonl_record, now_ms, ConversationLogRecord, ConversationRole, TelegramLoopEvent,
 };
-use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
-use planner_progress::{
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use planner_progress::{
     classify_bash_action, command_targets_markdown_view, guidance_continue_decision,
     guidance_requests_continue, has_repeated_bash_outcome, progress_contract_override_signal,
     url_is_likely_asset, BashActionClass, MIN_PRIMARY_FETCH_STDOUT_BYTES,
 };
-use render_refs::{
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use render_refs::{
     read_artifact_as_string, render_assistant_message, resolve_ref_summary_input, RenderRef,
 };
-use response_style::{
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use response_style::{
     compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
     denied_outcomes_only_message, enforce_link_policy, extract_plain_urls_from_text,
     filter_non_asset_urls, obvious_meta_compose_pattern, strip_asset_urls_from_message,
@@ -62,42 +75,62 @@ use response_style::{
 use sieve_command_summaries::DefaultCommandSummarizer;
 use sieve_llm::{
     GuidanceModel, OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel,
-    OpenAiSummaryModel, ResponseModel, ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput,
-    SummaryModel, SummaryRequest,
+    OpenAiSummaryModel, ResponseModel, SummaryModel,
+};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use sieve_llm::{
+    ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput, SummaryRequest,
 };
 use sieve_policy::{canonicalize_net_origin_scope, TomlPolicyEngine};
 use sieve_quarantine::BwrapQuarantineRunner;
 use sieve_runtime::{
-    InProcessApprovalBus, MainlineArtifact, MainlineArtifactKind, MainlineRunReport,
-    PlannerRunResult, PlannerToolResult, RuntimeDeps, RuntimeDisposition, RuntimeEventLog,
-    RuntimeOrchestrator, SystemClock as RuntimeClock,
-};
-use sieve_shell::BasicShellAnalyzer;
-use sieve_types::{
-    Action, InteractionModality, ModalityOverrideReason, PlannerGuidanceSignal, Resource, RunId,
-    RuntimeEvent,
+    InProcessApprovalBus, RuntimeDeps, RuntimeOrchestrator, SystemClock as RuntimeClock,
 };
 #[cfg(test)]
-use sieve_types::{ApprovalResolvedEvent, Capability, UncertainMode, UnknownMode};
-use std::collections::{BTreeMap, BTreeSet};
+#[allow(unused_imports)]
+pub(crate) use sieve_runtime::{
+    MainlineArtifact, MainlineArtifactKind, MainlineRunReport, PlannerRunResult, PlannerToolResult,
+    RuntimeDisposition, RuntimeEventLog,
+};
+use sieve_shell::BasicShellAnalyzer;
+use sieve_types::{Action, InteractionModality, Resource};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use sieve_types::{
+    ApprovalResolvedEvent, Capability, ModalityOverrideReason, PlannerGuidanceSignal, RunId,
+    RuntimeEvent, UncertainMode, UnknownMode,
+};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use std::path::PathBuf;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tokio::sync::mpsc as tokio_mpsc;
 #[cfg(test)]
-use turn::{
+#[allow(unused_imports)]
+pub(crate) use turn::summarize_with_ref_id_counted;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use turn::{
     build_response_turn_input, default_modality_contract, override_modality_contract,
     planner_allowed_tools_for_turn, requires_output_visibility,
     response_has_visible_selected_output,
 };
-use turn::{
-    format_integrity, mainline_artifact_kind_name, non_empty_output_ref_ids, run_turn,
-    summarize_with_ref_id_counted, AppMainlineRunner,
-};
+use turn::{run_turn, AppMainlineRunner};
 
 fn planner_allowed_net_connect_scopes(policy: &TomlPolicyEngine) -> Vec<String> {
     let mut scopes = Vec::new();

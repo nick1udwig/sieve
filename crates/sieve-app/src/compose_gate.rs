@@ -1,9 +1,11 @@
-use crate::{
+use crate::planner_progress::guidance_requests_continue;
+use crate::response_style::{
     compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
-    guidance_requests_continue, obvious_meta_compose_pattern, PlannerGuidanceSignal,
-    ResponseTurnInput,
+    obvious_meta_compose_pattern,
 };
 use serde::{Deserialize, Serialize};
+use sieve_llm::ResponseTurnInput;
+use sieve_types::PlannerGuidanceSignal;
 
 pub(crate) fn extract_trusted_evidence_lines(
     trusted_user_message: &str,

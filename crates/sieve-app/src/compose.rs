@@ -1,13 +1,18 @@
-use crate::{
-    append_jsonl_record, combine_gate_reasons, compose_gate_followup_signal,
-    compose_gate_requires_retry, dedupe_preserve_order, denied_outcomes_only_message,
-    enforce_link_policy, extract_plain_urls_from_text, extract_trusted_evidence_lines,
-    filter_non_asset_urls, non_empty_output_ref_ids, now_ms, obvious_meta_compose_pattern,
-    parse_compose_gate_output, resolve_ref_summary_input, strip_asset_urls_from_message,
-    strip_unexpanded_render_tokens, summarize_with_ref_id_counted, user_requested_detailed_output,
-    user_requested_sources, ComposeGateOutput, PlannerGuidanceSignal, RenderRef, ResponseTurnInput,
-    RunId, SummaryModel,
+use crate::compose_gate::{
+    combine_gate_reasons, compose_gate_followup_signal, compose_gate_requires_retry,
+    extract_trusted_evidence_lines, parse_compose_gate_output, ComposeGateOutput,
 };
+use crate::logging::{append_jsonl_record, now_ms};
+use crate::render_refs::{resolve_ref_summary_input, RenderRef};
+use crate::response_style::{
+    dedupe_preserve_order, denied_outcomes_only_message, enforce_link_policy,
+    extract_plain_urls_from_text, filter_non_asset_urls, obvious_meta_compose_pattern,
+    strip_asset_urls_from_message, strip_unexpanded_render_tokens, user_requested_detailed_output,
+    user_requested_sources,
+};
+use crate::turn::{non_empty_output_ref_ids, summarize_with_ref_id_counted};
+use sieve_llm::{ResponseTurnInput, SummaryModel};
+use sieve_types::{PlannerGuidanceSignal, RunId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
