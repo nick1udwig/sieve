@@ -1,3 +1,5 @@
+use crate::st::PLANNER_CATALOG_DESCRIPTION;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlannerCommandDescriptor {
     pub command: &'static str,
@@ -59,7 +61,7 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
     },
     PlannerCommandDescriptor {
         command: "st",
-        description: "Speech CLI for transcription and synthesis. STT pattern: `st stt <audio-file>` (prints transcript to stdout, optionally `-o <file>`). TTS pattern: `st tts <text-file> --format opus --output <audio-file>` or `st tts --txt \"...\" --format opus --output <audio-file>`.",
+        description: PLANNER_CATALOG_DESCRIPTION,
     },
 ];
 

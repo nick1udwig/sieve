@@ -8,6 +8,15 @@ use sieve_types::CommandSummary;
 use crate::SummaryOutcome;
 
 const OPENAI_CONNECT_SCOPE: &str = "https://api.openai.com/";
+#[cfg(test)]
+pub(crate) const PLANNER_STT_EXAMPLE: &str = "st stt <audio-file>";
+#[cfg(test)]
+pub(crate) const PLANNER_TTS_FILE_EXAMPLE: &str =
+    "st tts <text-file> --format opus --output <audio-file>";
+#[cfg(test)]
+pub(crate) const PLANNER_TTS_INLINE_EXAMPLE: &str =
+    "st tts --txt \"...\" --format opus --output <audio-file>";
+pub(crate) const PLANNER_CATALOG_DESCRIPTION: &str = "Speech CLI for transcription and synthesis. STT pattern: `st stt <audio-file>` (prints transcript to stdout, optionally `-o <file>`). TTS pattern: `st tts <text-file> --format opus --output <audio-file>` or `st tts --txt \"...\" --format opus --output <audio-file>`.";
 
 pub(super) fn summarize_st(argv: &[String]) -> Option<SummaryOutcome> {
     let inner = super::strip_sudo(argv);

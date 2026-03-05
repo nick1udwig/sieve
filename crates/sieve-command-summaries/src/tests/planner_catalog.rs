@@ -1,4 +1,8 @@
 use crate::planner_command_catalog;
+use crate::st::{
+    PLANNER_CATALOG_DESCRIPTION, PLANNER_STT_EXAMPLE, PLANNER_TTS_FILE_EXAMPLE,
+    PLANNER_TTS_INLINE_EXAMPLE,
+};
 
 #[test]
 fn planner_command_catalog_includes_bravesearch_entry() {
@@ -62,8 +66,10 @@ fn planner_command_catalog_includes_st_entry() {
         .iter()
         .find(|entry| entry.command == "st")
         .expect("st catalog entry");
-    assert!(entry.description.contains("st stt"));
-    assert!(entry.description.contains("st tts"));
+    assert_eq!(entry.description, PLANNER_CATALOG_DESCRIPTION);
+    assert!(entry.description.contains(PLANNER_STT_EXAMPLE));
+    assert!(entry.description.contains(PLANNER_TTS_FILE_EXAMPLE));
+    assert!(entry.description.contains(PLANNER_TTS_INLINE_EXAMPLE));
     assert!(entry.description.contains("--format opus"));
     assert!(!entry.description.contains("--format ogg"));
 }
