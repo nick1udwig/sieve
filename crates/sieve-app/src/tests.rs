@@ -1,8 +1,9 @@
 use super::*;
 use serde_json::Value;
 use sieve_interface_telegram::{
-    TelegramAdapter as TestTelegramAdapter, TelegramAdapterConfig, TelegramLongPoll,
-    TelegramMessage as TestTelegramMessage, TelegramUpdate as TestTelegramUpdate,
+    SystemClock as TelegramClock, TelegramAdapter as TestTelegramAdapter, TelegramAdapterConfig,
+    TelegramEventBridge, TelegramLongPoll, TelegramMessage as TestTelegramMessage,
+    TelegramPrompt, TelegramUpdate as TestTelegramUpdate,
 };
 use sieve_llm::{GuidanceModel, LlmError, PlannerModel};
 use sieve_runtime::ApprovalBus;
@@ -14,7 +15,7 @@ use sieve_types::{
 };
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::mpsc::TryRecvError;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Mutex as StdMutex, OnceLock};
 use tokio::time::{timeout, Duration};
 
