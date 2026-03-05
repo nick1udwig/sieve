@@ -9,6 +9,7 @@ use url::{Host, Url};
 #[path = "brave-search.rs"]
 mod brave_search;
 mod codex;
+mod st;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryOutcome {
@@ -76,6 +77,10 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
         command: "sieve-lcm-cli",
         description: "Query persistent memory via CLI. Read path for planner: `sieve-lcm-cli query --lane both --query \"...\" --json` (trusted excerpts + untrusted refs). Resolve untrusted refs with `sieve-lcm-cli expand --ref <ref> --json` for qLLM/ref workflows.",
     },
+    PlannerCommandDescriptor {
+        command: "st",
+        description: "Speech CLI for transcription and synthesis. STT pattern: `st stt <audio-file>` (prints transcript to stdout, optionally `-o <file>`). TTS pattern: `st tts <text-file> --format ogg --output <audio-file>` or `st tts --txt \"...\" --format ogg --output <audio-file>`.",
+    },
 ];
 
 pub fn planner_command_catalog() -> &'static [PlannerCommandDescriptor] {
@@ -137,6 +142,10 @@ fn summarize_argv(argv: &[String]) -> SummaryOutcome {
     }
 
     if let Some(outcome) = codex::summarize_codex_exec(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = st::summarize_st(argv) {
         return outcome;
     }
 
@@ -1667,6 +1676,16 @@ mod tests {
             .expect("sieve-lcm-cli catalog entry");
         assert!(entry.description.contains("query --lane both"));
         assert!(entry.description.contains("expand --ref"));
+    }
+
+    #[test]
+    fn planner_command_catalog_includes_st_entry() {
+        let entry = planner_command_catalog()
+            .iter()
+            .find(|entry| entry.command == "st")
+            .expect("st catalog entry");
+        assert!(entry.description.contains("st stt"));
+        assert!(entry.description.contains("st tts"));
     }
 
     #[test]

@@ -56,8 +56,6 @@ struct AppConfig {
     runtime_cwd: String,
     allowed_tools: Vec<String>,
     allowed_net_connect_scopes: Vec<String>,
-    audio_stt_cmd: Option<String>,
-    audio_tts_cmd: Option<String>,
     unknown_mode: UnknownMode,
     uncertain_mode: UncertainMode,
     max_concurrent_turns: usize,
@@ -91,8 +89,6 @@ impl AppConfig {
         if allowed_tools.is_empty() {
             return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
         }
-        let audio_stt_cmd = optional_env("SIEVE_AUDIO_STT_CMD");
-        let audio_tts_cmd = optional_env("SIEVE_AUDIO_TTS_CMD");
         let max_concurrent_turns = parse_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
         if max_concurrent_turns == 0 {
             return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
@@ -118,8 +114,6 @@ impl AppConfig {
             runtime_cwd,
             allowed_tools,
             allowed_net_connect_scopes: Vec::new(),
-            audio_stt_cmd,
-            audio_tts_cmd,
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
             uncertain_mode: parse_uncertain_mode(env::var("SIEVE_UNCERTAIN_MODE").ok())?,
             max_concurrent_turns,
@@ -132,13 +126,6 @@ impl AppConfig {
 
 fn required_env(key: &str) -> Result<String, String> {
     env::var(key).map_err(|_| format!("missing required environment variable `{key}`"))
-}
-
-fn optional_env(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn parse_policy_path(raw: Option<String>) -> PathBuf {
@@ -2024,12 +2011,9 @@ async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) -> Option<S
         if report.exit_code.unwrap_or(1) != 0 || !is_sieve_lcm_query_command(command) {
             continue;
         }
-        let stdout_artifact = report
-            .artifacts
-            .iter()
-            .find(|artifact| {
-                matches!(artifact.kind, MainlineArtifactKind::Stdout) && artifact.byte_count > 0
-            })?;
+        let stdout_artifact = report.artifacts.iter().find(|artifact| {
+            matches!(artifact.kind, MainlineArtifactKind::Stdout) && artifact.byte_count > 0
+        })?;
         let stdout = read_artifact_as_string(Path::new(&stdout_artifact.path))
             .await
             .ok()?;
@@ -2940,28 +2924,6 @@ fn override_modality_contract(
     contract.override_reason = Some(reason);
 }
 
-fn shell_escape_single_quoted(value: &str) -> String {
-    let mut escaped = String::from("'");
-    for ch in value.chars() {
-        if ch == '\'' {
-            escaped.push_str("'\\''");
-        } else {
-            escaped.push(ch);
-        }
-    }
-    escaped.push('\'');
-    escaped
-}
-
-fn render_shell_template(template: &str, replacements: &[(&str, String)]) -> String {
-    let mut out = template.to_string();
-    for (key, value) in replacements {
-        let placeholder = format!("{{{{{key}}}}}");
-        out = out.replace(&placeholder, &shell_escape_single_quoted(value));
-    }
-    out
-}
-
 fn command_error_from_output(context: &str, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if stderr.is_empty() {
@@ -2973,6 +2935,7 @@ fn command_error_from_output(context: &str, output: &std::process::Output) -> St
 
 const CODEX_IMAGE_OCR_PROMPT: &str =
     "Extract the user's request and any relevant visible text from this image. Return plain text only.";
+const ST_TTS_OUTPUT_FORMAT: &str = "ogg";
 
 fn codex_image_ocr_args(input_path: &Path) -> Vec<std::ffi::OsString> {
     vec![
@@ -2987,40 +2950,19 @@ fn codex_image_ocr_args(input_path: &Path) -> Vec<std::ffi::OsString> {
     ]
 }
 
-async fn run_shell_template_capture_stdout(
-    template: &str,
-    replacements: &[(&str, String)],
-    context: &str,
-) -> Result<String, String> {
-    let script = render_shell_template(template, replacements);
-    let output = TokioCommand::new("bash")
-        .arg("-lc")
-        .arg(script)
-        .output()
-        .await
-        .map_err(|err| format!("{context} spawn failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error_from_output(context, &output));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+fn st_audio_stt_args(input_path: &Path) -> Vec<std::ffi::OsString> {
+    vec!["stt".into(), input_path.as_os_str().to_owned()]
 }
 
-async fn run_shell_template(
-    template: &str,
-    replacements: &[(&str, String)],
-    context: &str,
-) -> Result<(), String> {
-    let script = render_shell_template(template, replacements);
-    let output = TokioCommand::new("bash")
-        .arg("-lc")
-        .arg(script)
-        .output()
-        .await
-        .map_err(|err| format!("{context} spawn failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error_from_output(context, &output));
-    }
-    Ok(())
+fn st_audio_tts_args(text_path: &Path, output_path: &Path) -> Vec<std::ffi::OsString> {
+    vec![
+        "tts".into(),
+        text_path.as_os_str().to_owned(),
+        "--format".into(),
+        ST_TTS_OUTPUT_FORMAT.into(),
+        "--output".into(),
+        output_path.as_os_str().to_owned(),
+    ]
 }
 
 async fn fetch_telegram_file_path(bot_token: &str, file_id: &str) -> Result<String, String> {
@@ -3073,10 +3015,6 @@ async fn transcribe_audio_prompt(
     run_id: &RunId,
     file_id: &str,
 ) -> Result<String, String> {
-    let stt_cmd = cfg
-        .audio_stt_cmd
-        .clone()
-        .ok_or_else(|| "audio input requires SIEVE_AUDIO_STT_CMD".to_string())?;
     let file_path = fetch_telegram_file_path(&cfg.telegram_bot_token, file_id).await?;
     let media_dir = cfg.sieve_home.join("media").join(&run_id.0);
     tokio::fs::create_dir_all(&media_dir)
@@ -3090,18 +3028,21 @@ async fn transcribe_audio_prompt(
     let input_path = media_dir.join(format!("voice-input.{ext}"));
     download_telegram_file(&cfg.telegram_bot_token, &file_path, &input_path).await?;
 
-    let transcript = run_shell_template_capture_stdout(
-        &stt_cmd,
-        &[
-            ("input_path", input_path.to_string_lossy().to_string()),
-            ("run_id", run_id.0.clone()),
-        ],
-        "audio stt command",
-    )
-    .await?;
+    let mut command = TokioCommand::new("st");
+    for arg in st_audio_stt_args(&input_path) {
+        command.arg(arg);
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|err| format!("audio STT command spawn failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output("audio STT command", &output));
+    }
+    let transcript = String::from_utf8_lossy(&output.stdout).to_string();
     let transcript = transcript.trim().to_string();
     if transcript.is_empty() {
-        return Err("audio stt command produced empty transcript".to_string());
+        return Err("audio STT command produced empty transcript".to_string());
     }
     Ok(transcript)
 }
@@ -3149,10 +3090,6 @@ async fn synthesize_audio_reply(
     run_id: &RunId,
     assistant_message: &str,
 ) -> Result<PathBuf, String> {
-    let tts_cmd = cfg
-        .audio_tts_cmd
-        .clone()
-        .ok_or_else(|| "audio reply requires SIEVE_AUDIO_TTS_CMD".to_string())?;
     let media_dir = cfg.sieve_home.join("media").join(&run_id.0);
     tokio::fs::create_dir_all(&media_dir)
         .await
@@ -3161,22 +3098,25 @@ async fn synthesize_audio_reply(
     let output_path = media_dir.join("tts-output.ogg");
     tokio::fs::write(&text_path, assistant_message)
         .await
-        .map_err(|err| format!("failed to write tts input text: {err}"))?;
-    run_shell_template(
-        &tts_cmd,
-        &[
-            ("text_path", text_path.to_string_lossy().to_string()),
-            ("output_path", output_path.to_string_lossy().to_string()),
-            ("run_id", run_id.0.clone()),
-        ],
-        "audio tts command",
-    )
-    .await?;
+        .map_err(|err| format!("failed to write TTS input text: {err}"))?;
+
+    let mut command = TokioCommand::new("st");
+    for arg in st_audio_tts_args(&text_path, &output_path) {
+        command.arg(arg);
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|err| format!("audio TTS command spawn failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output("audio TTS command", &output));
+    }
+
     let metadata = tokio::fs::metadata(&output_path)
         .await
-        .map_err(|err| format!("audio tts output missing: {err}"))?;
+        .map_err(|err| format!("audio TTS output missing: {err}"))?;
     if metadata.len() == 0 {
-        return Err("audio tts output file is empty".to_string());
+        return Err("audio TTS output file is empty".to_string());
     }
     Ok(output_path)
 }
@@ -4581,8 +4521,6 @@ scope = "https://api.open-meteo.com/"
                 runtime_cwd: root.to_string_lossy().to_string(),
                 allowed_tools,
                 allowed_net_connect_scopes: Vec::new(),
-                audio_stt_cmd: None,
-                audio_tts_cmd: None,
                 unknown_mode: UnknownMode::Deny,
                 uncertain_mode: UncertainMode::Deny,
                 max_concurrent_turns: 1,
@@ -5876,16 +5814,36 @@ scope = "https://api.open-meteo.com/"
     }
 
     #[test]
-    fn render_shell_template_quotes_replacements() {
-        let rendered = render_shell_template(
-            "tool --input {{input_path}} --run {{run_id}}",
-            &[
-                ("input_path", "/tmp/it's ok.wav".to_string()),
-                ("run_id", "run-1".to_string()),
-            ],
+    fn st_audio_stt_args_include_input_path() {
+        let args = st_audio_stt_args(Path::new("/tmp/input.ogg"));
+        let rendered = args
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            rendered,
+            vec!["stt".to_string(), "/tmp/input.ogg".to_string()]
         );
-        assert!(rendered.contains("--input '/tmp/it'\\''s ok.wav'"));
-        assert!(rendered.contains("--run 'run-1'"));
+    }
+
+    #[test]
+    fn st_audio_tts_args_force_ogg_output_file() {
+        let args = st_audio_tts_args(Path::new("/tmp/tts-input.txt"), Path::new("/tmp/out.ogg"));
+        let rendered = args
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            rendered,
+            vec![
+                "tts".to_string(),
+                "/tmp/tts-input.txt".to_string(),
+                "--format".to_string(),
+                "ogg".to_string(),
+                "--output".to_string(),
+                "/tmp/out.ogg".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -6545,8 +6503,10 @@ scope = "/tmp/input.txt"
 
     #[tokio::test]
     async fn planner_memory_feedback_extracts_sieve_lcm_query_payload() {
-        let path =
-            std::env::temp_dir().join(format!("sieve-lcm-query-feedback-{}.json", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!(
+            "sieve-lcm-query-feedback-{}.json",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::write(
             &path,
             serde_json::json!({

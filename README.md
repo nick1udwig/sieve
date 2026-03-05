@@ -33,7 +33,7 @@ Inspired by:
    - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to planner model when unset)
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
    - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (for bash/CLI-based Brave search commands)
-   - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
+   - optional host dependency: `st` CLI on `PATH` with OpenAI provider configured (required for Telegram voice-note input/output)
    - optional host dependency: `codex` CLI on `PATH` (required for Telegram photo/image input OCR)
    - optional host dependency: `sieve-lcm-cli` on `PATH` (required when `SIEVE_LCM_ENABLED=1`)
 2. Start the app:
@@ -117,12 +117,10 @@ Web search notes:
   (for Brave API, `SIEVE_BRAVE_API_BASE`).
 
 Telegram voice-note notes:
-- voice input is converted to text by executing `SIEVE_AUDIO_STT_CMD` (must print transcript to stdout)
-- audio replies are synthesized by executing `SIEVE_AUDIO_TTS_CMD` (must write audio to `{{output_path}}`)
-- placeholder variables:
-  - STT: `{{input_path}}`, `{{run_id}}`
-  - TTS: `{{text_path}}`, `{{output_path}}`, `{{run_id}}`
-- recommended host dependencies: `ffmpeg` plus your chosen STT/TTS CLIs (for example Whisper/Faster-Whisper and Piper/espeak)
+- voice input is converted to text by running `st stt <audio-file>` (stdout transcript)
+- audio replies are synthesized by running `st tts <text-file> --format ogg --output <audio-file>`
+- ensure `st providers` includes `openai` (provider/model config is managed by `st` itself)
+- recommended host dependencies: `ffmpeg` plus `st` provider requirements
 - when audio synthesis/delivery fails, the app falls back to text reply
 
 Telegram image notes:
