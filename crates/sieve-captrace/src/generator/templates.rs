@@ -1,8 +1,8 @@
+use crate::command_match::args_after_command;
 use crate::fixture::{
     TOKEN_ARG, TOKEN_DATA, TOKEN_HEADER, TOKEN_IN_FILE, TOKEN_IN_FILE_2, TOKEN_KV,
     TOKEN_OUT_FILE, TOKEN_TMP_DIR, TOKEN_URL,
 };
-use crate::command_match::args_after_command;
 
 pub(super) const TEMPLATE_TOKEN_FILES: [&str; 4] = [
     TOKEN_TMP_DIR,
@@ -13,7 +13,10 @@ pub(super) const TEMPLATE_TOKEN_FILES: [&str; 4] = [
 pub(super) const TEMPLATE_TOKEN_GENERICS: [&str; 5] =
     [TOKEN_URL, TOKEN_HEADER, TOKEN_DATA, TOKEN_KV, TOKEN_ARG];
 
-pub(super) fn abstract_argv_template(argv_template: &[String], command_path: &[String]) -> Vec<String> {
+pub(super) fn abstract_argv_template(
+    argv_template: &[String],
+    command_path: &[String],
+) -> Vec<String> {
     let mut out = Vec::with_capacity(argv_template.len());
     let mut value_kind_from_prev_flag: Option<&str> = None;
     let prefix_len = 1 + command_path.len();

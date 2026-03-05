@@ -1,6 +1,4 @@
-use super::templates::{
-    contains_template_token, is_template_token, looks_like_url,
-};
+use super::templates::{contains_template_token, is_template_token, looks_like_url};
 use super::types::GeneratedSummaryOutcome;
 use crate::fixture::{FixtureLayout, TOKEN_URL};
 use sieve_command_summaries::SummaryOutcome as ExistingSummaryOutcome;
@@ -51,10 +49,7 @@ pub(super) fn build_literal_template_replacements(
     let mut replacements = Vec::new();
     let mut seen = BTreeSet::new();
     for (raw, template) in raw_argv_template.iter().zip(argv_template.iter()) {
-        if raw == template || raw.is_empty() {
-            continue;
-        }
-        if !contains_template_token(template) {
+        if raw == template || raw.is_empty() || !contains_template_token(template) {
             continue;
         }
         if seen.insert(raw.clone()) {

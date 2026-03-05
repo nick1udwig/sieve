@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod command_match;
 mod error;
 mod fixture;
 mod generator;
 mod planner;
+mod time_utils;
 
 #[cfg(test)]
 mod tests;
