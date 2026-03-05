@@ -32,10 +32,7 @@ pub(crate) fn st_audio_stt_args(input_path: &Path) -> Vec<std::ffi::OsString> {
     vec!["stt".into(), input_path.as_os_str().to_owned()]
 }
 
-pub(crate) fn st_audio_tts_args(
-    text_path: &Path,
-    output_path: &Path,
-) -> Vec<std::ffi::OsString> {
+pub(crate) fn st_audio_tts_args(text_path: &Path, output_path: &Path) -> Vec<std::ffi::OsString> {
     vec![
         "tts".into(),
         text_path.as_os_str().to_owned(),
