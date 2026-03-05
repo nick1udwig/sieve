@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
+mod approval_allowance;
 mod approval_bus;
 mod event_log;
 mod value_state;
 
 use async_trait::async_trait;
+use approval_allowance::{ApprovalAllowanceKey, UnknownOrUncertain};
 use sieve_command_summaries::{CommandSummarizer, SummaryOutcome};
 use sieve_llm::{LlmError, PlannerModel};
 use sieve_policy::PolicyEngine;
@@ -12,11 +14,11 @@ use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
-    Action, ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability,
+    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability,
     CommandKnowledge, CommandSegment, CommandSummary, DeclassifyRequest, DeclassifyStateTransition,
     EndorseRequest, EndorseStateTransition, PlannerGuidanceFrame, PlannerToolCall,
     PlannerTurnInput, PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput,
-    QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, Resource, RunId,
+    QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, RunId,
     RuntimeEvent, RuntimePolicyContext, ToolContractValidationReport, UncertainMode, UnknownMode,
     ValueLabel, ValueRef,
 };
@@ -26,7 +28,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::process::Command as TokioCommand;
-use url::Url;
 
 pub use approval_bus::{ApprovalBus, ApprovalBusError, InProcessApprovalBus};
 pub use event_log::{EventLogError, JsonlRuntimeEventLog, RuntimeEventLog};
@@ -209,13 +210,6 @@ pub struct RuntimeOrchestrator {
     next_request: AtomicU64,
     value_state: Mutex<RuntimeValueState>,
     persistent_approval_allowances: Mutex<BTreeSet<ApprovalAllowanceKey>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct ApprovalAllowanceKey {
-    resource: Resource,
-    action: Action,
-    scope: String,
 }
 
 pub struct RuntimeDeps {
@@ -1041,100 +1035,9 @@ impl RuntimeOrchestrator {
     }
 }
 
-impl ApprovalAllowanceKey {
-    fn for_capability(capability: &Capability) -> Self {
-        Self {
-            resource: capability.resource,
-            action: capability.action,
-            scope: canonical_approval_scope(capability),
-        }
-    }
-
-    fn for_unknown_or_uncertain(
-        kind: UnknownOrUncertain,
-        command_segments: &[CommandSegment],
-    ) -> Self {
-        Self {
-            resource: Resource::Proc,
-            action: Action::Exec,
-            scope: canonical_unknown_or_uncertain_scope(kind, command_segments),
-        }
-    }
-
-    fn as_capability(&self) -> Capability {
-        Capability {
-            resource: self.resource,
-            action: self.action,
-            scope: self.scope.clone(),
-        }
-    }
-}
-
-fn canonical_approval_scope(capability: &Capability) -> String {
-    match (capability.resource, capability.action) {
-        (Resource::Net, Action::Connect) => canonical_net_origin_scope(&capability.scope)
-            .unwrap_or_else(|| capability.scope.clone()),
-        _ => capability.scope.clone(),
-    }
-}
-
-fn canonical_net_origin_scope(scope: &str) -> Option<String> {
-    let url = Url::parse(scope).ok()?;
-    let host = url.host_str()?;
-    let mut origin = format!("{}://{}", url.scheme(), host.to_ascii_lowercase());
-    if let Some(port) = url.port() {
-        let default_port = match url.scheme() {
-            "http" => Some(80),
-            "https" => Some(443),
-            _ => None,
-        };
-        if Some(port) != default_port {
-            origin.push(':');
-            origin.push_str(&port.to_string());
-        }
-    }
-    Some(origin)
-}
-
-fn canonical_unknown_or_uncertain_scope(
-    kind: UnknownOrUncertain,
-    command_segments: &[CommandSegment],
-) -> String {
-    let encoded = serde_json::to_string(command_segments).unwrap_or_else(|_| {
-        command_segments
-            .iter()
-            .map(|segment| segment.argv.join(" "))
-            .collect::<Vec<_>>()
-            .join(" && ")
-    });
-    format!("{}::{encoded}", kind.to_blocked_rule_id())
-}
-
 struct ApprovalResolution {
     request_id: ApprovalRequestId,
     action: ApprovalAction,
-}
-
-#[derive(Clone, Copy)]
-enum UnknownOrUncertain {
-    Unknown,
-    Uncertain,
-}
-
-impl UnknownOrUncertain {
-    fn to_blocked_rule_id(self) -> &'static str {
-        match self {
-            Self::Unknown => "unknown_command_mode",
-            Self::Uncertain => "uncertain_command_mode",
-        }
-    }
-
-    fn to_knowledge(self) -> CommandKnowledge {
-        match self {
-            Self::Unknown => CommandKnowledge::Unknown,
-            Self::Uncertain => CommandKnowledge::Uncertain,
-        }
-    }
 }
 
 #[cfg(test)]
