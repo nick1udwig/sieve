@@ -1,6 +1,5 @@
 use crate::wire::{
-    guidance_output_schema, response_output_schema, GUIDANCE_SYSTEM_PROMPT,
-    RESPONSE_SYSTEM_PROMPT,
+    guidance_output_schema, response_output_schema, GUIDANCE_SYSTEM_PROMPT, RESPONSE_SYSTEM_PROMPT,
 };
 use crate::{ResponseTurnInput, SummaryRequest};
 use serde_json::{json, Value};
@@ -70,7 +69,10 @@ pub(super) fn build_guidance_request(input: PlannerGuidanceInput, model: &str) -
     })
 }
 
-pub(super) fn build_response_request(input: &ResponseTurnInput, model: &str) -> Result<Value, crate::LlmError> {
+pub(super) fn build_response_request(
+    input: &ResponseTurnInput,
+    model: &str,
+) -> Result<Value, crate::LlmError> {
     let response_payload = crate::wire::serialize_response_input(input)?;
     Ok(json!({
         "model": model,

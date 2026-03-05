@@ -36,7 +36,11 @@ pub(crate) fn write_report_json(
     } else {
         json.push('\n');
         for (index, trace_file) in trace_files.iter().enumerate() {
-            let comma = if index + 1 < trace_files.len() { "," } else { "" };
+            let comma = if index + 1 < trace_files.len() {
+                ","
+            } else {
+                ""
+            };
             let trace_file = trace_file.to_string_lossy();
             json.push_str(&format!("    {}{comma}\n", json_string(&trace_file)));
         }

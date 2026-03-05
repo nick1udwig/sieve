@@ -5,8 +5,8 @@ use super::types::{
 use super::util::sanitize_id;
 use crate::error::{io_err, CapTraceError};
 use crate::fixture::{
-    TOKEN_ARG, TOKEN_DATA, TOKEN_HEADER, TOKEN_IN_FILE, TOKEN_IN_FILE_2, TOKEN_KV,
-    TOKEN_OUT_FILE, TOKEN_TMP_DIR, TOKEN_URL,
+    TOKEN_ARG, TOKEN_DATA, TOKEN_HEADER, TOKEN_IN_FILE, TOKEN_IN_FILE_2, TOKEN_KV, TOKEN_OUT_FILE,
+    TOKEN_TMP_DIR, TOKEN_URL,
 };
 use sieve_types::{Capability, CommandKnowledge, Resource};
 use std::collections::BTreeMap;

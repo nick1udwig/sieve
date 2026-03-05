@@ -1,7 +1,7 @@
 use crate::command_match::args_after_command;
 use crate::fixture::{
-    TOKEN_ARG, TOKEN_DATA, TOKEN_HEADER, TOKEN_IN_FILE, TOKEN_IN_FILE_2, TOKEN_KV,
-    TOKEN_OUT_FILE, TOKEN_TMP_DIR, TOKEN_URL,
+    TOKEN_ARG, TOKEN_DATA, TOKEN_HEADER, TOKEN_IN_FILE, TOKEN_IN_FILE_2, TOKEN_KV, TOKEN_OUT_FILE,
+    TOKEN_TMP_DIR, TOKEN_URL,
 };
 
 pub(super) const TEMPLATE_TOKEN_FILES: [&str; 4] = [

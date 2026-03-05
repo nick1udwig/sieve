@@ -91,10 +91,8 @@ pub(super) async fn generate_assistant_message(
                 (None, None) => planner_user_message.clone(),
             };
             let has_known_value_refs = runtime.has_known_value_refs()?;
-            let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
-                &cfg.allowed_tools,
-                has_known_value_refs,
-            );
+            let allowed_tools_for_turn =
+                super::planner_allowed_tools_for_turn(&cfg.allowed_tools, has_known_value_refs);
             let step_result = match runtime
                 .orchestrate_planner_turn(PlannerRunRequest {
                     run_id: run_id.clone(),

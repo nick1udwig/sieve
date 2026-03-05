@@ -103,8 +103,8 @@ impl CapTraceGenerator {
                     })
                     .await
                 {
-                    Ok(llm_cases) => {
-                        cases.extend(llm_cases.into_iter().map(|argv_template| types::PlannedCase {
+                    Ok(llm_cases) => cases.extend(llm_cases.into_iter().map(|argv_template| {
+                        types::PlannedCase {
                             command_path: infer_command_path(
                                 &argv_template,
                                 &request.command,
@@ -112,8 +112,8 @@ impl CapTraceGenerator {
                             ),
                             argv_template,
                             source: types::CaseSource::Llm,
-                        }))
-                    }
+                        }
+                    })),
                     Err(err) => notes.push(format!("llm case generation skipped: {err}")),
                 }
             } else {

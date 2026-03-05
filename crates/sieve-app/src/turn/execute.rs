@@ -134,9 +134,12 @@ async fn deliver_audio_reply_if_requested(
 
     match media::synthesize_audio_reply(cfg, run_id, assistant_message).await {
         Ok(audio_path) => {
-            if let Err(err) =
-                media::send_telegram_voice(&cfg.telegram_bot_token, cfg.telegram_chat_id, &audio_path)
-                    .await
+            if let Err(err) = media::send_telegram_voice(
+                &cfg.telegram_bot_token,
+                cfg.telegram_chat_id,
+                &audio_path,
+            )
+            .await
             {
                 eprintln!("audio reply delivery failed for {}: {}", run_id.0, err);
                 override_modality_contract(

@@ -1,8 +1,8 @@
 use super::templates::infer_command_path;
 use super::types::{CaseSource, PlannedCase};
+use crate::command_match::argv_matches_command;
 use crate::error::CapTraceError;
 use crate::fixture::{TOKEN_IN_FILE, TOKEN_OUT_FILE, TOKEN_TMP_DIR};
-use crate::command_match::argv_matches_command;
 use sieve_command_summaries::{
     CommandSummarizer, DefaultCommandSummarizer, SummaryOutcome as ExistingSummaryOutcome,
 };

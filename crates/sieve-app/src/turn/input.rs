@@ -1,8 +1,6 @@
 use crate::config::AppConfig;
 use crate::media;
-use sieve_types::{
-    InteractionModality, ModalityContract, ModalityOverrideReason, RunId,
-};
+use sieve_types::{InteractionModality, ModalityContract, ModalityOverrideReason, RunId};
 
 pub(crate) fn default_modality_contract(input: InteractionModality) -> ModalityContract {
     ModalityContract {
