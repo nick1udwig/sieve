@@ -65,7 +65,7 @@ use sieve_llm::{
     OpenAiSummaryModel, ResponseModel, ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput,
     SummaryModel, SummaryRequest,
 };
-use sieve_policy::TomlPolicyEngine;
+use sieve_policy::{canonicalize_net_origin_scope, TomlPolicyEngine};
 use sieve_quarantine::BwrapQuarantineRunner;
 use sieve_runtime::{
     InProcessApprovalBus, MainlineArtifact, MainlineArtifactKind, MainlineRunReport,
@@ -115,25 +115,7 @@ fn planner_allowed_net_connect_scopes(policy: &TomlPolicyEngine) -> Vec<String> 
 }
 
 fn planner_net_connect_scope(scope: &str) -> String {
-    let Ok(url) = reqwest::Url::parse(scope) else {
-        return scope.to_string();
-    };
-    let Some(host) = url.host_str() else {
-        return scope.to_string();
-    };
-    let mut origin = format!("{}://{}", url.scheme(), host.to_ascii_lowercase());
-    if let Some(port) = url.port() {
-        let default_port = match url.scheme() {
-            "http" => Some(80),
-            "https" => Some(443),
-            _ => None,
-        };
-        if Some(port) != default_port {
-            origin.push(':');
-            origin.push_str(&port.to_string());
-        }
-    }
-    origin
+    canonicalize_net_origin_scope(scope).unwrap_or_else(|| scope.to_string())
 }
 
 #[tokio::main]

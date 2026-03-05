@@ -9,6 +9,24 @@ pub enum SinkCanonicalizationError {
     Invalid(#[from] url::ParseError),
 }
 
+pub fn canonicalize_net_origin_scope(raw: &str) -> Option<String> {
+    let url = Url::parse(raw).ok()?;
+    let host = url.host_str()?;
+    let mut origin = format!("{}://{}", url.scheme(), host.to_ascii_lowercase());
+    if let Some(port) = url.port() {
+        let default_port = match url.scheme() {
+            "http" => Some(80),
+            "https" => Some(443),
+            _ => None,
+        };
+        if Some(port) != default_port {
+            origin.push(':');
+            origin.push_str(&port.to_string());
+        }
+    }
+    Some(origin)
+}
+
 pub fn canonicalize_sink_key(raw: &str) -> Result<String, SinkCanonicalizationError> {
     let mut url = Url::parse(raw)?;
     url.set_query(None);

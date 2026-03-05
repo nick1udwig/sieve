@@ -1,5 +1,5 @@
+use sieve_policy::canonicalize_net_origin_scope;
 use sieve_types::{Action, Capability, CommandKnowledge, CommandSegment, Resource};
-use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ApprovalAllowanceKey {
@@ -46,21 +46,7 @@ fn canonical_approval_scope(capability: &Capability) -> String {
 }
 
 fn canonical_net_origin_scope(scope: &str) -> Option<String> {
-    let url = Url::parse(scope).ok()?;
-    let host = url.host_str()?;
-    let mut origin = format!("{}://{}", url.scheme(), host.to_ascii_lowercase());
-    if let Some(port) = url.port() {
-        let default_port = match url.scheme() {
-            "http" => Some(80),
-            "https" => Some(443),
-            _ => None,
-        };
-        if Some(port) != default_port {
-            origin.push(':');
-            origin.push_str(&port.to_string());
-        }
-    }
-    Some(origin)
+    canonicalize_net_origin_scope(scope)
 }
 
 fn canonical_unknown_or_uncertain_scope(
