@@ -1,4 +1,5 @@
 use super::*;
+use sieve_types::{SinkCheck, SinkKey, ValueRef};
 
 fn argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|part| (*part).to_string()).collect()
