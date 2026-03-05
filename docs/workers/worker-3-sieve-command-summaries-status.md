@@ -4,6 +4,17 @@ Date: 2026-02-26
 Worker: 3
 Owned crate: `crates/sieve-command-summaries`
 
+## 2026-03-04 update
+
+- Added `codex exec` command summary support (explicitly not `codex app-server`).
+- Added planner catalog entry for `codex` with read-only/workspace-write usage hints.
+- `codex exec` summary behavior:
+  - always requires `net.connect(https://api.openai.com/)`.
+  - `--sandbox read-only` requires `--ephemeral`; output-file flag is rejected.
+  - `--sandbox workspace-write` requires `fs.write` for `--cd` scope (or `.` when omitted) plus every `--add-dir` scope.
+  - supports `--image` in both read-only and workspace-write modes.
+- Added codex-specific unit tests (crate total now 52 tests).
+
 ## Implemented
 
 - Added pinned Codex snapshot dependency:
