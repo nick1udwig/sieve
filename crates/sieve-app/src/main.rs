@@ -25,9 +25,10 @@ use sieve_runtime::{
 };
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
-    Action, ApprovalResolvedEvent, AssistantMessageEvent, Capability, Integrity, InteractionModality,
-    ModalityContract, ModalityOverrideReason, PlannerGuidanceFrame, PlannerGuidanceInput,
-    PlannerGuidanceSignal, Resource, RunId, RuntimeEvent, UncertainMode, UnknownMode,
+    Action, ApprovalResolvedEvent, AssistantMessageEvent, Capability, Integrity,
+    InteractionModality, ModalityContract, ModalityOverrideReason, PlannerGuidanceFrame,
+    PlannerGuidanceInput, PlannerGuidanceSignal, Resource, RunId, RuntimeEvent, UncertainMode,
+    UnknownMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -57,7 +58,6 @@ struct AppConfig {
     allowed_net_connect_scopes: Vec<String>,
     audio_stt_cmd: Option<String>,
     audio_tts_cmd: Option<String>,
-    image_ocr_cmd: Option<String>,
     unknown_mode: UnknownMode,
     uncertain_mode: UncertainMode,
     max_concurrent_turns: usize,
@@ -92,7 +92,6 @@ impl AppConfig {
         }
         let audio_stt_cmd = optional_env("SIEVE_AUDIO_STT_CMD");
         let audio_tts_cmd = optional_env("SIEVE_AUDIO_TTS_CMD");
-        let image_ocr_cmd = optional_env("SIEVE_IMAGE_OCR_CMD");
         let max_concurrent_turns = parse_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
         if max_concurrent_turns == 0 {
             return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
@@ -120,7 +119,6 @@ impl AppConfig {
             allowed_net_connect_scopes: Vec::new(),
             audio_stt_cmd,
             audio_tts_cmd,
-            image_ocr_cmd,
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
             uncertain_mode: parse_uncertain_mode(env::var("SIEVE_UNCERTAIN_MODE").ok())?,
             max_concurrent_turns,
@@ -191,7 +189,10 @@ fn load_approval_allowances(path: &std::path::Path) -> Result<Vec<Capability>, S
     Ok(parsed.allowances)
 }
 
-fn save_approval_allowances(path: &std::path::Path, allowances: &[Capability]) -> Result<(), String> {
+fn save_approval_allowances(
+    path: &std::path::Path,
+    allowances: &[Capability],
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed creating {}: {err}", parent.display()))?;
@@ -203,7 +204,8 @@ fn save_approval_allowances(path: &std::path::Path, allowances: &[Capability]) -
     let encoded = serde_json::to_string_pretty(&payload)
         .map_err(|err| format!("failed encoding approval allowances: {err}"))?;
     let tmp_path = path.with_extension("json.tmp");
-    fs::write(&tmp_path, encoded).map_err(|err| format!("failed writing {}: {err}", tmp_path.display()))?;
+    fs::write(&tmp_path, encoded)
+        .map_err(|err| format!("failed writing {}: {err}", tmp_path.display()))?;
     fs::rename(&tmp_path, path).map_err(|err| {
         format!(
             "failed renaming {} to {}: {err}",
@@ -2876,6 +2878,21 @@ fn command_error_from_output(context: &str, output: &std::process::Output) -> St
     }
 }
 
+const CODEX_IMAGE_OCR_PROMPT: &str =
+    "Extract the user's request and any relevant visible text from this image. Return plain text only.";
+
+fn codex_image_ocr_args(input_path: &Path) -> Vec<std::ffi::OsString> {
+    vec![
+        "exec".into(),
+        "--sandbox".into(),
+        "read-only".into(),
+        "--ephemeral".into(),
+        "--image".into(),
+        input_path.as_os_str().to_owned(),
+        CODEX_IMAGE_OCR_PROMPT.into(),
+    ]
+}
+
 async fn run_shell_template_capture_stdout(
     template: &str,
     replacements: &[(&str, String)],
@@ -2996,16 +3013,13 @@ async fn transcribe_audio_prompt(
 }
 
 async fn extract_image_prompt(
-    cfg: &AppConfig,
+    bot_token: &str,
+    sieve_home: &Path,
     run_id: &RunId,
     file_id: &str,
 ) -> Result<String, String> {
-    let ocr_cmd = cfg
-        .image_ocr_cmd
-        .clone()
-        .ok_or_else(|| "image input requires SIEVE_IMAGE_OCR_CMD".to_string())?;
-    let file_path = fetch_telegram_file_path(&cfg.telegram_bot_token, file_id).await?;
-    let media_dir = cfg.sieve_home.join("media").join(&run_id.0);
+    let file_path = fetch_telegram_file_path(bot_token, file_id).await?;
+    let media_dir = sieve_home.join("media").join(&run_id.0);
     tokio::fs::create_dir_all(&media_dir)
         .await
         .map_err(|err| format!("failed to create media dir: {err}"))?;
@@ -3015,20 +3029,23 @@ async fn extract_image_prompt(
         .filter(|ext| !ext.is_empty())
         .unwrap_or("jpg");
     let input_path = media_dir.join(format!("image-input.{ext}"));
-    download_telegram_file(&cfg.telegram_bot_token, &file_path, &input_path).await?;
+    download_telegram_file(bot_token, &file_path, &input_path).await?;
 
-    let extracted = run_shell_template_capture_stdout(
-        &ocr_cmd,
-        &[
-            ("input_path", input_path.to_string_lossy().to_string()),
-            ("run_id", run_id.0.clone()),
-        ],
-        "image ocr command",
-    )
-    .await?;
+    let mut command = TokioCommand::new("codex");
+    for arg in codex_image_ocr_args(&input_path) {
+        command.arg(arg);
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|err| format!("image OCR command spawn failed: {err}"))?;
+    if !output.status.success() {
+        return Err(command_error_from_output("image OCR command", &output));
+    }
+    let extracted = String::from_utf8_lossy(&output.stdout).to_string();
     let extracted = extracted.trim().to_string();
     if extracted.is_empty() {
-        return Err("image ocr command produced empty output".to_string());
+        return Err("image OCR command produced empty output".to_string());
     }
     Ok(extracted)
 }
@@ -3158,13 +3175,22 @@ async fn run_turn(
             ),
         },
         InteractionModality::Image => match media_file_id.as_deref() {
-            Some(file_id) => match extract_image_prompt(cfg, &run_id, file_id).await {
-                Ok(extracted) => (extracted, None),
-                Err(err) => (
-                    String::new(),
-                    Some(format!("image input unavailable: {err}")),
-                ),
-            },
+            Some(file_id) => {
+                match extract_image_prompt(
+                    &cfg.telegram_bot_token,
+                    &cfg.sieve_home,
+                    &run_id,
+                    file_id,
+                )
+                .await
+                {
+                    Ok(extracted) => (extracted, None),
+                    Err(err) => (
+                        String::new(),
+                        Some(format!("image input unavailable: {err}")),
+                    ),
+                }
+            }
             None => (
                 String::new(),
                 Some("image input missing media file id".to_string()),
@@ -4524,7 +4550,6 @@ scope = "https://api.open-meteo.com/"
                 allowed_net_connect_scopes: Vec::new(),
                 audio_stt_cmd: None,
                 audio_tts_cmd: None,
-                image_ocr_cmd: None,
                 unknown_mode: UnknownMode::Deny,
                 uncertain_mode: UncertainMode::Deny,
                 max_concurrent_turns: 1,
@@ -5832,6 +5857,27 @@ scope = "https://api.open-meteo.com/"
     }
 
     #[test]
+    fn codex_image_ocr_args_include_read_only_ephemeral_image_prompt() {
+        let args = codex_image_ocr_args(Path::new("/tmp/photo.png"));
+        let rendered = args
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            rendered,
+            vec![
+                "exec".to_string(),
+                "--sandbox".to_string(),
+                "read-only".to_string(),
+                "--ephemeral".to_string(),
+                "--image".to_string(),
+                "/tmp/photo.png".to_string(),
+                CODEX_IMAGE_OCR_PROMPT.to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn modality_contract_defaults_and_overrides() {
         let mut contract = default_modality_contract(InteractionModality::Audio);
         assert_eq!(contract.input, InteractionModality::Audio);
@@ -5885,7 +5931,10 @@ scope = "https://api.open-meteo.com/"
             planner_allowed_tools_for_turn(&configured, false),
             vec!["bash".to_string()]
         );
-        assert_eq!(planner_allowed_tools_for_turn(&configured, true), configured);
+        assert_eq!(
+            planner_allowed_tools_for_turn(&configured, true),
+            configured
+        );
     }
 
     #[test]

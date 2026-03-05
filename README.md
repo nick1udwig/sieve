@@ -36,7 +36,7 @@ Inspired by:
    - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
    - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (for bash/CLI-based Brave search commands)
    - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
-   - optional: `SIEVE_IMAGE_OCR_CMD` (required for Telegram photo/image input)
+   - optional host dependency: `codex` CLI on `PATH` (required for Telegram photo/image input OCR)
 2. Start the app:
 
 ```bash
@@ -126,9 +126,9 @@ Telegram voice-note notes:
 - when audio synthesis/delivery fails, the app falls back to text reply
 
 Telegram image notes:
-- photo/image input is converted to text by executing `SIEVE_IMAGE_OCR_CMD`
-- placeholders: `{{input_path}}`, `{{run_id}}`
-- the command can wrap any OCR/vision stack (including vLLM/OpenAI-compatible vision endpoints)
+- photo/image input is converted to text by running `codex exec --sandbox read-only --ephemeral --image <path> ...`
+- this ingress OCR path is treated as trusted user input provenance (same as user-typed prompt)
+- OCR performed later inside planner `bash` tool flows remains untrusted tool output by default
 - when OCR extraction fails, the app replies with a text error message
 
 Modality contract:
