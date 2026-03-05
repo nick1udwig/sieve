@@ -2,6 +2,7 @@
 
 mod config;
 mod lcm_integration;
+mod logging;
 mod media;
 mod render_refs;
 mod response_style;
@@ -14,6 +15,10 @@ use config::{
     runtime_event_log_path, save_approval_allowances, AppConfig, DEFAULT_POLICY_PATH,
 };
 use lcm_integration::{LcmIntegration, LcmIntegrationConfig};
+use logging::{
+    append_jsonl_record, append_turn_controller_event, now_ms, ConversationLogRecord,
+    ConversationRole, FanoutRuntimeEventLog, TelegramLoopEvent,
+};
 use render_refs::{
     read_artifact_as_string, render_assistant_message, resolve_ref_summary_input, RenderRef,
 };
@@ -37,10 +42,10 @@ use sieve_llm::{
 use sieve_policy::TomlPolicyEngine;
 use sieve_quarantine::BwrapQuarantineRunner;
 use sieve_runtime::{
-    ApprovalBusError, EventLogError, InProcessApprovalBus, JsonlRuntimeEventLog, MainlineArtifact,
-    MainlineArtifactKind, MainlineRunError, MainlineRunReport, MainlineRunRequest, MainlineRunner,
-    PlannerRunRequest, PlannerRunResult, PlannerToolResult, RuntimeDeps, RuntimeDisposition,
-    RuntimeEventLog, RuntimeOrchestrator, SystemClock as RuntimeClock,
+    ApprovalBusError, EventLogError, InProcessApprovalBus, MainlineArtifact, MainlineArtifactKind,
+    MainlineRunError, MainlineRunReport, MainlineRunRequest, MainlineRunner, PlannerRunRequest,
+    PlannerRunResult, PlannerToolResult, RuntimeDeps, RuntimeDisposition, RuntimeEventLog,
+    RuntimeOrchestrator, SystemClock as RuntimeClock,
 };
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
@@ -56,49 +61,11 @@ use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::AsyncWriteExt;
+use std::time::Duration;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc as tokio_mpsc, Semaphore};
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ConversationRole {
-    User,
-    Assistant,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct ConversationLogRecord {
-    event: &'static str,
-    schema_version: u16,
-    run_id: RunId,
-    role: ConversationRole,
-    message: String,
-    created_at_ms: u64,
-}
-
-impl ConversationLogRecord {
-    fn new(run_id: RunId, role: ConversationRole, message: String, created_at_ms: u64) -> Self {
-        Self {
-            event: "conversation",
-            schema_version: 1,
-            run_id,
-            role,
-            message,
-            created_at_ms,
-        }
-    }
-}
 
 fn planner_allowed_tools_for_turn(
     configured_tools: &[String],
@@ -320,67 +287,6 @@ impl MainlineRunner for AppMainlineRunner {
 
 fn count_newlines(bytes: &[u8]) -> u64 {
     bytes.iter().filter(|byte| **byte == b'\n').count() as u64
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum TelegramLoopEvent {
-    Runtime(RuntimeEvent),
-    TypingStart { run_id: String },
-    TypingStop { run_id: String },
-}
-
-struct FanoutRuntimeEventLog {
-    jsonl: JsonlRuntimeEventLog,
-    history: Mutex<Vec<RuntimeEvent>>,
-    telegram_tx: Mutex<Sender<TelegramLoopEvent>>,
-}
-
-impl FanoutRuntimeEventLog {
-    fn new(
-        path: impl Into<PathBuf>,
-        telegram_tx: Sender<TelegramLoopEvent>,
-    ) -> Result<Self, EventLogError> {
-        Ok(Self {
-            jsonl: JsonlRuntimeEventLog::new(path.into())?,
-            history: Mutex::new(Vec::new()),
-            telegram_tx: Mutex::new(telegram_tx),
-        })
-    }
-
-    fn snapshot(&self) -> Vec<RuntimeEvent> {
-        self.history
-            .lock()
-            .expect("runtime event history lock poisoned")
-            .clone()
-    }
-
-    async fn append_conversation(
-        &self,
-        record: ConversationLogRecord,
-    ) -> Result<(), EventLogError> {
-        let value =
-            serde_json::to_value(record).map_err(|err| EventLogError::Append(err.to_string()))?;
-        self.jsonl.append_json_value(&value).await
-    }
-}
-
-#[async_trait]
-impl RuntimeEventLog for FanoutRuntimeEventLog {
-    async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError> {
-        self.jsonl.append(event.clone()).await?;
-        self.history
-            .lock()
-            .map_err(|_| EventLogError::Append("runtime event history lock poisoned".to_string()))?
-            .push(event.clone());
-        self.telegram_tx
-            .lock()
-            .map_err(|_| EventLogError::Append("telegram event sender lock poisoned".to_string()))?
-            .send(TelegramLoopEvent::Runtime(event))
-            .map_err(|err| {
-                EventLogError::Append(format!("failed to forward runtime event: {err}"))
-            })?;
-        Ok(())
-    }
 }
 
 fn spawn_telegram_loop(
@@ -1373,48 +1279,6 @@ async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) -> Option<S
         return Some(lines.join("\n"));
     }
     None
-}
-
-async fn append_jsonl_record(path: &Path, value: &serde_json::Value) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("jsonl path has no parent: {}", path.display()))?;
-    tokio::fs::create_dir_all(parent)
-        .await
-        .map_err(|err| format!("failed to create jsonl parent dir: {err}"))?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await
-        .map_err(|err| format!("failed to open jsonl log `{}`: {err}", path.display()))?;
-    let line = format!("{value}\n");
-    file.write_all(line.as_bytes())
-        .await
-        .map_err(|err| format!("failed to append jsonl log `{}`: {err}", path.display()))
-}
-
-async fn append_turn_controller_event(
-    sieve_home: &Path,
-    run_id: &RunId,
-    phase: &str,
-    payload: serde_json::Value,
-) {
-    let path = sieve_home.join("logs/turn-controller-events.jsonl");
-    let record = serde_json::json!({
-        "event": "turn_controller",
-        "schema_version": 1,
-        "created_at_ms": now_ms(),
-        "run_id": run_id.0,
-        "phase": phase,
-        "payload": payload,
-    });
-    if let Err(err) = append_jsonl_record(&path, &record).await {
-        eprintln!(
-            "turn controller log write failed for {} (phase={}): {}",
-            run_id.0, phase, err
-        );
-    }
 }
 
 async fn summarize_with_ref_id(
