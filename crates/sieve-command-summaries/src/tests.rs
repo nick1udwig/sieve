@@ -1,4 +1,5 @@
 use super::*;
+use sieve_types::{Action, Capability, CommandKnowledge, Resource};
 use sieve_types::{SinkCheck, SinkKey, ValueRef};
 
 fn argv(parts: &[&str]) -> Vec<String> {
