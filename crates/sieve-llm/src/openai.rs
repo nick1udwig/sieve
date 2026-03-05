@@ -1,11 +1,13 @@
+mod exchange_logger;
+mod planner_retry;
+
 use crate::config::{
     ensure_provider_openai, env_getter, load_model_config_from_env, load_openai_api_key_from_env,
 };
 use crate::wire::{
-    decode_guidance_output, decode_planner_output, decode_response_output,
-    extract_openai_message_content_json, extract_openai_planner_output_json,
-    guidance_output_schema, planner_regeneration_diagnostic_prompt, response_output_schema,
-    serialize_planner_input, serialize_response_input, PlannerDecodeOutcome,
+    decode_guidance_output, decode_response_output, extract_openai_message_content_json,
+    guidance_output_schema, response_output_schema, serialize_planner_input,
+    serialize_response_input,
     GUIDANCE_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT, RESPONSE_SYSTEM_PROMPT,
 };
 use crate::{
@@ -13,18 +15,17 @@ use crate::{
     SummaryModel, SummaryRequest,
 };
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use exchange_logger::LlmExchangeLogger;
+use planner_retry::{
+    backoff, is_transient_status, run_planner_with_one_regeneration, truncate_for_error,
+};
+use reqwest::Client;
 use serde_json::{json, Value};
-use sieve_tool_contracts::tool_args_schema;
 use sieve_types::{
     LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerTurnInput,
-    PlannerTurnOutput, ToolContractValidationReport,
+    PlannerTurnOutput,
 };
-use std::fs::{create_dir_all, OpenOptions};
-use std::future::Future;
-use std::io::Write;
-use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 const OPENAI_DEFAULT_API_BASE: &str = "https://api.openai.com";
 const HTTP_TIMEOUT_SECONDS: u64 = 30;
@@ -126,127 +127,6 @@ impl OpenAiClient {
             }
         }
     }
-}
-
-#[derive(Clone, Debug)]
-struct LlmExchangeLogger {
-    path: Option<PathBuf>,
-}
-
-impl LlmExchangeLogger {
-    fn with_path(path: Option<PathBuf>) -> Self {
-        Self { path }
-    }
-
-    fn from_env() -> Self {
-        if let Some(explicit) = std::env::var("SIEVE_LLM_EXCHANGE_LOG_PATH")
-            .ok()
-            .map(|raw| raw.trim().to_string())
-            .filter(|raw| !raw.is_empty())
-        {
-            return Self::with_path(Some(PathBuf::from(explicit)));
-        }
-
-        let sieve_home = std::env::var("SIEVE_HOME")
-            .ok()
-            .map(|raw| raw.trim().to_string())
-            .filter(|raw| !raw.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var("HOME")
-                    .ok()
-                    .map(|raw| raw.trim().to_string())
-                    .filter(|raw| !raw.is_empty())
-                    .map(PathBuf::from)
-                    .map(|home| home.join(".sieve"))
-            });
-
-        let default_path = sieve_home.map(|home| home.join("logs/llm-provider-exchanges.jsonl"));
-        Self::with_path(default_path)
-    }
-
-    fn log_http(
-        &self,
-        endpoint: &str,
-        request_json: &Value,
-        attempt: usize,
-        status: u16,
-        response_body: &str,
-    ) {
-        let event = json!({
-            "event": "llm_provider_exchange",
-            "schema_version": 1,
-            "provider": "openai",
-            "created_at_ms": now_ms(),
-            "endpoint": endpoint,
-            "attempt": attempt,
-            "request_json": request_json,
-            "response_status": status,
-            "response_body": response_body,
-        });
-        self.append(event);
-    }
-
-    fn log_transport_error(
-        &self,
-        endpoint: &str,
-        request_json: &Value,
-        attempt: usize,
-        error: &str,
-    ) {
-        let event = json!({
-            "event": "llm_provider_exchange",
-            "schema_version": 1,
-            "provider": "openai",
-            "created_at_ms": now_ms(),
-            "endpoint": endpoint,
-            "attempt": attempt,
-            "request_json": request_json,
-            "transport_error": error,
-        });
-        self.append(event);
-    }
-
-    fn append(&self, event: Value) {
-        let Some(path) = &self.path else {
-            return;
-        };
-        if let Some(parent) = path.parent() {
-            if let Err(err) = create_dir_all(parent) {
-                eprintln!(
-                    "sieve-llm exchange logger failed creating {}: {}",
-                    parent.display(),
-                    err
-                );
-                return;
-            }
-        }
-        let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
-            eprintln!(
-                "sieve-llm exchange logger failed opening {}",
-                path.display()
-            );
-            return;
-        };
-        let Ok(line) = serde_json::to_string(&event) else {
-            eprintln!("sieve-llm exchange logger failed serializing event");
-            return;
-        };
-        if let Err(err) = writeln!(file, "{line}") {
-            eprintln!(
-                "sieve-llm exchange logger failed writing {}: {}",
-                path.display(),
-                err
-            );
-        }
-    }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 pub struct OpenAiPlannerModel {
@@ -533,135 +413,6 @@ impl SummaryModel for OpenAiSummaryModel {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| LlmError::Decode("summary output missing `summary`".to_string()))?;
         Ok(summary.to_string())
-    }
-}
-
-async fn run_planner_with_one_regeneration<F, Fut>(
-    model: &str,
-    mut messages: Vec<Value>,
-    allowed_tools: &[String],
-    mut send_request: F,
-) -> Result<PlannerTurnOutput, LlmError>
-where
-    F: FnMut(Value) -> Fut,
-    Fut: Future<Output = Result<Value, LlmError>>,
-{
-    let mut regenerated = false;
-
-    loop {
-        let request = planner_chat_completion_request(model, messages.clone(), allowed_tools)?;
-        let response = send_request(request).await?;
-        let output_json = extract_openai_planner_output_json(&response)?;
-
-        match decode_planner_output(output_json)? {
-            PlannerDecodeOutcome::Valid(output) => {
-                ensure_allowed_tools(allowed_tools, &output)?;
-                return Ok(output);
-            }
-            PlannerDecodeOutcome::InvalidToolContracts(report) => {
-                if regenerated {
-                    return Err(regeneration_exhausted_error(report));
-                }
-                regenerated = true;
-                let prompt = planner_regeneration_diagnostic_prompt(&report)?;
-                messages.push(json!({"role":"user","content": prompt}));
-            }
-        }
-    }
-}
-
-fn planner_chat_completion_request(
-    model: &str,
-    messages: Vec<Value>,
-    allowed_tools: &[String],
-) -> Result<Value, LlmError> {
-    let tools = planner_tool_definitions(allowed_tools)?;
-    if tools.is_empty() {
-        return Ok(json!({
-            "model": model,
-            "temperature": 0,
-            "messages": messages
-        }));
-    }
-
-    Ok(json!({
-        "model": model,
-        "temperature": 0,
-        "messages": messages,
-        "tools": tools,
-        "tool_choice": "auto"
-    }))
-}
-
-fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmError> {
-    let mut tools = Vec::with_capacity(allowed_tools.len());
-    for tool_name in allowed_tools {
-        let schema = tool_args_schema(tool_name).ok_or_else(|| {
-            LlmError::Boundary(format!(
-                "allowed tool `{tool_name}` is missing a contract schema"
-            ))
-        })?;
-        tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": tool_name,
-                "parameters": schema
-            }
-        }));
-    }
-
-    Ok(tools)
-}
-
-fn ensure_allowed_tools(
-    allowed_tools: &[String],
-    output: &PlannerTurnOutput,
-) -> Result<(), LlmError> {
-    for call in &output.tool_calls {
-        if !allowed_tools
-            .iter()
-            .any(|allowed| allowed == &call.tool_name)
-        {
-            return Err(LlmError::Boundary(format!(
-                "planner emitted disallowed tool `{}`",
-                call.tool_name
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn regeneration_exhausted_error(report: ToolContractValidationReport) -> LlmError {
-    let serialized = serde_json::to_string(&report)
-        .unwrap_or_else(|_| "{\"serialization\":\"failed\"}".to_string());
-    LlmError::Boundary(format!(
-        "planner emitted invalid tool args after one regeneration pass: {serialized}"
-    ))
-}
-
-fn is_transient_status(status: StatusCode) -> bool {
-    matches!(
-        status,
-        StatusCode::REQUEST_TIMEOUT
-            | StatusCode::TOO_MANY_REQUESTS
-            | StatusCode::BAD_GATEWAY
-            | StatusCode::SERVICE_UNAVAILABLE
-            | StatusCode::GATEWAY_TIMEOUT
-    ) || status.is_server_error()
-}
-
-fn backoff(base: Duration, attempt: usize) -> Duration {
-    let shift = (attempt.saturating_sub(1)) as u32;
-    let multiplier = 1u32.checked_shl(shift).unwrap_or(u32::MAX);
-    base.saturating_mul(multiplier)
-}
-
-fn truncate_for_error(input: &str) -> String {
-    const MAX: usize = 512;
-    if input.len() <= MAX {
-        input.to_string()
-    } else {
-        format!("{}...[truncated]", &input[..MAX])
     }
 }
 
