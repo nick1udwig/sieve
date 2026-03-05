@@ -5,7 +5,12 @@ use super::*;
 fn typing_indicator_starts_and_stops_cleanly() {
     let bridge = TestBridge::new();
     let poller = TestPoller::new(vec![Vec::new(), Vec::new(), Vec::new()]);
-    let mut adapter = TelegramAdapter::new(test_config(None), bridge, poller, StepClock::new(1_000, 5_000));
+    let mut adapter = TelegramAdapter::new(
+        test_config(None),
+        bridge,
+        poller,
+        StepClock::new(1_000, 5_000),
+    );
 
     adapter.start_typing("run-1").expect("start typing");
     assert_eq!(adapter.poll.sent_chat_actions.len(), 1);

@@ -1,7 +1,7 @@
 use super::{base_input, engine_with_default_policy};
 use crate::{PolicyEngine, TomlPolicyEngine};
 use sieve_types::{
-    Action, Capability, CommandKnowledge, CommandSummary, CommandSegment, Integrity,
+    Action, Capability, CommandKnowledge, CommandSegment, CommandSummary, Integrity,
     PolicyDecisionKind, Resource, SinkCheck, SinkKey, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;

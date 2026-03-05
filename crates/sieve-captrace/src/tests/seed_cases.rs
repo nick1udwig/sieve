@@ -1,5 +1,5 @@
 use super::support::{
-    make_temp_test_dir, write_fake_help_script, write_failing_script, StubCaseGenerator,
+    make_temp_test_dir, write_failing_script, write_fake_help_script, StubCaseGenerator,
     StubTraceRunner,
 };
 use crate::fixture::{TOKEN_ARG, TOKEN_OUT_FILE, TOKEN_URL};

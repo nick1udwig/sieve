@@ -137,9 +137,7 @@ pub(super) fn sample_approval_requested() -> ApprovalRequestedEvent {
     sample_approval_requested_with_id("apr_1", "run_1")
 }
 
-pub(super) fn test_config(
-    allowed_sender_user_ids: Option<BTreeSet<i64>>,
-) -> TelegramAdapterConfig {
+pub(super) fn test_config(allowed_sender_user_ids: Option<BTreeSet<i64>>) -> TelegramAdapterConfig {
     TelegramAdapterConfig {
         chat_id: 42,
         poll_timeout_secs: 1,

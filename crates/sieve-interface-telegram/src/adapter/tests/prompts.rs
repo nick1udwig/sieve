@@ -1,6 +1,4 @@
-use super::support::{
-    sample_approval_requested, test_config, FixedClock, TestBridge, TestPoller,
-};
+use super::support::{sample_approval_requested, test_config, FixedClock, TestBridge, TestPoller};
 use super::*;
 
 #[test]
