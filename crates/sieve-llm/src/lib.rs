@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use sieve_types::{
-    LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerTurnInput,
-    PlannerTurnOutput, RunId,
+    InteractionModality, LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput,
+    PlannerTurnInput, PlannerTurnOutput, RunId,
 };
 use std::collections::BTreeSet;
 use thiserror::Error;
@@ -76,6 +76,7 @@ pub struct ResponseToolOutcome {
 pub struct ResponseTurnInput {
     pub run_id: RunId,
     pub trusted_user_message: String,
+    pub response_modality: InteractionModality,
     pub planner_thoughts: Option<String>,
     pub tool_outcomes: Vec<ResponseToolOutcome>,
 }

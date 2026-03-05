@@ -118,7 +118,7 @@ Web search notes:
 
 Telegram voice-note notes:
 - voice input is converted to text by running `st stt <audio-file>` (stdout transcript)
-- audio replies are synthesized by running `st tts <text-file> --format ogg --output <audio-file>`
+- audio replies are synthesized by running `st tts <text-file> --format opus --output <audio-file>`
 - ensure `st providers` includes `openai` (provider/model config is managed by `st` itself)
 - recommended host dependencies: `ffmpeg` plus `st` provider requirements
 - when audio synthesis/delivery fails, the app falls back to text reply
@@ -132,6 +132,7 @@ Telegram image notes:
 Modality contract:
 - ingress modality is explicit (`text`, `audio`, `image`)
 - response defaults to the same modality as ingress
+- audio reply mode nudges the response writer toward speech-friendly phrasing before TTS
 - explicit overrides currently supported:
   - `image -> text` (`not_supported`, no image-generation path yet)
   - `audio -> text` (`tool_failure`, when TTS synthesis/delivery fails)

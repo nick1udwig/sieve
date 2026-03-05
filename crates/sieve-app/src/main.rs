@@ -751,6 +751,7 @@ enum RenderRef {
 fn build_response_turn_input(
     run_id: &RunId,
     trusted_user_message: &str,
+    response_modality: InteractionModality,
     planner_result: &PlannerRunResult,
 ) -> (ResponseTurnInput, BTreeMap<String, RenderRef>) {
     let mut render_refs = BTreeMap::new();
@@ -763,6 +764,7 @@ fn build_response_turn_input(
         ResponseTurnInput {
             run_id: run_id.clone(),
             trusted_user_message: trusted_user_message.to_string(),
+            response_modality,
             planner_thoughts: planner_result.thoughts.clone(),
             tool_outcomes,
         },
@@ -1611,14 +1613,34 @@ fn contains_plain_url(message: &str) -> bool {
     message.contains("https://") || message.contains("http://")
 }
 
-fn mentions_linkish_text(message: &str) -> bool {
+fn contains_linkish_placeholder(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
-    normalized.contains(" link")
-        || normalized.contains(" links")
-        || normalized.contains("url")
-        || normalized.contains("source")
-        || normalized.contains("full results")
-        || normalized.contains("search results")
+    [
+        "provided link",
+        "provided links",
+        "provided url",
+        "provided urls",
+        "full results",
+        "search results",
+        "source above",
+        "source below",
+        "sources above",
+        "sources below",
+        "url above",
+        "url below",
+        "urls above",
+        "urls below",
+        "link above",
+        "link below",
+        "links above",
+        "links below",
+    ]
+    .iter()
+    .any(|pattern| normalized.contains(pattern))
+}
+
+fn mentions_linkish_text(message: &str) -> bool {
+    contains_linkish_placeholder(message)
 }
 
 fn split_sentences(message: &str) -> Vec<String> {
@@ -1642,20 +1664,14 @@ fn split_sentences(message: &str) -> Vec<String> {
 fn remove_linkish_sentences(message: &str) -> String {
     let kept: Vec<String> = split_sentences(message)
         .into_iter()
-        .filter(|sentence| {
-            let lower = sentence.to_ascii_lowercase();
-            !lower.contains(" link")
-                && !lower.contains(" links")
-                && !lower.contains("url")
-                && !lower.contains("source")
-                && !lower.contains("full results")
-                && !lower.contains("search results")
-        })
+        .filter(|sentence| !contains_linkish_placeholder(sentence))
         .collect();
     if kept.is_empty() {
         message
             .replace("provided link", "")
             .replace("provided links", "")
+            .replace("provided url", "")
+            .replace("provided urls", "")
             .trim()
             .to_string()
     } else {
@@ -2728,6 +2744,7 @@ async fn compose_assistant_message(
     let payload = serde_json::json!({
         "task": "compose_user_reply",
         "trusted_user_message": trusted_user_message,
+        "response_modality": response_input.response_modality,
         "user_requested_sources": user_requested_sources(trusted_user_message),
         "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
         "trusted_evidence": trusted_evidence.clone(),
@@ -2782,6 +2799,7 @@ async fn compose_assistant_message(
         let retry_payload = serde_json::json!({
             "task": "compose_user_reply",
             "trusted_user_message": trusted_user_message,
+            "response_modality": response_input.response_modality,
             "user_requested_sources": user_requested_sources(trusted_user_message),
             "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
             "trusted_evidence": trusted_evidence.clone(),
@@ -2935,7 +2953,7 @@ fn command_error_from_output(context: &str, output: &std::process::Output) -> St
 
 const CODEX_IMAGE_OCR_PROMPT: &str =
     "Extract the user's request and any relevant visible text from this image. Return plain text only.";
-const ST_TTS_OUTPUT_FORMAT: &str = "ogg";
+const ST_TTS_OUTPUT_FORMAT: &str = "opus";
 
 fn codex_image_ocr_args(input_path: &Path) -> Vec<std::ffi::OsString> {
     vec![
@@ -3458,8 +3476,12 @@ async fn run_turn(
             }
         }
 
-        let (response_input, render_refs) =
-            build_response_turn_input(&run_id, &trusted_user_message, &aggregated_result);
+        let (response_input, render_refs) = build_response_turn_input(
+            &run_id,
+            &trusted_user_message,
+            modality_contract.response,
+            &aggregated_result,
+        );
         let mut response_input = response_input;
         let mut response_output = match response_model
             .write_turn_response(response_input.clone())
@@ -5827,7 +5849,7 @@ scope = "https://api.open-meteo.com/"
     }
 
     #[test]
-    fn st_audio_tts_args_force_ogg_output_file() {
+    fn st_audio_tts_args_force_opus_format() {
         let args = st_audio_tts_args(Path::new("/tmp/tts-input.txt"), Path::new("/tmp/out.ogg"));
         let rendered = args
             .into_iter()
@@ -5839,7 +5861,7 @@ scope = "https://api.open-meteo.com/"
                 "tts".to_string(),
                 "/tmp/tts-input.txt".to_string(),
                 "--format".to_string(),
-                "ogg".to_string(),
+                "opus".to_string(),
                 "--output".to_string(),
                 "/tmp/out.ogg".to_string(),
             ]
@@ -6112,9 +6134,11 @@ scope = "/tmp/input.txt"
             tool_results: Vec::new(),
         };
 
-        let (input, refs) = build_response_turn_input(&run_id, "hi", &planner_result);
+        let (input, refs) =
+            build_response_turn_input(&run_id, "hi", InteractionModality::Text, &planner_result);
         assert_eq!(input.run_id, run_id);
         assert_eq!(input.trusted_user_message, "hi");
+        assert_eq!(input.response_modality, InteractionModality::Text);
         assert_eq!(input.planner_thoughts.as_deref(), Some("chat reply"));
         assert!(input.tool_outcomes.is_empty());
         assert!(refs.is_empty());
@@ -6125,6 +6149,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "show output".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6156,6 +6181,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "What is the weather tomorrow in Livermore?".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6182,6 +6208,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "show output".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6217,6 +6244,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "summarize output".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6275,6 +6303,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "weather".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6566,6 +6595,7 @@ scope = "/tmp/input.txt"
         let with_refs = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "weather".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6609,6 +6639,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "where do i live".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "lcm_expand_query".to_string(),
@@ -6639,6 +6670,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "weather tomorrow".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6661,6 +6693,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "compare claims".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6690,6 +6723,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "latest status".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6721,6 +6755,7 @@ scope = "/tmp/input.txt"
         let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "summarize".to_string(),
+            response_modality: InteractionModality::Text,
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -6971,6 +7006,20 @@ scope = "/tmp/input.txt"
         );
         assert!(!enforced.contains("https://example.com/a"));
         assert!(!enforced.to_ascii_lowercase().contains("provided link"));
+    }
+
+    #[test]
+    fn enforce_link_policy_keeps_actionable_link_wording() {
+        let message = "Yes—I can read your message here and respond. If you mean actual audio, upload an audio file (or share a link) and tell me what you want (e.g., transcription or a summary).".to_string();
+        let enforced = enforce_link_policy(message.clone(), &[], "just answer briefly");
+        assert_eq!(enforced, message);
+    }
+
+    #[test]
+    fn enforce_link_policy_keeps_source_origin_wording() {
+        let message = "Strength through Unity, Unity through Faith is best known as a Norsefire slogan in V for Vendetta. If you tell me what you need (e.g., identify the source, quote context, or explain the reference), I can help.".to_string();
+        let enforced = enforce_link_policy(message.clone(), &[], "just answer briefly");
+        assert_eq!(enforced, message);
     }
 
     #[test]

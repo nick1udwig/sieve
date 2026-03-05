@@ -223,6 +223,7 @@ fn response_turn_round_trip_uses_safe_shape() {
     let payload = serialize_response_input(&crate::ResponseTurnInput {
         run_id: RunId("run-resp".to_string()),
         trusted_user_message: "hi".to_string(),
+        response_modality: sieve_types::InteractionModality::Audio,
         planner_thoughts: Some("none".to_string()),
         tool_outcomes: vec![crate::ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -240,6 +241,7 @@ fn response_turn_round_trip_uses_safe_shape() {
     .expect("serialize response input");
     assert!(payload.get("tool_outcomes").is_some());
     assert!(payload.to_string().contains("trusted_user_message"));
+    assert!(payload.to_string().contains("response_modality"));
     assert!(payload.to_string().contains("attempted_command"));
 
     let out = decode_response_output(json!({

@@ -10,12 +10,12 @@ use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION}
 use sieve_types::{
     Action, ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
     Capability, CommandKnowledge, CommandSegment, CommandSummary, ControlContext,
-    DeclassifyRequest, DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity,
-    PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, PolicyDecision, PolicyDecisionKind,
-    PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent, QuarantineReport,
-    QuarantineRunRequest, Resource, RunId, RuntimeEvent, RuntimePolicyContext, SinkKey,
-    SinkPermissionContext, ToolContractValidationReport, UncertainMode, UnknownMode, ValueLabel,
-    ValueRef,
+    DeclassifyRequest, DeclassifyStateTransition, EndorseRequest, EndorseStateTransition,
+    Integrity, PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, PolicyDecision,
+    PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent,
+    QuarantineReport, QuarantineRunRequest, Resource, RunId, RuntimeEvent, RuntimePolicyContext,
+    SinkKey, SinkPermissionContext, ToolContractValidationReport, UncertainMode, UnknownMode,
+    ValueLabel, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{create_dir_all, OpenOptions};
@@ -1061,10 +1061,12 @@ impl RuntimeOrchestrator {
             .persistent_approval_allowances
             .lock()
             .map_err(|_| ValueStateError::LockPoisoned)?;
-        Ok(allowances.contains(&ApprovalAllowanceKey::for_unknown_or_uncertain(
-            kind,
-            command_segments,
-        )))
+        Ok(
+            allowances.contains(&ApprovalAllowanceKey::for_unknown_or_uncertain(
+                kind,
+                command_segments,
+            )),
+        )
     }
 
     async fn handle_unknown_or_uncertain(
@@ -2254,7 +2256,10 @@ trusted_control = true
                 created_at_ms: 1001,
             })
             .expect("resolve first approval as always");
-        let first_disposition = first_run.await.expect("first run task join").expect("first run");
+        let first_disposition = first_run
+            .await
+            .expect("first run task join")
+            .expect("first run");
         assert!(matches!(
             first_disposition,
             RuntimeDisposition::ExecuteMainline(_)

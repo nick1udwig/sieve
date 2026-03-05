@@ -74,6 +74,7 @@ Rules:
 - Produce a concise, user-facing response for this turn.
 - Answer the user request directly in the first sentence.
 - Keep default output short (1-2 sentences) unless the user explicitly asks for detailed output.
+- If `response_modality` is `audio`, write for speech delivery: natural spoken phrasing, minimal punctuation clutter, no bullet lists unless necessary.
 - Use only provided structured fields; do not invent actions.
 - Avoid giant messages. Prefer short responses.
 - Write in first person as a helpful assistant; never use third-person/meta narration.
@@ -341,6 +342,7 @@ pub(crate) fn serialize_response_input(input: &ResponseTurnInput) -> Result<Valu
     Ok(json!({
         "run_id": input.run_id.0,
         "trusted_user_message": input.trusted_user_message,
+        "response_modality": input.response_modality,
         "planner_thoughts": input.planner_thoughts,
         "tool_outcomes": tool_outcomes
     }))

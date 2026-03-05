@@ -155,7 +155,9 @@ impl PlannerGuidanceSignal {
             Self::ContinueNeedPrimaryContentFetch => "continue_need_primary_content_fetch",
             Self::ContinueNeedUrlExtraction => "continue_need_url_extraction",
             Self::ContinueNeedCanonicalNonAssetUrl => "continue_need_canonical_non_asset_url",
-            Self::ContinueNoProgressTryDifferentAction => "continue_no_progress_try_different_action",
+            Self::ContinueNoProgressTryDifferentAction => {
+                "continue_no_progress_try_different_action"
+            }
             Self::FinalAnswerReady => "final_answer_ready",
             Self::FinalAnswerPartial => "final_answer_partial",
             Self::FinalInsufficientEvidence => "final_insufficient_evidence",

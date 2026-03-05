@@ -428,6 +428,7 @@ Rules:
 - Prefer concrete, evidence-backed facts over generic link-only wording.
 - Answer the user request directly in the first sentence.
 - Keep responses concise by default: target 1-2 sentences unless the user explicitly asks for detailed output.
+- If `response_modality` is `audio`, write for speech delivery: natural spoken phrasing, no placeholder link talk, minimal parenthetical clutter.
 - If exact values are unavailable in evidence, state that explicitly and give the best available signal without guessing.
 - Include URLs only when the user asked for sources/links or when a URL is required for the immediate next step.
 - If uncertainty is necessary, include at most one short caveat sentence.
