@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+mod approval_bus;
+mod event_log;
+
 use async_trait::async_trait;
 use sieve_command_summaries::{CommandSummarizer, SummaryOutcome};
 use sieve_llm::{LlmError, PlannerModel};
@@ -8,56 +11,25 @@ use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
-    Action, ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, ApprovalResolvedEvent,
-    Capability, CommandKnowledge, CommandSegment, CommandSummary, ControlContext,
-    DeclassifyRequest, DeclassifyStateTransition, EndorseRequest, EndorseStateTransition,
-    Integrity, PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, PolicyDecision,
-    PolicyDecisionKind, PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent,
-    QuarantineReport, QuarantineRunRequest, Resource, RunId, RuntimeEvent, RuntimePolicyContext,
-    SinkKey, SinkPermissionContext, ToolContractValidationReport, UncertainMode, UnknownMode,
-    ValueLabel, ValueRef,
+    Action, ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability,
+    CommandKnowledge, CommandSegment, CommandSummary, ControlContext, DeclassifyRequest,
+    DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, Integrity,
+    PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, PolicyDecision, PolicyDecisionKind,
+    PolicyEvaluatedEvent, PrecheckInput, QuarantineCompletedEvent, QuarantineReport,
+    QuarantineRunRequest, Resource, RunId, RuntimeEvent, RuntimePolicyContext, SinkKey,
+    SinkPermissionContext, ToolContractValidationReport, UncertainMode, UnknownMode, ValueLabel,
+    ValueRef,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs::{create_dir_all, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::process::Command as TokioCommand;
-use tokio::sync::oneshot;
 use url::Url;
 
-#[derive(Debug, Error)]
-pub enum ApprovalBusError {
-    #[error("approval transport failed: {0}")]
-    Transport(String),
-}
-
-#[async_trait]
-pub trait ApprovalBus: Send + Sync {
-    async fn publish_requested(
-        &self,
-        event: ApprovalRequestedEvent,
-    ) -> Result<(), ApprovalBusError>;
-
-    async fn wait_resolved(
-        &self,
-        request_id: &ApprovalRequestId,
-    ) -> Result<ApprovalResolvedEvent, ApprovalBusError>;
-}
-
-#[derive(Debug, Error)]
-pub enum EventLogError {
-    #[error("failed to append runtime event: {0}")]
-    Append(String),
-}
-
-#[async_trait]
-pub trait RuntimeEventLog: Send + Sync {
-    async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError>;
-}
+pub use approval_bus::{ApprovalBus, ApprovalBusError, InProcessApprovalBus};
+pub use event_log::{EventLogError, JsonlRuntimeEventLog, RuntimeEventLog};
 
 #[derive(Debug, Error)]
 pub enum ValueStateError {
@@ -151,151 +123,6 @@ impl RuntimeValueState {
             sink_was_already_allowed,
             approved_by,
         })
-    }
-}
-
-#[derive(Default)]
-struct ApprovalState {
-    senders: HashMap<ApprovalRequestId, oneshot::Sender<ApprovalResolvedEvent>>,
-    receivers: HashMap<ApprovalRequestId, oneshot::Receiver<ApprovalResolvedEvent>>,
-    published: Vec<ApprovalRequestedEvent>,
-}
-
-pub struct InProcessApprovalBus {
-    state: Mutex<ApprovalState>,
-}
-
-impl InProcessApprovalBus {
-    pub fn new() -> Self {
-        Self {
-            state: Mutex::new(ApprovalState::default()),
-        }
-    }
-
-    pub fn resolve(&self, event: ApprovalResolvedEvent) -> Result<(), ApprovalBusError> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| ApprovalBusError::Transport("approval state lock poisoned".to_string()))?;
-        let Some(sender) = state.senders.remove(&event.request_id) else {
-            return Err(ApprovalBusError::Transport(format!(
-                "missing pending approval request: {}",
-                event.request_id.0
-            )));
-        };
-        sender
-            .send(event)
-            .map_err(|_| ApprovalBusError::Transport("approval receiver dropped".to_string()))
-    }
-
-    pub fn published_events(&self) -> Result<Vec<ApprovalRequestedEvent>, ApprovalBusError> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| ApprovalBusError::Transport("approval state lock poisoned".to_string()))?;
-        Ok(state.published.clone())
-    }
-}
-
-impl Default for InProcessApprovalBus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl ApprovalBus for InProcessApprovalBus {
-    async fn publish_requested(
-        &self,
-        event: ApprovalRequestedEvent,
-    ) -> Result<(), ApprovalBusError> {
-        let (sender, receiver) = oneshot::channel();
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| ApprovalBusError::Transport("approval state lock poisoned".to_string()))?;
-        if state.senders.contains_key(&event.request_id) {
-            return Err(ApprovalBusError::Transport(format!(
-                "duplicate approval request id: {}",
-                event.request_id.0
-            )));
-        }
-        state.senders.insert(event.request_id.clone(), sender);
-        state.receivers.insert(event.request_id.clone(), receiver);
-        state.published.push(event);
-        Ok(())
-    }
-
-    async fn wait_resolved(
-        &self,
-        request_id: &ApprovalRequestId,
-    ) -> Result<ApprovalResolvedEvent, ApprovalBusError> {
-        let receiver = {
-            let mut state = self.state.lock().map_err(|_| {
-                ApprovalBusError::Transport("approval state lock poisoned".to_string())
-            })?;
-            state.receivers.remove(request_id).ok_or_else(|| {
-                ApprovalBusError::Transport(format!("missing approval receiver: {}", request_id.0))
-            })?
-        };
-
-        receiver
-            .await
-            .map_err(|_| ApprovalBusError::Transport("approval sender dropped".to_string()))
-    }
-}
-
-pub struct JsonlRuntimeEventLog {
-    path: PathBuf,
-    writer_lock: Mutex<()>,
-}
-
-impl JsonlRuntimeEventLog {
-    pub fn new(path: impl Into<PathBuf>) -> Result<Self, EventLogError> {
-        let path = path.into();
-        if let Some(parent) = path.parent() {
-            create_dir_all(parent).map_err(|err| EventLogError::Append(err.to_string()))?;
-        }
-        Ok(Self {
-            path,
-            writer_lock: Mutex::new(()),
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub async fn append_json_value(&self, value: &serde_json::Value) -> Result<(), EventLogError> {
-        let encoded =
-            serde_json::to_string(value).map_err(|err| EventLogError::Append(err.to_string()))?;
-        self.append_encoded_line(&encoded)
-    }
-
-    fn append_encoded_line(&self, encoded: &str) -> Result<(), EventLogError> {
-        let _guard = self
-            .writer_lock
-            .lock()
-            .map_err(|_| EventLogError::Append("event writer lock poisoned".to_string()))?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .map_err(|err| EventLogError::Append(err.to_string()))?;
-        file.write_all(encoded.as_bytes())
-            .map_err(|err| EventLogError::Append(err.to_string()))?;
-        file.write_all(b"\n")
-            .map_err(|err| EventLogError::Append(err.to_string()))?;
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl RuntimeEventLog for JsonlRuntimeEventLog {
-    async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError> {
-        let encoded =
-            serde_json::to_string(&event).map_err(|err| EventLogError::Append(err.to_string()))?;
-        self.append_encoded_line(&encoded)
     }
 }
 
