@@ -36,8 +36,9 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 - Follow links until domain makes sense; honor `Read when` hints.
 - Keep notes short; update docs when behavior/API changes (no ship w/o test & docs).
 - Add `read_when` hints on cross-cutting docs.
-- Model preference: latest only. OK: Anthropic Opus 4.6, OpenAI GPT-5.2.
+- Model preference: latest only. OK: Anthropic Opus 4.6, OpenAI GPT-5.4.
 - One-liners always on one line, never broken up with `\`s.
+- `.md` files: only one sentence per line.
 
 ## PR Feedback
 - Active PR: `gh pr view --json number,title,url --jq '"PR #\\(.number): \\(.title)\\n\\(.url)"'`.
