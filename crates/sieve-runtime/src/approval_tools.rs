@@ -1,4 +1,5 @@
-use super::{ApprovalResolution, RuntimeError, RuntimeOrchestrator};
+use super::orchestrator::ApprovalResolution;
+use super::{RuntimeError, RuntimeOrchestrator};
 use sieve_types::{
     ApprovalAction, CommandKnowledge, CommandSegment, CommandSummary, DeclassifyRequest,
     DeclassifyStateTransition, EndorseRequest, EndorseStateTransition, PolicyDecision,
