@@ -18,6 +18,24 @@ Inspired by:
    - `SIEVE_PLANNER_MODEL`
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
+   - optional: `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` (CSV Telegram user IDs allowed to prompt/approve)
+   - optional: `SIEVE_POLICY_PATH` (defaults to `docs/policy/baseline-policy.toml`)
+   - optional: `SIEVE_HOME` (defaults to `~/.sieve`)
+   - optional: `SIEVE_MAX_CONCURRENT_TURNS` (defaults to `4`)
+   - optional: `SIEVE_MAX_PLANNER_STEPS` (defaults to `3`)
+   - optional: `SIEVE_MAX_SUMMARY_CALLS_PER_TURN` (defaults to `12`; caps compose/evidence/gate summary calls per turn)
+   - optional: `SIEVE_LCM_ENABLED` (defaults to `1`; dual-lane LCM memory integration)
+   - optional: `SIEVE_LCM_GLOBAL_SESSION_ID` (defaults to `global`; all turns map to one memory key)
+   - optional: `SIEVE_LCM_TRUSTED_DB_PATH` / `SIEVE_LCM_UNTRUSTED_DB_PATH` (defaults under `$SIEVE_HOME/lcm/`)
+   - optional: `SIEVE_LCM_CLI_BIN` (defaults to `sieve-lcm-cli`)
+   - optional: `SIEVE_LLM_EXCHANGE_LOG_PATH` (exact OpenAI request/response JSONL; defaults to `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl`)
+   - optional: `SIEVE_RESPONSE_MODEL` (defaults to planner model when unset)
+   - optional: `SIEVE_GUIDANCE_MODEL` (typed guidance channel; falls back to planner model when unset)
+   - optional: `SIEVE_QUARANTINE_MODEL` (used for untrusted-output summaries)
+   - optional: `BRAVE_API_KEY` + `SIEVE_BRAVE_API_BASE` (for bash/CLI-based Brave search commands)
+   - optional: `SIEVE_AUDIO_STT_CMD` + `SIEVE_AUDIO_TTS_CMD` (required for Telegram voice-note input/output)
+   - optional host dependency: `codex` CLI on `PATH` (required for Telegram photo/image input OCR)
+   - optional host dependency: `sieve-lcm-cli` on `PATH` (required when `SIEVE_LCM_ENABLED=1`)
 2. Start the app:
 
 ```bash
@@ -83,10 +101,11 @@ Mainline `bash` execution now stores stdout/stderr as untrusted artifacts under
 `$SIEVE_HOME/artifacts`, and the response writer decides whether to inline raw refs or request a
 Q-LLM summary by ref (planner never receives raw output strings).
 
-LCM memory integration is dual-lane:
-- trusted lane: stores trusted user prompts only and injects assembled context into planner turns
-- trusted lane context is also forwarded into response composition so recall questions can be answered without tool calls
-- untrusted lane: stores user + assistant turns and produces untrusted refs via delegated `lcm_expand_query` for Q-LLM use
+LCM memory integration is dual-lane and tool-driven:
+- ingestion is always on (trusted lane receives trusted user prompts; untrusted lane receives user+assistant turns)
+- planner memory retrieval is explicit via `bash` + `sieve-lcm-cli query` (no automatic memory injection)
+- `query --lane both` returns trusted excerpts plus opaque untrusted refs
+- untrusted refs can be expanded later via `sieve-lcm-cli expand` in quarantined/qLLM flows
 - global memory mode: all turns map to one configured session key (`SIEVE_LCM_GLOBAL_SESSION_ID`)
 
 Baseline policy file: `docs/policy/baseline-policy.toml`.
@@ -107,9 +126,9 @@ Telegram voice-note notes:
 - when audio synthesis/delivery fails, the app falls back to text reply
 
 Telegram image notes:
-- photo/image input is converted to text by executing `SIEVE_IMAGE_OCR_CMD`
-- placeholders: `{{input_path}}`, `{{run_id}}`
-- the command can wrap any OCR/vision stack (including vLLM/OpenAI-compatible vision endpoints)
+- photo/image input is converted to text by running `codex exec --sandbox read-only --ephemeral --image <path> ...`
+- this ingress OCR path is treated as trusted user input provenance (same as user-typed prompt)
+- OCR performed later inside planner `bash` tool flows remains untrusted tool output by default
 - when OCR extraction fails, the app replies with a text error message
 
 Modality contract:

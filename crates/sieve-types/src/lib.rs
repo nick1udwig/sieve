@@ -135,6 +135,39 @@ impl PlannerGuidanceSignal {
     pub const fn code(self) -> u16 {
         self as u16
     }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ContinueNeedEvidence => "continue_need_evidence",
+            Self::ContinueFetchPrimarySource => "continue_fetch_primary_source",
+            Self::ContinueFetchAdditionalSource => "continue_fetch_additional_source",
+            Self::ContinueRefineApproach => "continue_refine_approach",
+            Self::ContinueNeedRequiredParameter => "continue_need_required_parameter",
+            Self::ContinueNeedFreshOrTimeBoundEvidence => {
+                "continue_need_fresh_or_time_bound_evidence"
+            }
+            Self::ContinueNeedPreferenceOrConstraint => "continue_need_preference_or_constraint",
+            Self::ContinueToolDeniedTryAlternativeAllowedTool => {
+                "continue_tool_denied_try_alternative_allowed_tool"
+            }
+            Self::ContinueNeedHigherQualitySource => "continue_need_higher_quality_source",
+            Self::ContinueResolveSourceConflict => "continue_resolve_source_conflict",
+            Self::ContinueNeedPrimaryContentFetch => "continue_need_primary_content_fetch",
+            Self::ContinueNeedUrlExtraction => "continue_need_url_extraction",
+            Self::ContinueNeedCanonicalNonAssetUrl => "continue_need_canonical_non_asset_url",
+            Self::ContinueNoProgressTryDifferentAction => "continue_no_progress_try_different_action",
+            Self::FinalAnswerReady => "final_answer_ready",
+            Self::FinalAnswerPartial => "final_answer_partial",
+            Self::FinalInsufficientEvidence => "final_insufficient_evidence",
+            Self::FinalSingleFactReady => "final_single_fact_ready",
+            Self::FinalConflictingFactsWithRange => "final_conflicting_facts_with_range",
+            Self::FinalNoToolActionNeeded => "final_no_tool_action_needed",
+            Self::StopPolicyBlocked => "stop_policy_blocked",
+            Self::StopBudgetExhausted => "stop_budget_exhausted",
+            Self::StopNoAllowedToolCanSatisfyTask => "stop_no_allowed_tool_can_satisfy_task",
+            Self::ErrorContractViolation => "error_contract_violation",
+        }
+    }
 }
 
 impl TryFrom<u16> for PlannerGuidanceSignal {
