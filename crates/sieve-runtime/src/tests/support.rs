@@ -1,4 +1,5 @@
 use super::*;
+use async_trait::async_trait;
 
 pub(crate) struct StubShell {
     pub(crate) analysis: ShellAnalysis,
