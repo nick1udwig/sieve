@@ -64,4 +64,6 @@ fn planner_command_catalog_includes_st_entry() {
         .expect("st catalog entry");
     assert!(entry.description.contains("st stt"));
     assert!(entry.description.contains("st tts"));
+    assert!(entry.description.contains("--format opus"));
+    assert!(!entry.description.contains("--format ogg"));
 }

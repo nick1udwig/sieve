@@ -59,7 +59,7 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
     },
     PlannerCommandDescriptor {
         command: "st",
-        description: "Speech CLI for transcription and synthesis. STT pattern: `st stt <audio-file>` (prints transcript to stdout, optionally `-o <file>`). TTS pattern: `st tts <text-file> --format ogg --output <audio-file>` or `st tts --txt \"...\" --format ogg --output <audio-file>`.",
+        description: "Speech CLI for transcription and synthesis. STT pattern: `st stt <audio-file>` (prints transcript to stdout, optionally `-o <file>`). TTS pattern: `st tts <text-file> --format opus --output <audio-file>` or `st tts --txt \"...\" --format opus --output <audio-file>`.",
     },
 ];
 
