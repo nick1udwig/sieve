@@ -2,10 +2,14 @@
 
 mod lcm_integration;
 mod media;
+mod render_refs;
 mod response_style;
 
 use async_trait::async_trait;
 use lcm_integration::{LcmIntegration, LcmIntegrationConfig};
+use render_refs::{
+    read_artifact_as_string, render_assistant_message, resolve_ref_summary_input, RenderRef,
+};
 use response_style::{
     compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
     denied_outcomes_only_message, enforce_link_policy, extract_plain_urls_from_text,
@@ -744,18 +748,6 @@ fn spawn_stdin_prompt_loop(
     })
 }
 
-#[derive(Debug, Clone)]
-enum RenderRef {
-    Literal {
-        value: String,
-    },
-    Artifact {
-        path: PathBuf,
-        byte_count: u64,
-        line_count: u64,
-    },
-}
-
 fn build_response_turn_input(
     run_id: &RunId,
     trusted_user_message: &str,
@@ -1451,77 +1443,6 @@ fn progress_contract_override_signal(
         PlannerGuidanceSignal::ContinueNeedPrimaryContentFetch,
         "missing_primary_content_fetch",
     ))
-}
-
-async fn render_assistant_message(
-    message: &str,
-    referenced_ref_ids: &BTreeSet<String>,
-    summarized_ref_ids: &BTreeSet<String>,
-    render_refs: &BTreeMap<String, RenderRef>,
-    summary_model: &dyn SummaryModel,
-    run_id: &RunId,
-) -> String {
-    let mut expanded = message.to_string();
-
-    for ref_id in referenced_ref_ids {
-        if let Some(raw_value) = resolve_raw_ref_value(ref_id, render_refs).await {
-            let token = format!("[[ref:{ref_id}]]");
-            expanded = expanded.replace(&token, &raw_value);
-        }
-    }
-
-    for ref_id in summarized_ref_ids {
-        if let Some((content, byte_count, line_count)) =
-            resolve_ref_summary_input(ref_id, render_refs).await
-        {
-            let summary = match summary_model
-                .summarize_ref(SummaryRequest {
-                    run_id: run_id.clone(),
-                    ref_id: ref_id.clone(),
-                    content,
-                    byte_count,
-                    line_count,
-                })
-                .await
-            {
-                Ok(summary) => summary,
-                Err(err) => format!("summary unavailable: {err}"),
-            };
-            let token = format!("[[summary:{ref_id}]]");
-            expanded = expanded.replace(&token, &summary);
-        }
-    }
-
-    expanded
-}
-
-async fn resolve_raw_ref_value(
-    ref_id: &str,
-    render_refs: &BTreeMap<String, RenderRef>,
-) -> Option<String> {
-    let render_ref = render_refs.get(ref_id)?;
-    match render_ref {
-        RenderRef::Literal { value } => Some(value.clone()),
-        RenderRef::Artifact { path, .. } => read_artifact_as_string(path).await.ok(),
-    }
-}
-
-async fn resolve_ref_summary_input(
-    ref_id: &str,
-    render_refs: &BTreeMap<String, RenderRef>,
-) -> Option<(String, u64, u64)> {
-    let render_ref = render_refs.get(ref_id)?;
-    match render_ref {
-        RenderRef::Literal { value } => Some((value.clone(), value.len() as u64, 0)),
-        RenderRef::Artifact {
-            path,
-            byte_count,
-            line_count,
-        } => {
-            let content = read_artifact_as_string(path).await.ok()?;
-            Some((content, *byte_count, *line_count))
-        }
-    }
 }
 
 fn missing_connect_sink_from_reason(reason: &str) -> Option<&str> {
@@ -2565,11 +2486,6 @@ async fn compose_assistant_message(
         planner_decision,
         summary_calls,
     }
-}
-
-async fn read_artifact_as_string(path: &std::path::Path) -> Result<String, io::Error> {
-    let bytes = tokio::fs::read(path).await?;
-    Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
 fn default_modality_contract(input: InteractionModality) -> ModalityContract {
