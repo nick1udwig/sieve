@@ -1,55 +1,10 @@
-use super::*;
+use super::{base_input, engine_with_default_policy};
+use crate::{PolicyEngine, TomlPolicyEngine};
 use sieve_types::{
-    Action, Capability, CommandKnowledge, CommandSegment, CommandSummary, ControlContext,
-    Integrity, PolicyDecisionKind, PrecheckInput, Resource, RunId, RuntimePolicyContext, SinkCheck,
-    SinkKey, SinkPermissionContext, UncertainMode, UnknownMode, ValueRef,
+    Action, Capability, CommandKnowledge, CommandSummary, CommandSegment, Integrity,
+    PolicyDecisionKind, Resource, SinkCheck, SinkKey, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
-
-fn engine_with_default_policy() -> TomlPolicyEngine {
-    TomlPolicyEngine::from_toml_str(
-        r#"
-[[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
-decision = "deny_with_approval"
-reason = "rm -rf requires approval"
-
-[options]
-violation_mode = "deny"
-require_trusted_control_for_mutating = true
-trusted_control = true
-"#,
-    )
-    .expect("policy parse")
-}
-
-fn base_input() -> PrecheckInput {
-    PrecheckInput {
-        run_id: RunId("r1".to_string()),
-        cwd: "/tmp".to_string(),
-        command_segments: vec![CommandSegment {
-            argv: vec!["echo".to_string(), "ok".to_string()],
-            operator_before: None,
-        }],
-        knowledge: CommandKnowledge::Known,
-        summary: Some(CommandSummary {
-            required_capabilities: vec![],
-            sink_checks: vec![],
-            unsupported_flags: vec![],
-        }),
-        runtime_context: RuntimePolicyContext {
-            control: ControlContext {
-                integrity: Integrity::Trusted,
-                value_refs: BTreeSet::new(),
-                endorsed_by: None,
-            },
-            sink_permissions: SinkPermissionContext::default(),
-        },
-        unknown_mode: UnknownMode::Deny,
-        uncertain_mode: UncertainMode::Deny,
-    }
-}
 
 #[test]
 fn blocks_rm_rf_with_approval() {
@@ -474,27 +429,4 @@ require_trusted_control_for_mutating = true
     let decision = engine.evaluate_precheck(&input);
     assert_eq!(decision.kind, PolicyDecisionKind::Deny);
     assert!(decision.reason.contains("Fs:Write:/tmp/workspace/dst.txt"));
-}
-
-#[test]
-fn canonicalizes_url_sink_keys() {
-    let sink = canonicalize_sink_key("HTTPS://Api.Example.Com:443/v1/../v1/%7euser?q=1#frag")
-        .expect("canonicalization");
-    assert_eq!(sink, "https://api.example.com/v1/~user");
-
-    let sink2 = canonicalize_sink_key("http://EXAMPLE.com:80").expect("canonicalization");
-    assert_eq!(sink2, "http://example.com/");
-}
-
-#[test]
-fn canonicalizes_net_origin_scopes() {
-    assert_eq!(
-        canonicalize_net_origin_scope("HTTPS://Api.Example.Com:443/v1/path?q=1#frag"),
-        Some("https://api.example.com".to_string())
-    );
-    assert_eq!(
-        canonicalize_net_origin_scope("http://EXAMPLE.com:8080/path"),
-        Some("http://example.com:8080".to_string())
-    );
-    assert_eq!(canonicalize_net_origin_scope("not-a-url"), None);
 }
