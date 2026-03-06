@@ -83,12 +83,15 @@ Expected result:
 
 ### Runtime Logs, Artifacts, And Policy
 
-- Runtime JSONL logs include both runtime events and conversation records. Default path: `$SIEVE_HOME/logs/runtime-events.jsonl`.
+- Runtime JSONL logs are one canonical event stream at `$SIEVE_HOME/logs/runtime-events.jsonl`.
+- Canonical events include runtime events, conversation turns, planner/controller decisions, and compose audit records.
+- Canonical event records include `session_id`, unique `turn_id`, and per-session `turn_seq`.
 - LLM provider wire logs default to `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl` and contain exact request payloads plus raw response bodies per attempt.
 - Planner turns run in an act/observe loop bounded by `SIEVE_MAX_PLANNER_STEPS`, with typed Q-LLM guidance deciding whether to continue tool actions or finalize.
 - Planner never sees raw untrusted stdout/stderr strings.
 - Compose-stage quarantine calls are capped per turn by `SIEVE_MAX_SUMMARY_CALLS_PER_TURN`.
-- Mainline `bash` execution stores stdout/stderr as untrusted artifacts under `$SIEVE_HOME/artifacts`.
+- Mainline `bash` execution stores stdout/stderr as untrusted artifacts under `$SIEVE_HOME/artifacts/<turn_id>/`.
+- Quarantine runs store traces under `$SIEVE_HOME/logs/traces/<turn_id>/`.
 - Baseline policy file: `docs/policy/baseline-policy.toml`.
 
 ### LCM Memory Integration

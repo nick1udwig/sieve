@@ -2,7 +2,7 @@ use crate::compose_gate::{
     combine_gate_reasons, compose_gate_followup_signal, compose_gate_requires_retry,
     extract_trusted_evidence_lines, parse_compose_gate_output, ComposeGateOutput,
 };
-use crate::logging::{append_jsonl_record, now_ms};
+use crate::logging::{now_ms, FanoutRuntimeEventLog};
 use crate::render_refs::{resolve_ref_summary_input, RenderRef};
 use crate::response_style::{
     dedupe_preserve_order, denied_outcomes_only_message, enforce_link_policy,
@@ -31,6 +31,7 @@ pub(crate) struct ComposeAssistantOutcome {
 
 async fn write_compose_audit_artifacts(
     sieve_home: &Path,
+    event_log: &FanoutRuntimeEventLog,
     run_id: &RunId,
     attempts: &[serde_json::Value],
     final_message: &str,
@@ -66,12 +67,7 @@ async fn write_compose_audit_artifacts(
         .await
         .map_err(|err| format!("failed to write compose output artifact: {err}"))?;
 
-    let logs_path = sieve_home.join("logs/compose-events.jsonl");
     let record = serde_json::json!({
-        "schema_version": 1,
-        "event": "compose_audit",
-        "created_at_ms": now_ms(),
-        "run_id": run_id.0,
         "input_refs": input_refs,
         "output_ref": {
             "ref_id": output_ref_id,
@@ -83,7 +79,10 @@ async fn write_compose_audit_artifacts(
         "grounding_gate": grounding_gate,
         "planner_followup_signal_code": planner_followup_signal.map(PlannerGuidanceSignal::code),
     });
-    append_jsonl_record(&logs_path, &record).await
+    event_log
+        .append_app_event("compose", "compose_audit", "info", run_id, now_ms(), record)
+        .await
+        .map_err(|err| format!("failed to append compose audit event: {err}"))
 }
 
 async fn collect_source_urls_from_refs(
@@ -217,6 +216,7 @@ async fn run_compose_gate(
 pub(crate) async fn compose_assistant_message(
     summary_model: &dyn SummaryModel,
     sieve_home: &Path,
+    event_log: &FanoutRuntimeEventLog,
     run_id: &RunId,
     trusted_user_message: &str,
     response_input: &ResponseTurnInput,
@@ -427,6 +427,7 @@ pub(crate) async fn compose_assistant_message(
     composed = strip_unexpanded_render_tokens(&composed);
     if let Err(err) = write_compose_audit_artifacts(
         sieve_home,
+        event_log,
         run_id,
         &attempt_payloads,
         &composed,

@@ -83,7 +83,6 @@ pub(crate) struct AppE2eHarness {
     telegram_event_tx: Sender<TelegramLoopEvent>,
     telegram_event_rx: StdMutex<Receiver<TelegramLoopEvent>>,
     pub(crate) cfg: AppConfig,
-    next_run_index: AtomicU64,
     pub(crate) root: PathBuf,
 }
 
@@ -189,7 +188,6 @@ impl AppE2eHarness {
             telegram_event_tx,
             telegram_event_rx: StdMutex::new(telegram_event_rx),
             cfg,
-            next_run_index: AtomicU64::new(1),
             root,
         }
     }
@@ -212,7 +210,7 @@ impl AppE2eHarness {
     }
 
     pub(crate) async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
-        let run_index = self.next_run_index.fetch_add(1, Ordering::Relaxed);
+        let reserved_turn = self.event_log.reserve_turn(PromptSource::Stdin.as_str());
         run_turn(
             &self.runtime,
             self.guidance_model.as_ref(),
@@ -221,7 +219,7 @@ impl AppE2eHarness {
             self.lcm.clone(),
             &self.event_log,
             &self.cfg,
-            run_index,
+            reserved_turn.run_id,
             PromptSource::Stdin,
             InteractionModality::Text,
             None,
@@ -294,11 +292,13 @@ impl AppE2eHarness {
             .map_err(|_| "timed out waiting for telegram ingress prompt".to_string())?
             .ok_or_else(|| "telegram ingress prompt channel closed".to_string())?;
 
-        let run_index = self.next_run_index.fetch_add(1, Ordering::Relaxed);
-        let typing_guard =
-            TypingGuard::start(self.telegram_event_tx.clone(), format!("run-{run_index}"))
-                .map(Some)
-                .unwrap_or(None);
+        let reserved_turn = self.event_log.reserve_turn(PromptSource::Telegram.as_str());
+        let typing_guard = TypingGuard::start(
+            self.telegram_event_tx.clone(),
+            reserved_turn.run_id.0.clone(),
+        )
+        .map(Some)
+        .unwrap_or(None);
         run_turn(
             &self.runtime,
             self.guidance_model.as_ref(),
@@ -307,7 +307,7 @@ impl AppE2eHarness {
             self.lcm.clone(),
             &self.event_log,
             &self.cfg,
-            run_index,
+            reserved_turn.run_id,
             PromptSource::Telegram,
             ingress.modality,
             ingress.media_file_id,
@@ -347,13 +347,14 @@ pub(crate) fn conversation_messages(records: &[Value]) -> Vec<(String, String)> 
         .iter()
         .filter(|record| record.get("event").and_then(Value::as_str) == Some("conversation"))
         .map(|record| {
+            let payload = record.get("payload").unwrap_or(record);
             (
-                record
+                payload
                     .get("role")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string(),
-                record
+                payload
                     .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or_default()

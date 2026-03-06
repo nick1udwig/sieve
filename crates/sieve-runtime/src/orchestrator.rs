@@ -182,7 +182,7 @@ impl RuntimeOrchestrator {
         blocked_rule_id: String,
         reason: String,
     ) -> Result<ApprovalResolution, RuntimeError> {
-        let request_id = self.new_request_id();
+        let request_id = self.new_request_id(&run_id);
         let approval_requested = ApprovalRequestedEvent {
             schema_version: 1,
             request_id: request_id.clone(),
@@ -213,8 +213,11 @@ impl RuntimeOrchestrator {
         Ok(())
     }
 
-    fn new_request_id(&self) -> ApprovalRequestId {
+    fn new_request_id(&self, run_id: &RunId) -> ApprovalRequestId {
         let next = self.next_request.fetch_add(1, Ordering::Relaxed);
+        if let Some((session_id, _turn_suffix)) = run_id.0.rsplit_once("-t") {
+            return ApprovalRequestId(format!("apr-{session_id}-{next}"));
+        }
         ApprovalRequestId(format!("approval-{next}"))
     }
 }

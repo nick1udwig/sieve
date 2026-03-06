@@ -14,7 +14,7 @@
 
 ## Trace Artifacts
 
-- Per-run directory: `~/.sieve/logs/traces/<run_id>/`
+- Per-run directory: `~/.sieve/logs/traces/<turn_id>/`
 - Always written on successful traced runs:
   - `stdout.log`
   - `stderr.log`

@@ -1,4 +1,35 @@
 use super::*;
+
+#[test]
+fn fanout_runtime_event_log_allocates_session_scoped_turn_ids() {
+    let (tx_a, _rx_a) = mpsc::channel();
+    let path_a = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-a-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path_a);
+    let log_a = FanoutRuntimeEventLog::with_session_id(path_a.clone(), tx_a, "sess-a".to_string())
+        .expect("create fanout log a");
+    let turn_a = log_a.reserve_turn("stdin");
+    assert_eq!(turn_a.run_id.0, "sess-a-t1");
+    assert_eq!(turn_a.turn_seq, 1);
+
+    let (tx_b, _rx_b) = mpsc::channel();
+    let path_b = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-b-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path_b);
+    let log_b = FanoutRuntimeEventLog::with_session_id(path_b.clone(), tx_b, "sess-b".to_string())
+        .expect("create fanout log b");
+    let turn_b = log_b.reserve_turn("stdin");
+    assert_eq!(turn_b.run_id.0, "sess-b-t1");
+    assert_eq!(turn_b.turn_seq, 1);
+
+    let _ = fs::remove_file(path_a);
+    let _ = fs::remove_file(path_b);
+}
+
 #[tokio::test]
 async fn runtime_bridge_submit_approval_resolves_pending_request() {
     let approval_bus = Arc::new(InProcessApprovalBus::new());
@@ -66,10 +97,12 @@ async fn fanout_runtime_event_log_records_and_forwards_events() {
     let path =
         std::env::temp_dir().join(format!("sieve-app-event-log-{}.jsonl", std::process::id()));
     let _ = fs::remove_file(&path);
-    let log = FanoutRuntimeEventLog::new(path.clone(), tx).expect("create fanout log");
+    let log = FanoutRuntimeEventLog::with_session_id(path.clone(), tx, "sess-log".to_string())
+        .expect("create fanout log");
+    let turn = log.reserve_turn("telegram");
     let event = RuntimeEvent::PolicyEvaluated(PolicyEvaluatedEvent {
         schema_version: 1,
-        run_id: RunId("run-log".to_string()),
+        run_id: turn.run_id.clone(),
         decision: PolicyDecision {
             kind: PolicyDecisionKind::Allow,
             reason: "allow".to_string(),
@@ -90,16 +123,29 @@ async fn fanout_runtime_event_log_records_and_forwards_events() {
     let body = fs::read_to_string(&path).expect("read jsonl log");
     assert!(body.contains("policy_evaluated"));
     log.append_conversation(ConversationLogRecord::new(
-        RunId("run-log".to_string()),
+        turn.run_id.clone(),
         ConversationRole::User,
         "hello".to_string(),
         4,
     ))
     .await
     .expect("append conversation");
-    let body = fs::read_to_string(&path).expect("read jsonl log");
-    assert!(body.contains("\"event\":\"conversation\""));
-    assert!(body.contains("\"message\":\"hello\""));
+    let records = read_jsonl_records(&path);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["schema_version"], Value::from(2));
+    assert_eq!(records[0]["session_id"], Value::from("sess-log"));
+    assert_eq!(records[0]["turn_id"], Value::from(turn.run_id.0.clone()));
+    assert_eq!(records[0]["turn_seq"], Value::from(1));
+    assert_eq!(records[0]["source"], Value::from("telegram"));
+    assert_eq!(records[0]["component"], Value::from("policy"));
+    assert_eq!(
+        records[0]["payload"]["decision"]["kind"],
+        Value::from("allow")
+    );
+    assert_eq!(records[1]["event"], Value::from("conversation"));
+    assert_eq!(records[1]["component"], Value::from("conversation"));
+    assert_eq!(records[1]["payload"]["role"], Value::from("user"));
+    assert_eq!(records[1]["payload"]["message"], Value::from("hello"));
     let _ = fs::remove_file(path);
 }
 

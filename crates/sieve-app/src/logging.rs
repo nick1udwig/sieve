@@ -1,12 +1,17 @@
 use async_trait::async_trait;
 use serde::Serialize;
 use sieve_runtime::{EventLogError, JsonlRuntimeEventLog, RuntimeEventLog};
-use sieve_types::{RunId, RuntimeEvent};
-use std::path::{Path, PathBuf};
+use sieve_types::{
+    ApprovalRequestedEvent, ApprovalResolvedEvent, AssistantMessageEvent, PolicyEvaluatedEvent,
+    QuarantineCompletedEvent, RunId, RuntimeEvent,
+};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
@@ -57,8 +62,23 @@ pub(crate) enum TelegramLoopEvent {
     TypingStop { run_id: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReservedTurn {
+    pub(crate) run_id: RunId,
+    pub(crate) turn_seq: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TurnLogContext {
+    turn_seq: u64,
+    source: String,
+}
+
 pub(crate) struct FanoutRuntimeEventLog {
     jsonl: JsonlRuntimeEventLog,
+    session_id: String,
+    next_turn_seq: AtomicU64,
+    turn_contexts: Mutex<BTreeMap<RunId, TurnLogContext>>,
     history: Mutex<Vec<RuntimeEvent>>,
     telegram_tx: Mutex<Sender<TelegramLoopEvent>>,
 }
@@ -68,11 +88,38 @@ impl FanoutRuntimeEventLog {
         path: impl Into<PathBuf>,
         telegram_tx: Sender<TelegramLoopEvent>,
     ) -> Result<Self, EventLogError> {
+        Self::with_session_id(path, telegram_tx, fresh_session_id())
+    }
+
+    pub(crate) fn with_session_id(
+        path: impl Into<PathBuf>,
+        telegram_tx: Sender<TelegramLoopEvent>,
+        session_id: String,
+    ) -> Result<Self, EventLogError> {
         Ok(Self {
             jsonl: JsonlRuntimeEventLog::new(path.into())?,
+            session_id,
+            next_turn_seq: AtomicU64::new(1),
+            turn_contexts: Mutex::new(BTreeMap::new()),
             history: Mutex::new(Vec::new()),
             telegram_tx: Mutex::new(telegram_tx),
         })
+    }
+
+    pub(crate) fn reserve_turn(&self, source: &str) -> ReservedTurn {
+        let turn_seq = self.next_turn_seq.fetch_add(1, Ordering::Relaxed);
+        let run_id = RunId(format!("{}-t{}", self.session_id, turn_seq));
+        self.turn_contexts
+            .lock()
+            .expect("turn log contexts lock poisoned")
+            .insert(
+                run_id.clone(),
+                TurnLogContext {
+                    turn_seq,
+                    source: source.to_string(),
+                },
+            );
+        ReservedTurn { run_id, turn_seq }
     }
 
     pub(crate) fn snapshot(&self) -> Vec<RuntimeEvent> {
@@ -86,16 +133,170 @@ impl FanoutRuntimeEventLog {
         &self,
         record: ConversationLogRecord,
     ) -> Result<(), EventLogError> {
-        let value =
-            serde_json::to_value(record).map_err(|err| EventLogError::Append(err.to_string()))?;
+        let payload = serde_json::json!({
+            "role": record.role,
+            "message": record.message,
+        });
+        let value = self.turn_scoped_record(
+            "conversation",
+            "conversation",
+            "info",
+            &record.run_id,
+            record.created_at_ms,
+            payload,
+        )?;
         self.jsonl.append_json_value(&value).await
+    }
+
+    pub(crate) async fn append_app_event(
+        &self,
+        component: &str,
+        event: &str,
+        level: &str,
+        run_id: &RunId,
+        created_at_ms: u64,
+        payload: serde_json::Value,
+    ) -> Result<(), EventLogError> {
+        let value =
+            self.turn_scoped_record(event, component, level, run_id, created_at_ms, payload)?;
+        self.jsonl.append_json_value(&value).await
+    }
+
+    fn turn_scoped_record(
+        &self,
+        event: &str,
+        component: &str,
+        level: &str,
+        run_id: &RunId,
+        created_at_ms: u64,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, EventLogError> {
+        let context = self
+            .turn_contexts
+            .lock()
+            .map_err(|_| EventLogError::Append("turn log contexts lock poisoned".to_string()))?
+            .get(run_id)
+            .cloned();
+        let mut record = serde_json::json!({
+            "schema_version": 2,
+            "event": event,
+            "component": component,
+            "level": level,
+            "created_at_ms": created_at_ms,
+            "session_id": self.session_id,
+            "turn_id": run_id.0,
+            "payload": payload,
+        });
+        if let Some(context) = context {
+            record["turn_seq"] = serde_json::json!(context.turn_seq);
+            record["source"] = serde_json::json!(context.source);
+        }
+        Ok(record)
+    }
+
+    fn runtime_event_record(
+        &self,
+        event: &RuntimeEvent,
+    ) -> Result<serde_json::Value, EventLogError> {
+        match event {
+            RuntimeEvent::ApprovalRequested(ApprovalRequestedEvent {
+                run_id,
+                request_id,
+                command_segments,
+                inferred_capabilities,
+                blocked_rule_id,
+                reason,
+                created_at_ms,
+                ..
+            }) => self.turn_scoped_record(
+                "approval_requested",
+                "approval",
+                "info",
+                run_id,
+                *created_at_ms,
+                serde_json::json!({
+                    "request_id": request_id.0,
+                    "command_segments": command_segments,
+                    "inferred_capabilities": inferred_capabilities,
+                    "blocked_rule_id": blocked_rule_id,
+                    "reason": reason,
+                }),
+            ),
+            RuntimeEvent::ApprovalResolved(ApprovalResolvedEvent {
+                run_id,
+                request_id,
+                action,
+                created_at_ms,
+                ..
+            }) => self.turn_scoped_record(
+                "approval_resolved",
+                "approval",
+                "info",
+                run_id,
+                *created_at_ms,
+                serde_json::json!({
+                    "request_id": request_id.0,
+                    "action": action,
+                }),
+            ),
+            RuntimeEvent::PolicyEvaluated(PolicyEvaluatedEvent {
+                run_id,
+                decision,
+                inferred_capabilities,
+                trace_path,
+                created_at_ms,
+                ..
+            }) => self.turn_scoped_record(
+                "policy_evaluated",
+                "policy",
+                "info",
+                run_id,
+                *created_at_ms,
+                serde_json::json!({
+                    "decision": decision,
+                    "inferred_capabilities": inferred_capabilities,
+                    "trace_path": trace_path,
+                }),
+            ),
+            RuntimeEvent::QuarantineCompleted(QuarantineCompletedEvent {
+                run_id,
+                report,
+                created_at_ms,
+                ..
+            }) => self.turn_scoped_record(
+                "quarantine_completed",
+                "quarantine",
+                "info",
+                run_id,
+                *created_at_ms,
+                serde_json::json!({
+                    "report": report,
+                }),
+            ),
+            RuntimeEvent::AssistantMessage(AssistantMessageEvent {
+                run_id,
+                message,
+                created_at_ms,
+                ..
+            }) => self.turn_scoped_record(
+                "assistant_message",
+                "assistant",
+                "info",
+                run_id,
+                *created_at_ms,
+                serde_json::json!({
+                    "message": message,
+                }),
+            ),
+        }
     }
 }
 
 #[async_trait]
 impl RuntimeEventLog for FanoutRuntimeEventLog {
     async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError> {
-        self.jsonl.append(event.clone()).await?;
+        let value = self.runtime_event_record(&event)?;
+        self.jsonl.append_json_value(&value).await?;
         self.history
             .lock()
             .map_err(|_| EventLogError::Append("runtime event history lock poisoned".to_string()))?
@@ -111,47 +312,29 @@ impl RuntimeEventLog for FanoutRuntimeEventLog {
     }
 }
 
-pub(crate) async fn append_jsonl_record(
-    path: &Path,
-    value: &serde_json::Value,
-) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("jsonl path has no parent: {}", path.display()))?;
-    tokio::fs::create_dir_all(parent)
-        .await
-        .map_err(|err| format!("failed to create jsonl parent dir: {err}"))?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await
-        .map_err(|err| format!("failed to open jsonl log `{}`: {err}", path.display()))?;
-    let line = format!("{value}\n");
-    file.write_all(line.as_bytes())
-        .await
-        .map_err(|err| format!("failed to append jsonl log `{}`: {err}", path.display()))
-}
-
 pub(crate) async fn append_turn_controller_event(
-    sieve_home: &Path,
+    event_log: &FanoutRuntimeEventLog,
     run_id: &RunId,
     phase: &str,
     payload: serde_json::Value,
 ) {
-    let path = sieve_home.join("logs/turn-controller-events.jsonl");
-    let record = serde_json::json!({
-        "event": "turn_controller",
-        "schema_version": 1,
-        "created_at_ms": now_ms(),
-        "run_id": run_id.0,
-        "phase": phase,
-        "payload": payload,
-    });
-    if let Err(err) = append_jsonl_record(&path, &record).await {
+    let level = if phase.contains("error") || phase.contains("invalid") {
+        "warn"
+    } else {
+        "info"
+    };
+    if let Err(err) = event_log
+        .append_app_event("controller", phase, level, run_id, now_ms(), payload)
+        .await
+    {
         eprintln!(
             "turn controller log write failed for {} (phase={}): {}",
             run_id.0, phase, err
         );
     }
+}
+
+fn fresh_session_id() -> String {
+    let uuid = Uuid::new_v4().simple().to_string();
+    format!("s{:x}-{}", now_ms(), &uuid[..8])
 }

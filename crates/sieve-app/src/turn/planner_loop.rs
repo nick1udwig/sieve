@@ -144,7 +144,7 @@ pub(super) async fn generate_assistant_message(
                 let can_retry =
                     planner_steps_taken < planner_step_limit && consecutive_empty_steps < 2;
                 append_turn_controller_event(
-                    &cfg.sieve_home,
+                    event_log,
                     run_id,
                     "planner_repeat_guard",
                     serde_json::json!({
@@ -189,7 +189,7 @@ pub(super) async fn generate_assistant_message(
                         run_id.0, step_number, err
                     );
                     append_turn_controller_event(
-                        &cfg.sieve_home,
+                        event_log,
                         run_id,
                         "planner_guidance_error",
                         serde_json::json!({
@@ -209,7 +209,7 @@ pub(super) async fn generate_assistant_message(
                         run_id.0, step_number, err
                     );
                     append_turn_controller_event(
-                        &cfg.sieve_home,
+                        event_log,
                         run_id,
                         "planner_guidance_invalid",
                         serde_json::json!({
@@ -239,7 +239,7 @@ pub(super) async fn generate_assistant_message(
                 );
             planner_step_limit = next_step_limit;
             append_turn_controller_event(
-                &cfg.sieve_home,
+                event_log,
                 run_id,
                 "planner_guidance",
                 serde_json::json!({
@@ -376,6 +376,7 @@ pub(super) async fn generate_assistant_message(
             compose_assistant_message(
                 summary_model,
                 &cfg.sieve_home,
+                event_log,
                 run_id,
                 trusted_user_message,
                 &response_input,
@@ -401,7 +402,7 @@ pub(super) async fn generate_assistant_message(
                 continue_block_reason = Some("no_new_evidence");
             }
             append_turn_controller_event(
-                &cfg.sieve_home,
+                event_log,
                 run_id,
                 "compose_decision",
                 serde_json::json!({
@@ -434,7 +435,7 @@ pub(super) async fn generate_assistant_message(
         }
 
         append_turn_controller_event(
-            &cfg.sieve_home,
+            event_log,
             run_id,
             "turn_finalize",
             serde_json::json!({

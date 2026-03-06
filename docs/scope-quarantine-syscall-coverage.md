@@ -33,7 +33,7 @@ In MVP, unknown/uncertain accepted commands run in quarantine. We capture attemp
 ## Implemented Notes (2026-02-26)
 
 - `report.json` now emitted for every successful quarantine run with trace artifacts:
-  - `~/.sieve/logs/traces/<run_id>/report.json`
+  - `~/.sieve/logs/traces/<turn_id>/report.json`
   - includes run metadata, trace file list, normalized attempted capabilities, exit code.
 - Connect-attempt extraction widened to connect-family syscalls:
   - `connect`, `socket`, `sendto`, `sendmsg`, `recvfrom`, `recvmsg`, `bind`, `listen`, `accept`, `accept4`.
@@ -64,7 +64,7 @@ In MVP, unknown/uncertain accepted commands run in quarantine. We capture attemp
    - unknown address fallback tags
    - path canonicalization rules for FS scope where feasible.
 4. Emit per-run normalized summary artifact (mandatory when trace exists):
-   - `~/.sieve/logs/traces/<run_id>/report.json`
+   - `~/.sieve/logs/traces/<turn_id>/report.json`
 5. Add golden trace fixtures and parser tests for each syscall family.
 6. Improve connect-attempt visibility:
    - preserve/connect endpoint details for `AF_INET`, `AF_INET6`, and `AF_UNIX`

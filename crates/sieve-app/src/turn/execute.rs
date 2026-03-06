@@ -22,13 +22,12 @@ pub(crate) async fn run_turn(
     lcm: Option<Arc<LcmIntegration>>,
     event_log: &FanoutRuntimeEventLog,
     cfg: &AppConfig,
-    run_index: u64,
+    run_id: RunId,
     source: PromptSource,
     input_modality: InteractionModality,
     media_file_id: Option<String>,
     user_message: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let run_id = RunId(format!("run-{run_index}"));
     let mut modality_contract = default_modality_contract(input_modality);
     if modality_contract.response == InteractionModality::Image {
         override_modality_contract(

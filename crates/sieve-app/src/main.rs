@@ -46,9 +46,7 @@ pub(crate) use lcm_integration::LcmIntegrationConfig;
 use logging::FanoutRuntimeEventLog;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use logging::{
-    append_jsonl_record, now_ms, ConversationLogRecord, ConversationRole, TelegramLoopEvent,
-};
+pub(crate) use logging::{now_ms, ConversationLogRecord, ConversationRole, TelegramLoopEvent};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
@@ -228,6 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if single_command_mode {
+        let reserved_turn = event_log.reserve_turn(PromptSource::Stdin.as_str());
         run_turn(
             &runtime,
             guidance_model.as_ref(),
@@ -236,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             lcm.clone(),
             &event_log,
             &cfg,
-            1,
+            reserved_turn.run_id,
             PromptSource::Stdin,
             InteractionModality::Text,
             None,

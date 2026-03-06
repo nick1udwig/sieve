@@ -230,24 +230,18 @@ Implementation must ship with deterministic test vectors.
 ## 10. Quarantine execution and logs
 Unknown/accepted path:
 - execute in quarantine (`bwrap`, no-net, scratch write, `strace -ff`).
-- save trace artifacts under `~/.sieve/logs/traces/<run_id>/`.
+- save trace artifacts under `~/.sieve/logs/traces/<turn_id>/`.
 - notify user with location.
 - feed only typed numeric Q-LLM guidance frames into planner/runtime loop (never free-form strings).
 - no policy-learning side effects in MVP.
 
-Runtime + conversation events (JSONL) under `~/.sieve/logs/runtime-events.jsonl` include:
-- timestamp, run_id
-- command/cwd
-- inferred caps
+Canonical event stream (JSONL) under `~/.sieve/logs/runtime-events.jsonl` includes:
+- timestamp, session_id, turn_id, turn_seq
+- ingress/conversation events
 - policy decision + reason
 - approval outcome
-- trace path
-- stdout/stderr metadata if captured
-
-Controller audit events (JSONL) under `~/.sieve/logs/turn-controller-events.jsonl` include:
-- planner guidance signals per step
-- compose follow-up decisions (`finalize` vs typed `continue`)
-- bounded retry/finalization decisions
+- planner guidance and compose follow-up decisions
+- trace path and artifact refs when captured
 
 ## 11. Agent prompt constraints
 Use companion file:
