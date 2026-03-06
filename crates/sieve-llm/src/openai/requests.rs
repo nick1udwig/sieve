@@ -32,7 +32,7 @@ Rules:
 - You may receive a JSON payload with `task="compose_gate"`.
 - For `compose_gate`: return a JSON object string in this exact shape:
   `{"verdict":"PASS|REVISE","reason":"<short reason>","continue_code":<u16 or null>}`
-- Use only continue codes `100`, `101`, `102`, `103`, `104`, `105`, `106`, `107`, `108`, `109`, `110`, `111`, `112`, `113`, or `null`.
+- Use only continue codes `100`, `101`, `102`, `103`, `104`, `105`, `106`, `107`, `108`, `109`, `110`, `111`, `112`, `113`, `114`, `115`, `116`, or `null`.
 - When `verdict` is `REVISE`, set `continue_code` explicitly:
   - use a code in `100..109` when additional tool action is likely to improve the answer
   - use `null` only when revision is wording/style only and no further tool action is needed
@@ -41,6 +41,9 @@ Rules:
 - Mark `REVISE` when a simple factual request gets an overly long response or an unsolicited source dump.
 - Mark `REVISE` for factual/time-bound requests when evidence appears to be discovery/search snippets or URL listings without fetched primary-page/API content.
 - When this is the issue, set `continue_code` to `110` (or `108` if source quality is low).
+- When browser evidence shows only page title/current URL from an already-open page and not the requested answer item, set `continue_code` to `114`.
+- When browser evidence shows a captcha, Google sorry page, login, consent page, or other access interstitial, set `continue_code` to `115`.
+- When the failed browser/tool path should be reformulated but the target task is still the same, set `continue_code` to `116`.
 - Treat `trusted_user_message` and `trusted_evidence` as valid grounding evidence.
 - If you mention links/sources, include plain URL text (for example `https://...`).
 - Never say "provided link", "full results", or similar placeholders without a URL.

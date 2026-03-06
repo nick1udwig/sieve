@@ -10,8 +10,9 @@ use sieve_policy::PolicyEngine;
 use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_types::{
-    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability, CommandSegment, RunId,
-    RuntimeEvent, RuntimePolicyContext, ToolContractValidationReport, ValueLabel, ValueRef,
+    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability, CommandSegment,
+    PlannerBrowserSession, RunId, RuntimeEvent, RuntimePolicyContext, ToolContractValidationReport,
+    ValueLabel, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -173,6 +174,21 @@ impl RuntimeOrchestrator {
             .lock()
             .map_err(|_| ValueStateError::LockPoisoned)?;
         Ok(sessions.clone())
+    }
+
+    pub fn planner_browser_sessions(&self) -> Result<Vec<PlannerBrowserSession>, RuntimeError> {
+        let sessions = self
+            .browser_sessions
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(sessions
+            .iter()
+            .map(|(session_name, state)| PlannerBrowserSession {
+                session_name: session_name.clone(),
+                current_origin: state.current_origin.clone(),
+                current_url: state.current_url.clone(),
+            })
+            .collect())
     }
 
     pub fn runtime_policy_context_for_control(

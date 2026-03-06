@@ -82,6 +82,7 @@ fn serialize_planner_input_only_sends_safe_shape() {
         user_message: "list files".to_string(),
         allowed_tools: vec!["bash".to_string()],
         allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
         previous_events: vec![event],
         guidance: None,
     };
@@ -317,6 +318,7 @@ async fn openai_live_planner_smoke_env_gated() {
             user_message: "Use bash to print hello world.".to_string(),
             allowed_tools: vec!["bash".to_string()],
             allowed_net_connect_scopes: Vec::new(),
+            browser_sessions: Vec::new(),
             previous_events: vec![],
             guidance: None,
         })

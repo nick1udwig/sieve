@@ -18,6 +18,9 @@ pub enum PlannerGuidanceSignal {
     ContinueNeedUrlExtraction = 111,
     ContinueNeedCanonicalNonAssetUrl = 112,
     ContinueNoProgressTryDifferentAction = 113,
+    ContinueNeedCurrentPageInspection = 114,
+    ContinueEncounteredAccessInterstitial = 115,
+    ContinueNeedCommandReformulation = 116,
     FinalAnswerReady = 200,
     FinalAnswerPartial = 201,
     FinalInsufficientEvidence = 202,
@@ -57,6 +60,11 @@ impl PlannerGuidanceSignal {
             Self::ContinueNoProgressTryDifferentAction => {
                 "continue_no_progress_try_different_action"
             }
+            Self::ContinueNeedCurrentPageInspection => "continue_need_current_page_inspection",
+            Self::ContinueEncounteredAccessInterstitial => {
+                "continue_encountered_access_interstitial"
+            }
+            Self::ContinueNeedCommandReformulation => "continue_need_command_reformulation",
             Self::FinalAnswerReady => "final_answer_ready",
             Self::FinalAnswerPartial => "final_answer_partial",
             Self::FinalInsufficientEvidence => "final_insufficient_evidence",
@@ -90,6 +98,9 @@ impl TryFrom<u16> for PlannerGuidanceSignal {
             111 => Ok(Self::ContinueNeedUrlExtraction),
             112 => Ok(Self::ContinueNeedCanonicalNonAssetUrl),
             113 => Ok(Self::ContinueNoProgressTryDifferentAction),
+            114 => Ok(Self::ContinueNeedCurrentPageInspection),
+            115 => Ok(Self::ContinueEncounteredAccessInterstitial),
+            116 => Ok(Self::ContinueNeedCommandReformulation),
             200 => Ok(Self::FinalAnswerReady),
             201 => Ok(Self::FinalAnswerPartial),
             202 => Ok(Self::FinalInsufficientEvidence),

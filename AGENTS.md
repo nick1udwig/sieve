@@ -49,7 +49,7 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 ## Flow & Runtime
 - Use repo’s package manager/runtime; no swaps w/o approval.
 - Use Codex background for long jobs; tmux only for interactive/persistent (debugger/server).
-- Sieve runtime: tmux session `sr` with command `cargo build --release && SIEVE_PLANNER_MODEL=gpt-5.2 SIEVE_QUARANTINE_MODEL=gpt-5.2 ./target/release/sieve-app`.
+- Sieve runtime: tmux session `sieve-app` with command `cargo build --release && SIEVE_PLANNER_MODEL=gpt-5.4 SIEVE_QUARANTINE_MODEL=gpt-5.4 ./target/release/sieve-app`.
 - Testing workflow: always look for running sieve process and stop it before tests.
 - Post-change workflow: look for and stop sieve, then build and start sieve in `sr`.
 
@@ -97,6 +97,9 @@ Read `~/agent-scripts/tools.md` for the full tool catalog if it exists.
 
 ### gdb
 - Use `gdb` inside tmux to debug native apps; attach to the running app to inspect state.
+
+### trash
+- Move files to Trash: `trash ...`.
 
 ### oracle
 - Bundle prompt+files for 2nd model. Use when stuck/buggy/review.

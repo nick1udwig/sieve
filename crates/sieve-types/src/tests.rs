@@ -213,6 +213,18 @@ fn planner_guidance_signal_new_codes_round_trip() {
             113u16,
             PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction,
         ),
+        (
+            114u16,
+            PlannerGuidanceSignal::ContinueNeedCurrentPageInspection,
+        ),
+        (
+            115u16,
+            PlannerGuidanceSignal::ContinueEncounteredAccessInterstitial,
+        ),
+        (
+            116u16,
+            PlannerGuidanceSignal::ContinueNeedCommandReformulation,
+        ),
         (203u16, PlannerGuidanceSignal::FinalSingleFactReady),
         (
             204u16,

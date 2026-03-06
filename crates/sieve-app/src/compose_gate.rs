@@ -124,6 +124,35 @@ fn followup_signal_from_reason(
         return None;
     }
 
+    if lower.contains("current page")
+        || lower.contains("already-open page")
+        || lower.contains("title-only")
+        || lower.contains("page title")
+        || lower.contains("page-level output")
+    {
+        return Some(PlannerGuidanceSignal::ContinueNeedCurrentPageInspection);
+    }
+
+    if lower.contains("captcha")
+        || lower.contains("interstitial")
+        || lower.contains("google sorry")
+        || lower.contains("sorry page")
+        || lower.contains("unusual traffic")
+        || lower.contains("consent")
+        || lower.contains("paywall")
+        || lower.contains("login")
+    {
+        return Some(PlannerGuidanceSignal::ContinueEncounteredAccessInterstitial);
+    }
+
+    if lower.contains("reformulate")
+        || lower.contains("command shape")
+        || lower.contains("same target")
+        || lower.contains("different command form")
+    {
+        return Some(PlannerGuidanceSignal::ContinueNeedCommandReformulation);
+    }
+
     let denied_command_present = response_input.tool_outcomes.iter().any(|outcome| {
         outcome
             .failure_reason
