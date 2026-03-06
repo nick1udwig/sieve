@@ -28,6 +28,7 @@ mod e2e_live;
 mod guidance_progress;
 mod media;
 mod models;
+mod personality;
 mod planner_core;
 mod render_response;
 mod response_style;

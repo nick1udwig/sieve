@@ -4,7 +4,12 @@ fn compose_quality_followup_only_triggers_for_missing_evidence() {
     let with_refs = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "weather".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -46,7 +51,12 @@ fn compose_quality_followup_maps_required_parameter_signal() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "where do i live".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "lcm_expand_query".to_string(),
@@ -77,7 +87,12 @@ fn compose_quality_followup_maps_denied_tool_signal() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "weather tomorrow".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -100,7 +115,12 @@ fn compose_quality_followup_maps_conflict_signal() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "compare claims".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -130,7 +150,12 @@ fn compose_quality_followup_maps_primary_content_fetch_signal() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "latest status".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -162,7 +187,12 @@ fn compose_quality_followup_maps_url_extraction_signal() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "summarize".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),

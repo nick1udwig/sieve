@@ -8,6 +8,7 @@ mod ingress;
 mod lcm_integration;
 mod logging;
 mod media;
+mod personality;
 mod planner_feedback;
 mod planner_progress;
 mod render_refs;
@@ -49,6 +50,9 @@ use logging::FanoutRuntimeEventLog;
 pub(crate) use logging::{
     append_jsonl_record, now_ms, ConversationLogRecord, ConversationRole, TelegramLoopEvent,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use personality::{personality_state_path, resolve_turn_personality};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
@@ -238,6 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &cfg,
             1,
             PromptSource::Stdin,
+            None,
             InteractionModality::Text,
             None,
             cli_prompt,

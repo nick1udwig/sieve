@@ -32,7 +32,12 @@ fn denied_outcomes_only_message_reports_attempt_and_reason() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "weather".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),

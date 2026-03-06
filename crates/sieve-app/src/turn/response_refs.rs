@@ -4,7 +4,7 @@ use sieve_llm::{
     ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput, SummaryModel, SummaryRequest,
 };
 use sieve_runtime::{PlannerRunResult, PlannerToolResult, RuntimeDisposition};
-use sieve_types::{Integrity, InteractionModality, RunId};
+use sieve_types::{DeliveryContext, Integrity, ResolvedPersonality, RunId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -26,7 +26,8 @@ pub(crate) fn planner_allowed_tools_for_turn(
 pub(crate) fn build_response_turn_input(
     run_id: &RunId,
     trusted_user_message: &str,
-    response_modality: InteractionModality,
+    delivery_context: DeliveryContext,
+    resolved_personality: ResolvedPersonality,
     planner_result: &PlannerRunResult,
 ) -> (ResponseTurnInput, BTreeMap<String, RenderRef>) {
     let mut render_refs = BTreeMap::new();
@@ -39,7 +40,9 @@ pub(crate) fn build_response_turn_input(
         ResponseTurnInput {
             run_id: run_id.clone(),
             trusted_user_message: trusted_user_message.to_string(),
-            response_modality,
+            response_modality: delivery_context.response_modality,
+            delivery_context,
+            resolved_personality,
             planner_thoughts: planner_result.thoughts.clone(),
             tool_outcomes,
         },

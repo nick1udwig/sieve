@@ -1,5 +1,6 @@
 use crate::planner_progress::url_is_likely_asset;
 use sieve_llm::ResponseTurnInput;
+use sieve_types::ResponseVerbosity;
 use std::collections::BTreeSet;
 
 pub(crate) fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
@@ -234,17 +235,24 @@ fn sentence_like_count(message: &str) -> usize {
 pub(crate) fn concise_style_diagnostic(
     composed_message: &str,
     trusted_user_message: &str,
+    verbosity: ResponseVerbosity,
 ) -> Option<String> {
-    if user_requested_detailed_output(trusted_user_message) {
+    if user_requested_detailed_output(trusted_user_message)
+        || verbosity == ResponseVerbosity::Detailed
+    {
         return None;
     }
     let sentence_count = sentence_like_count(composed_message);
     let char_count = composed_message.chars().count();
-    if sentence_count > 4 || char_count > 650 {
-        return Some(
-            "response is too long; keep to 1-2 concise sentences unless user asks for detail"
-                .to_string(),
-        );
+    let (sentence_limit, char_limit, label) = match verbosity {
+        ResponseVerbosity::Telegraph => (2, 240, "response is too long for telegraph style"),
+        ResponseVerbosity::Detailed => (usize::MAX, usize::MAX, ""),
+        ResponseVerbosity::Concise => (4, 650, "response is too long"),
+    };
+    if sentence_count > sentence_limit || char_count > char_limit {
+        return Some(format!(
+            "{label}; keep to 1-2 concise sentences unless user asks for detail"
+        ));
     }
     let url_count = extract_plain_urls_from_text(composed_message).len();
     if url_count > 1 && !user_requested_sources(trusted_user_message) {
@@ -331,16 +339,35 @@ pub(crate) fn denied_outcomes_only_message(response_input: &ResponseTurnInput) -
         return None;
     }
 
-    let mut message = details
-        .iter()
-        .take(2)
-        .map(|(command, reason)| format!("I tried `{command}`, but it was blocked: {reason}."))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let mut message = if response_input.resolved_personality.verbosity
+        == ResponseVerbosity::Telegraph
+    {
+        details
+            .iter()
+            .take(2)
+            .map(|(command, reason)| format!("Tried `{command}`; blocked: {reason}."))
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        details
+            .iter()
+            .take(2)
+            .map(|(command, reason)| format!("I tried `{command}`, but it was blocked: {reason}."))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
     if details.len() > 2 {
-        message.push_str(" I hit the same restriction on additional attempts.");
+        if response_input.resolved_personality.verbosity == ResponseVerbosity::Telegraph {
+            message.push_str(" Same issue on additional attempts.");
+        } else {
+            message.push_str(" I hit the same restriction on additional attempts.");
+        }
     }
-    message.push_str(" I can try a different command path if you want.");
+    if response_input.resolved_personality.verbosity == ResponseVerbosity::Telegraph {
+        message.push_str(" I can try another path.");
+    } else {
+        message.push_str(" I can try a different command path if you want.");
+    }
     Some(message)
 }
 

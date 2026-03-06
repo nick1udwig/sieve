@@ -356,6 +356,55 @@ impl ResponseModel for QueuedResponseModel {
     }
 }
 
+pub(crate) struct RecordingResponseModel {
+    config: LlmModelConfig,
+    output: sieve_llm::ResponseTurnOutput,
+    last_input: StdMutex<Option<ResponseTurnInput>>,
+}
+
+impl RecordingResponseModel {
+    pub(crate) fn new(message: &str) -> Self {
+        Self {
+            config: LlmModelConfig {
+                provider: LlmProvider::OpenAi,
+                model: "response-recording-test".to_string(),
+                api_base: None,
+            },
+            output: sieve_llm::ResponseTurnOutput {
+                message: message.to_string(),
+                referenced_ref_ids: BTreeSet::new(),
+                summarized_ref_ids: BTreeSet::new(),
+            },
+            last_input: StdMutex::new(None),
+        }
+    }
+
+    pub(crate) fn last_input(&self) -> Option<ResponseTurnInput> {
+        self.last_input
+            .lock()
+            .expect("recording response mutex poisoned")
+            .clone()
+    }
+}
+
+#[async_trait]
+impl ResponseModel for RecordingResponseModel {
+    fn config(&self) -> &LlmModelConfig {
+        &self.config
+    }
+
+    async fn write_turn_response(
+        &self,
+        input: ResponseTurnInput,
+    ) -> Result<sieve_llm::ResponseTurnOutput, LlmError> {
+        self.last_input
+            .lock()
+            .expect("recording response mutex poisoned")
+            .replace(input);
+        Ok(self.output.clone())
+    }
+}
+
 pub(crate) struct FirstStdoutSummaryResponseModel {
     config: LlmModelConfig,
 }

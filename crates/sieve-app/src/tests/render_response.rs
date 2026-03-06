@@ -31,8 +31,16 @@ fn build_response_turn_input_handles_zero_tool_turn() {
         tool_results: Vec::new(),
     };
 
-    let (input, refs) =
-        build_response_turn_input(&run_id, "hi", InteractionModality::Text, &planner_result);
+    let (input, refs) = build_response_turn_input(
+        &run_id,
+        "hi",
+        test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
+        test_resolved_personality(),
+        &planner_result,
+    );
     assert_eq!(input.run_id, run_id);
     assert_eq!(input.trusted_user_message, "hi");
     assert_eq!(input.response_modality, InteractionModality::Text);
@@ -46,7 +54,12 @@ fn requires_output_visibility_detects_non_empty_stdout_or_stderr_refs() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "show output".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -78,7 +91,12 @@ fn requires_output_visibility_skips_when_user_did_not_ask_for_output() {
     let input = ResponseTurnInput {
             run_id: RunId("run-1".to_string()),
             trusted_user_message: "What is the weather tomorrow in Livermore?".to_string(),
+            delivery_context: test_delivery_context(
+                sieve_types::DeliveryChannel::Stdin,
+                InteractionModality::Text,
+            ),
             response_modality: InteractionModality::Text,
+            resolved_personality: test_resolved_personality(),
             planner_thoughts: None,
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -105,7 +123,12 @@ fn response_has_visible_selected_output_requires_message_token() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "show output".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -141,7 +164,12 @@ fn response_has_visible_selected_output_accepts_summary_token() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
         trusted_user_message: "summarize output".to_string(),
+        delivery_context: test_delivery_context(
+            sieve_types::DeliveryChannel::Stdin,
+            InteractionModality::Text,
+        ),
         response_modality: InteractionModality::Text,
+        resolved_personality: test_resolved_personality(),
         planner_thoughts: None,
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
