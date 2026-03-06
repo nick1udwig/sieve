@@ -1,5 +1,6 @@
 use crate::approval_allowance::ApprovalAllowanceKey;
 use crate::approval_bus::{ApprovalBus, ApprovalBusError};
+use crate::browser_sessions::BrowserSessionState;
 use crate::event_log::{EventLogError, RuntimeEventLog};
 use crate::mainline::{MainlineRunError, MainlineRunner};
 use crate::value_state::{RuntimeValueState, ValueStateError};
@@ -12,7 +13,7 @@ use sieve_types::{
     ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability, CommandSegment, RunId,
     RuntimeEvent, RuntimePolicyContext, ToolContractValidationReport, ValueLabel, ValueRef,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -74,6 +75,7 @@ pub struct RuntimeOrchestrator {
     pub(crate) next_request: AtomicU64,
     pub(crate) value_state: Mutex<RuntimeValueState>,
     pub(crate) persistent_approval_allowances: Mutex<BTreeSet<ApprovalAllowanceKey>>,
+    pub(crate) browser_sessions: Mutex<BTreeMap<String, BrowserSessionState>>,
 }
 
 pub struct RuntimeDeps {
@@ -105,6 +107,7 @@ impl RuntimeOrchestrator {
             next_request: AtomicU64::new(1),
             value_state: Mutex::new(RuntimeValueState::default()),
             persistent_approval_allowances: Mutex::new(BTreeSet::new()),
+            browser_sessions: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -160,6 +163,16 @@ impl RuntimeOrchestrator {
             allowances.insert(ApprovalAllowanceKey::for_capability(capability));
         }
         Ok(())
+    }
+
+    pub(crate) fn browser_sessions_snapshot(
+        &self,
+    ) -> Result<BTreeMap<String, BrowserSessionState>, RuntimeError> {
+        let sessions = self
+            .browser_sessions
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(sessions.clone())
     }
 
     pub fn runtime_policy_context_for_control(

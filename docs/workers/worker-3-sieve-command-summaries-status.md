@@ -82,4 +82,5 @@ Owned crate: `crates/sieve-command-summaries`
 - `agent-browser` global fs-affecting flags now add capabilities for `--profile`, `--state`, `--config`, `--extension`, `--download-path`, and `--action-policy`.
 - `agent-browser open --headers ...` now emits sink checks to the explicit navigation origin.
 - Session-bound page commands without an explicit origin now route to unknown so hidden browser-session state cannot bypass caps across turns.
+- Runtime precheck now tracks `agent-browser` sessions by explicit `--session` name, while same-shell chains can reuse an implicit in-flight session established earlier in that chain.
 - Added 13 unit tests covering explicit-origin summaries, header sink extraction, fs capabilities, and deliberate unknown routing for hidden-origin page interactions.
