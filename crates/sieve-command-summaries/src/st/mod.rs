@@ -20,7 +20,7 @@ pub(crate) const PLANNER_CATALOG_DESCRIPTION: &str = "Speech CLI for transcripti
 
 pub(super) fn summarize_st(argv: &[String]) -> Option<SummaryOutcome> {
     let inner = super::strip_sudo(argv);
-    if !super::basename(inner.first()).is_some_and(|cmd| cmd == "st") {
+    if super::basename(inner.first()).is_none_or(|cmd| cmd != "st") {
         return None;
     }
     if inner.len() < 2 {

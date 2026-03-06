@@ -20,6 +20,10 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
         description: "Send HTTP requests directly (GET/POST/etc.) to fetch remote content or APIs. For webpage content, prefer `curl -sS \"https://markdown.new/<url>\"` over raw HTML for cleaner extraction. Avoid piping to uncataloged commands (for example `| head`) because policy may deny them.",
     },
     PlannerCommandDescriptor {
+        command: "agent-browser",
+        description: "Browser automation CLI. Prefer explicit-origin forms Sieve can summarize: `agent-browser open <url>`, `agent-browser tab new <url>`, `agent-browser diff url <url1> <url2>`, `agent-browser connect <port|url>`, `agent-browser record start <file.webm> <url>`, and `agent-browser cookies set <name> <value> --url <url>`. Session-bound page commands without an explicit origin (for example `snapshot`, `click`, `fill`, `get`, `screenshot`, `pdf`, `download`, `upload`, `storage`) may route unknown so hidden browser state cannot bypass caps across turns.",
+    },
+    PlannerCommandDescriptor {
         command: "rm",
         description: "Remove files/directories; destructive, often policy-gated (for example recursive deletes).",
     },

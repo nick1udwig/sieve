@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod agent_browser;
 mod api;
 mod builtin;
 mod catalog;

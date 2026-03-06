@@ -74,3 +74,12 @@ Owned crate: `crates/sieve-command-summaries`
 
 - Add explicit summary support for curl upload/form paths if product wants known handling (currently intentionally unknown with tests).
 - Optional: add property/fuzz coverage for URL canonicalization.
+
+## 2026-03-05 update
+
+- Added `agent-browser` planner catalog guidance with explicit-origin usage patterns that stay inside the current capability model.
+- Added command summaries for explicit-origin `agent-browser` flows: `open`, `connect`, `tab new [url]`, `set viewport|device|geo|offline|media`, `cookies set ... --url`, `diff url`, `record start|restart <path> <url>`, `close`, `session`, and `confirm|deny`.
+- `agent-browser` global fs-affecting flags now add capabilities for `--profile`, `--state`, `--config`, `--extension`, `--download-path`, and `--action-policy`.
+- `agent-browser open --headers ...` now emits sink checks to the explicit navigation origin.
+- Session-bound page commands without an explicit origin now route to unknown so hidden browser-session state cannot bypass caps across turns.
+- Added 13 unit tests covering explicit-origin summaries, header sink extraction, fs capabilities, and deliberate unknown routing for hidden-origin page interactions.
