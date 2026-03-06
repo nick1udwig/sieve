@@ -326,7 +326,7 @@ fn is_codex_exec_command(argv: &[String]) -> bool {
     if argv.len() < 2 {
         return false;
     }
-    if !super::basename(argv.first()).is_some_and(|cmd| cmd == "codex") {
+    if super::basename(argv.first()).is_none_or(|cmd| cmd != "codex") {
         return false;
     }
     matches!(argv[1].as_str(), "exec" | "e")
