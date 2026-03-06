@@ -121,7 +121,11 @@ impl AppE2eHarness {
             sieve_home: root.clone(),
             policy_path: PathBuf::from(DEFAULT_POLICY_PATH),
             event_log_path: event_log_path.clone(),
+            automation_store_path: root.join("state/automation.json"),
             runtime_cwd: root.to_string_lossy().to_string(),
+            heartbeat_interval_ms: None,
+            heartbeat_prompt_override: None,
+            heartbeat_file_path: root.join("HEARTBEAT.md"),
             allowed_tools,
             allowed_net_connect_scopes: Vec::new(),
             unknown_mode: UnknownMode::Deny,
@@ -210,7 +214,17 @@ impl AppE2eHarness {
     }
 
     pub(crate) async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
-        let reserved_turn = self.event_log.reserve_turn(PromptSource::Stdin.as_str());
+        let prompt = IngressPrompt::user(
+            PromptSource::Stdin,
+            prompt.to_string(),
+            InteractionModality::Text,
+            None,
+        );
+        let reserved_turn = self.event_log.reserve_turn_with_metadata(
+            PromptSource::Stdin.as_str(),
+            &prompt.session_key,
+            prompt.turn_kind.as_str(),
+        );
         run_turn(
             &self.runtime,
             self.guidance_model.as_ref(),
@@ -220,12 +234,10 @@ impl AppE2eHarness {
             &self.event_log,
             &self.cfg,
             reserved_turn.run_id,
-            PromptSource::Stdin,
-            InteractionModality::Text,
-            None,
-            prompt.to_string(),
+            &prompt,
         )
         .await
+        .map(|_| ())
         .map_err(|err| err.to_string())
     }
 
@@ -292,7 +304,11 @@ impl AppE2eHarness {
             .map_err(|_| "timed out waiting for telegram ingress prompt".to_string())?
             .ok_or_else(|| "telegram ingress prompt channel closed".to_string())?;
 
-        let reserved_turn = self.event_log.reserve_turn(PromptSource::Telegram.as_str());
+        let reserved_turn = self.event_log.reserve_turn_with_metadata(
+            PromptSource::Telegram.as_str(),
+            &ingress.session_key,
+            ingress.turn_kind.as_str(),
+        );
         let typing_guard = TypingGuard::start(
             self.telegram_event_tx.clone(),
             reserved_turn.run_id.0.clone(),
@@ -308,10 +324,7 @@ impl AppE2eHarness {
             &self.event_log,
             &self.cfg,
             reserved_turn.run_id,
-            PromptSource::Telegram,
-            ingress.modality,
-            ingress.media_file_id,
-            ingress.text,
+            &ingress,
         )
         .await
         .map_err(|err| err.to_string())?;

@@ -1,3 +1,4 @@
+use crate::automation::{parse_duration_ms, DEFAULT_HEARTBEAT_FILE_NAME};
 use crate::lcm_integration::LcmIntegrationConfig;
 use serde::{Deserialize, Serialize};
 use sieve_runtime::RuntimeOrchestrator;
@@ -22,7 +23,11 @@ pub(crate) struct AppConfig {
     pub(crate) sieve_home: PathBuf,
     pub(crate) policy_path: PathBuf,
     pub(crate) event_log_path: PathBuf,
+    pub(crate) automation_store_path: PathBuf,
     pub(crate) runtime_cwd: String,
+    pub(crate) heartbeat_interval_ms: Option<u64>,
+    pub(crate) heartbeat_prompt_override: Option<String>,
+    pub(crate) heartbeat_file_path: PathBuf,
     pub(crate) allowed_tools: Vec<String>,
     pub(crate) allowed_net_connect_scopes: Vec<String>,
     pub(crate) unknown_mode: UnknownMode,
@@ -47,6 +52,10 @@ impl AppConfig {
         let sieve_home = parse_sieve_home(env::var("SIEVE_HOME").ok(), env::var("HOME").ok());
         let event_log_path = runtime_event_log_path(&sieve_home);
         let runtime_cwd = env::var("SIEVE_RUNTIME_CWD").unwrap_or_else(|_| ".".to_string());
+        let automation_store_path = automation_store_path(&sieve_home);
+        let heartbeat_interval_ms = parse_optional_duration_env("SIEVE_HEARTBEAT_EVERY")?;
+        let heartbeat_prompt_override = optional_non_empty_env("SIEVE_HEARTBEAT_PROMPT");
+        let heartbeat_file_path = PathBuf::from(&runtime_cwd).join(DEFAULT_HEARTBEAT_FILE_NAME);
         let allowed_tools = parse_allowed_tools(
             &env::var("SIEVE_ALLOWED_TOOLS")
                 .unwrap_or_else(|_| "bash,endorse,declassify".to_string()),
@@ -77,6 +86,10 @@ impl AppConfig {
             policy_path,
             event_log_path,
             runtime_cwd,
+            automation_store_path,
+            heartbeat_interval_ms,
+            heartbeat_prompt_override,
+            heartbeat_file_path,
             allowed_tools,
             allowed_net_connect_scopes: Vec::new(),
             unknown_mode: parse_unknown_mode(env::var("SIEVE_UNKNOWN_MODE").ok())?,
@@ -121,6 +134,10 @@ pub(crate) fn parse_sieve_home(
 
 pub(crate) fn runtime_event_log_path(sieve_home: &Path) -> PathBuf {
     sieve_home.join("logs/runtime-events.jsonl")
+}
+
+pub(crate) fn automation_store_path(sieve_home: &Path) -> PathBuf {
+    sieve_home.join("state/automation.json")
 }
 
 pub(crate) fn approval_allowances_path(sieve_home: &Path) -> PathBuf {
@@ -199,6 +216,29 @@ fn parse_usize_env(key: &str, default: usize) -> Result<usize, String> {
             .map_err(|err| format!("invalid {key}: {err}")),
         Err(_) => Ok(default),
     }
+}
+
+fn parse_optional_duration_env(key: &str) -> Result<Option<u64>, String> {
+    match env::var(key) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                parse_duration_ms(trimmed)
+                    .map(Some)
+                    .map_err(|err| format!("invalid {key}: {err}"))
+            }
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+fn optional_non_empty_env(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) fn parse_telegram_allowed_sender_user_ids(

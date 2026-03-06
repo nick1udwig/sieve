@@ -17,6 +17,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 pub(crate) enum PromptSource {
     Stdin,
     Telegram,
+    Automation,
 }
 
 impl PromptSource {
@@ -24,6 +25,52 @@ impl PromptSource {
         match self {
             PromptSource::Stdin => "stdin",
             PromptSource::Telegram => "telegram",
+            PromptSource::Automation => "automation",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TurnKind {
+    User,
+    Heartbeat {
+        reason: Option<String>,
+        queued_event_ids: Vec<String>,
+    },
+    CronIsolated {
+        job_id: String,
+    },
+}
+
+impl TurnKind {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Heartbeat { .. } => "heartbeat",
+            Self::CronIsolated { .. } => "cron_isolated",
+        }
+    }
+
+    pub(crate) fn logs_user_conversation(&self) -> bool {
+        !matches!(self, Self::Heartbeat { .. })
+    }
+
+    pub(crate) fn logs_assistant_conversation(&self, delivered: bool) -> bool {
+        match self {
+            Self::User | Self::CronIsolated { .. } => true,
+            Self::Heartbeat { .. } => delivered,
+        }
+    }
+
+    pub(crate) fn ingests_user_message(&self) -> bool {
+        matches!(self, Self::User)
+    }
+
+    pub(crate) fn ingests_assistant_message(&self, delivered: bool) -> bool {
+        match self {
+            Self::User => true,
+            Self::Heartbeat { .. } => delivered,
+            Self::CronIsolated { .. } => false,
         }
     }
 }
@@ -31,9 +78,29 @@ impl PromptSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IngressPrompt {
     pub(crate) source: PromptSource,
+    pub(crate) session_key: String,
+    pub(crate) turn_kind: TurnKind,
     pub(crate) text: String,
     pub(crate) modality: InteractionModality,
     pub(crate) media_file_id: Option<String>,
+}
+
+impl IngressPrompt {
+    pub(crate) fn user(
+        source: PromptSource,
+        text: String,
+        modality: InteractionModality,
+        media_file_id: Option<String>,
+    ) -> Self {
+        Self {
+            source,
+            session_key: "main".to_string(),
+            turn_kind: TurnKind::User,
+            text,
+            modality,
+            media_file_id,
+        }
+    }
 }
 
 pub(crate) struct RuntimeBridge {
@@ -78,12 +145,12 @@ impl TelegramEventBridge for RuntimeBridge {
             return;
         }
         if let Some(prompt_tx) = &self.prompt_tx {
-            if let Err(err) = prompt_tx.send(IngressPrompt {
-                source: PromptSource::Telegram,
+            if let Err(err) = prompt_tx.send(IngressPrompt::user(
+                PromptSource::Telegram,
                 text,
-                modality: prompt.modality,
-                media_file_id: prompt.media_file_id,
-            }) {
+                prompt.modality,
+                prompt.media_file_id,
+            )) {
                 eprintln!("failed to enqueue telegram prompt: {err}");
             }
         }
@@ -165,12 +232,12 @@ pub(crate) fn spawn_stdin_prompt_loop(
                     if prompt.is_empty() {
                         continue;
                     }
-                    if let Err(err) = prompt_tx.send(IngressPrompt {
-                        source: PromptSource::Stdin,
-                        text: prompt.to_string(),
-                        modality: InteractionModality::Text,
-                        media_file_id: None,
-                    }) {
+                    if let Err(err) = prompt_tx.send(IngressPrompt::user(
+                        PromptSource::Stdin,
+                        prompt.to_string(),
+                        InteractionModality::Text,
+                        None,
+                    )) {
                         eprintln!("stdin prompt loop stopped: {err}");
                         break;
                     }

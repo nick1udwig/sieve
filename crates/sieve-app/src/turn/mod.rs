@@ -4,7 +4,7 @@ mod mainline;
 mod planner_loop;
 mod response_refs;
 
-pub(crate) use execute::run_turn;
+pub(crate) use execute::{run_turn, TurnOutcome};
 #[cfg(test)]
 pub(crate) use input::{default_modality_contract, override_modality_contract};
 pub(crate) use mainline::{mainline_artifact_kind_name, AppMainlineRunner};

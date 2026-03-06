@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod agent_loop;
+mod automation;
 mod compose;
 mod compose_gate;
 mod config;
@@ -17,6 +18,7 @@ mod turn;
 use agent_loop::run_agent_loop;
 #[cfg(test)]
 use async_trait::async_trait;
+use automation::AutomationManager;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use compose_gate::{
@@ -35,10 +37,10 @@ pub(crate) use config::{
     parse_telegram_allowed_sender_user_ids, runtime_event_log_path, save_approval_allowances,
     DEFAULT_POLICY_PATH,
 };
-use ingress::{spawn_stdin_prompt_loop, spawn_telegram_loop, PromptSource, RuntimeBridge};
+use ingress::{spawn_stdin_prompt_loop, spawn_telegram_loop, IngressPrompt, PromptSource, RuntimeBridge};
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use ingress::{IngressPrompt, TypingGuard};
+pub(crate) use ingress::{TurnKind, TypingGuard};
 use lcm_integration::LcmIntegration;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -126,7 +128,7 @@ pub(crate) use turn::summarize_with_ref_id_counted;
 pub(crate) use turn::{
     build_response_turn_input, default_modality_contract, override_modality_contract,
     planner_allowed_tools_for_turn, requires_output_visibility,
-    response_has_visible_selected_output,
+    response_has_visible_selected_output, TurnOutcome,
 };
 use turn::{run_turn, AppMainlineRunner};
 
@@ -176,12 +178,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let summary_model: Arc<dyn SummaryModel> = Arc::new(OpenAiSummaryModel::from_env()?);
     let approval_bus = Arc::new(InProcessApprovalBus::new());
     let (event_tx, event_rx) = mpsc::channel();
-    let (prompt_rx, _stdin_thread, bridge) = if single_command_mode {
-        (None, None, RuntimeBridge::new(approval_bus.clone()))
+    let (prompt_tx, prompt_rx, _stdin_thread, bridge) = if single_command_mode {
+        (None, None, None, RuntimeBridge::new(approval_bus.clone()))
     } else {
         let (prompt_tx, prompt_rx) = tokio_mpsc::unbounded_channel();
         let stdin_thread = spawn_stdin_prompt_loop(prompt_tx.clone());
         (
+            Some(prompt_tx.clone()),
             Some(prompt_rx),
             Some(stdin_thread),
             RuntimeBridge::with_prompt_tx(approval_bus.clone(), prompt_tx),
@@ -205,6 +208,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         event_log: event_log.clone(),
         clock: Arc::new(RuntimeClock),
     }));
+    let automation = match prompt_tx {
+        Some(prompt_tx) => Some(Arc::new(AutomationManager::new(
+            &cfg,
+            prompt_tx,
+            Arc::new(RuntimeClock),
+        )?)),
+        None => None,
+    };
+    if let Some(automation) = automation.clone() {
+        tokio::spawn(automation.run_loop());
+    }
     let allowances_path = approval_allowances_path(&cfg.sieve_home);
     match load_approval_allowances(&allowances_path) {
         Ok(allowances) => {
@@ -226,7 +240,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if single_command_mode {
-        let reserved_turn = event_log.reserve_turn(PromptSource::Stdin.as_str());
+        let cli_prompt = IngressPrompt::user(
+            PromptSource::Stdin,
+            cli_prompt,
+            InteractionModality::Text,
+            None,
+        );
+        let reserved_turn = event_log.reserve_turn_with_metadata(
+            PromptSource::Stdin.as_str(),
+            &cli_prompt.session_key,
+            cli_prompt.turn_kind.as_str(),
+        );
         run_turn(
             &runtime,
             guidance_model.as_ref(),
@@ -236,10 +260,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &event_log,
             &cfg,
             reserved_turn.run_id,
-            PromptSource::Stdin,
-            InteractionModality::Text,
-            None,
-            cli_prompt,
+            &cli_prompt,
         )
         .await?;
         drop(runtime);
@@ -254,6 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             lcm.clone(),
             event_log.clone(),
             cfg.clone(),
+            automation.clone(),
             typing_tx,
             prompt_rx.expect("agent mode prompt receiver missing"),
         )
