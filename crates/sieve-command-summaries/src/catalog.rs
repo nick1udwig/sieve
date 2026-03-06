@@ -28,6 +28,10 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
         description: "",
     },
     PlannerCommandDescriptor {
+        command: "trash",
+        description: "Move files or directories to the desktop trash instead of permanently deleting them. Preferred form: `trash [--trash-dir <dir>] <path>...`.",
+    },
+    PlannerCommandDescriptor {
         command: "mv",
         description: "",
     },

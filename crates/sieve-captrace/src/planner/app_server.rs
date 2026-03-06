@@ -368,7 +368,7 @@ impl AppServerWsClient {
         let text = serde_json::to_string(value)
             .map_err(|err| CapTraceError::Llm(format!("serialize rpc message failed: {err}")))?;
         self.socket
-            .send(tokio_tungstenite::tungstenite::Message::Text(text.into()))
+            .send(tokio_tungstenite::tungstenite::Message::Text(text))
             .await
             .map_err(|err| CapTraceError::Llm(format!("codex app-server write failed: {err}")))
     }

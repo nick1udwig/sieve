@@ -262,11 +262,7 @@ fn normalize_usage_token(token: &str) -> String {
 
 fn sample_value_for_placeholder(placeholder: &str) -> String {
     let lowered = placeholder.to_ascii_lowercase();
-    if lowered.contains("query") {
-        TOKEN_ARG.to_string()
-    } else if lowered.contains("key") {
-        TOKEN_ARG.to_string()
-    } else if lowered.contains("value") {
+    if lowered.contains("query") || lowered.contains("key") || lowered.contains("value") {
         TOKEN_ARG.to_string()
     } else if lowered.contains("file") || lowered.contains("path") || lowered.contains("config") {
         TOKEN_IN_FILE.to_string()

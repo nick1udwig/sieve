@@ -22,7 +22,7 @@ async fn runtime_approval_roundtrip_works_with_telegram_adapter() {
                 .orchestrate_shell(ShellRunRequest {
                     run_id: RunId("run_runtime_telegram".to_string()),
                     cwd: "/tmp".to_string(),
-                    script: "rm -rf /tmp/scratch".to_string(),
+                    script: "trash -f /tmp/scratch".to_string(),
                     control_value_refs: BTreeSet::new(),
                     control_endorsed_by: None,
                     unknown_mode: UnknownMode::Deny,

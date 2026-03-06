@@ -29,13 +29,7 @@ trusted_control = true
 require_trusted_control_for_mutating = true
 "#;
 
-const RM_RF_APPROVAL_POLICY: &str = r#"
-[[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
-decision = "deny_with_approval"
-reason = "rm -rf requires approval"
-
+const RM_RF_DENY_POLICY: &str = r#"
 [options]
 violation_mode = "deny"
 trusted_control = true
@@ -327,11 +321,11 @@ async fn openai_live_runtime_planner_executes_declassify_with_approval() {
 }
 
 #[tokio::test]
-async fn openai_live_openclaw_exec_injection_payload_is_approval_gated() {
+async fn openai_live_openclaw_exec_injection_payload_is_denied_by_unknown_mode() {
     let Some(planner) = live_openai_planner_or_skip() else {
         return;
     };
-    let (runtime, approval_bus) = mk_live_runtime(planner, RM_RF_APPROVAL_POLICY);
+    let (runtime, _approval_bus) = mk_live_runtime(planner, RM_RF_DENY_POLICY);
 
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -367,20 +361,6 @@ async fn openai_live_openclaw_exec_injection_payload_is_approval_gated() {
         })
     };
 
-    let requested = wait_for_approval_live(&approval_bus).await;
-    assert_eq!(requested.blocked_rule_id, "deny-rm-rf");
-    assert_eq!(requested.command_segments[0].argv[0], "rm");
-    assert_eq!(requested.command_segments[0].argv[1], "-rf");
-    approval_bus
-        .resolve(ApprovalResolvedEvent {
-            schema_version: 1,
-            request_id: requested.request_id.clone(),
-            run_id: requested.run_id.clone(),
-            action: ApprovalAction::Deny,
-            created_at_ms: 2300,
-        })
-        .expect("resolve rm -rf approval");
-
     let output = runtime_task
         .await
         .expect("task join")
@@ -401,7 +381,9 @@ async fn openai_live_openclaw_exec_injection_payload_is_approval_gated() {
         "expected rm -rf, got `{command}`"
     );
     match disposition {
-        RuntimeDisposition::Denied { reason } => assert_eq!(reason, "approval denied"),
+        RuntimeDisposition::Denied { reason } => {
+            assert_eq!(reason, "unknown command denied by mode")
+        }
         other => panic!("expected denied by approval, got {other:?}"),
     }
     assert!(target_dir.exists());

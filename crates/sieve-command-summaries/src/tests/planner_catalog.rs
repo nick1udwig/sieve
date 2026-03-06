@@ -31,13 +31,25 @@ fn planner_command_catalog_curl_mentions_markdown_new() {
 }
 
 #[test]
+fn planner_command_catalog_includes_trash_entry() {
+    let entry = planner_command_catalog()
+        .iter()
+        .find(|entry| entry.command == "trash")
+        .expect("trash catalog entry");
+    assert!(entry.description.contains("desktop trash"));
+    assert!(entry
+        .description
+        .contains("trash [--trash-dir <dir>] <path>..."));
+}
+
+#[test]
 fn planner_command_catalog_includes_agent_browser_entry() {
     let entry = planner_command_catalog()
         .iter()
         .find(|entry| entry.command == "agent-browser")
         .expect("agent-browser catalog entry");
     assert!(entry.description.contains("agent-browser open <url>"));
-    assert!(entry.description.contains("hidden browser state"));
+    assert!(entry.description.contains("Always use `--session`"));
 }
 
 #[test]
