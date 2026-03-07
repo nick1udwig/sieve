@@ -4,6 +4,22 @@ Date: 2026-02-26
 Worker: 3
 Owned crate: `crates/sieve-command-summaries`
 
+## 2026-03-05 update
+
+- Added `gws` command summary support for `schema` and generic service/resource/method API calls.
+- Added planner catalog guidance for `gws` including `--dry-run`, `--upload`, and `--output` behavior.
+- `gws` summary behavior:
+  - `gws schema <service.resource.method>` requires `net.connect(https://www.googleapis.com/)`.
+  - generic read-ish methods require `net.connect(https://www.googleapis.com/)`.
+  - mutating methods, `--json`, or `--upload` require Google API `net.write`.
+  - `--upload PATH` adds `fs.read(PATH)` and switches the primary sink/cap to `https://www.googleapis.com/upload/`.
+  - `--output PATH` adds `fs.write(PATH)`.
+  - `--params` and `--json` emit sink checks to the coarse Google API origin.
+  - `--sanitize` adds `net.write(https://modelarmor.googleapis.com/)`.
+  - `--dry-run` is treated as a known no-op with no caps or sink checks.
+  - service `+helpers` plus top-level `gws auth|workflow|modelarmor|mcp` remain unsupported.
+- Added `gws` unit tests for planner catalog text, schema, read/write inference, upload/output args, sanitize, dry-run, and unsupported paths.
+
 ## 2026-03-04 update
 
 - Added `codex exec` command summary support (explicitly not `codex app-server`).

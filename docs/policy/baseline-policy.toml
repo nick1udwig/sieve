@@ -47,12 +47,17 @@ scope = "https://www.wunderground.com/"
 [[allow_capabilities]]
 resource = "net"
 action = "connect"
-scope = "https://google.com/"
+scope = "https://googleapis.com/"
 
 [[allow_capabilities]]
 resource = "net"
 action = "connect"
-scope = "https://www.google.com/"
+scope = "https://www.googleapis.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.open-meteo.com/"
 
 [[allow_capabilities]]
 resource = "net"
@@ -63,11 +68,6 @@ scope = "https://x.com/"
 resource = "net"
 action = "connect"
 scope = "https://www.x.com/"
-
-[[allow_capabilities]]
-resource = "net"
-action = "connect"
-scope = "https://api.open-meteo.com/"
 
 [options]
 violation_mode = "ask"
