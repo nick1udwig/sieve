@@ -19,12 +19,22 @@ pub struct LlmModelConfig {
 
 /// Planner invocation input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerBrowserSession {
+    pub session_name: String,
+    pub current_origin: String,
+    pub current_url: String,
+}
+
+/// Planner invocation input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannerTurnInput {
     pub run_id: RunId,
     pub user_message: String,
     pub allowed_tools: Vec<String>,
     #[serde(default)]
     pub allowed_net_connect_scopes: Vec<String>,
+    #[serde(default)]
+    pub browser_sessions: Vec<PlannerBrowserSession>,
     pub previous_events: Vec<RuntimeEvent>,
     #[serde(default)]
     pub guidance: Option<PlannerGuidanceFrame>,

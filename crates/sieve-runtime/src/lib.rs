@@ -3,6 +3,8 @@
 mod approval_allowance;
 mod approval_bus;
 mod approval_tools;
+mod browser_session_summary;
+mod browser_sessions;
 mod event_log;
 mod mainline;
 mod orchestrator;

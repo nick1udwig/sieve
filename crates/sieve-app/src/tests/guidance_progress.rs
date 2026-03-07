@@ -1,4 +1,17 @@
 use super::*;
+use crate::planner_progress::build_guidance_prompt;
+use std::fs;
+
+fn write_guidance_artifact(name: &str, content: &str) -> String {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-guidance-{}-{}-{}.log",
+        std::process::id(),
+        name,
+        uuid::Uuid::new_v4()
+    ));
+    fs::write(&path, content).expect("write temp guidance artifact");
+    path.to_string_lossy().to_string()
+}
 #[test]
 fn guidance_continue_decision_auto_extends_step_limit() {
     let (should_continue, next_limit, auto_extended) = guidance_continue_decision(
@@ -189,4 +202,123 @@ fn progress_contract_requests_higher_quality_when_fetch_output_is_too_small() {
         override_signal.map(|(signal, _)| signal),
         Some(PlannerGuidanceSignal::ContinueNeedHigherQualitySource)
     );
+}
+
+#[test]
+fn build_guidance_prompt_includes_browser_title_only_observation_and_raw_excerpt() {
+    let stdout =
+        "jordan peterson - YouTube\nhttps://www.youtube.com/results?search_query=jordan+peterson\n";
+    let artifact_path = write_guidance_artifact("title-only", stdout);
+    let tool_results = vec![PlannerToolResult::Bash {
+        command:
+            "agent-browser open https://www.youtube.com/results?search_query=jordan+peterson --session ytsearch"
+                .to_string(),
+        disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+            run_id: RunId("run-1".to_string()),
+            exit_code: Some(0),
+            artifacts: vec![MainlineArtifact {
+                ref_id: "artifact-1".to_string(),
+                kind: MainlineArtifactKind::Stdout,
+                path: artifact_path,
+                byte_count: stdout.len() as u64,
+                line_count: 2,
+            }],
+        }),
+    }];
+
+    let prompt =
+        build_guidance_prompt("what is the top video?", 1, 3, &tool_results, &tool_results);
+    let payload: serde_json::Value = serde_json::from_str(&prompt).expect("guidance prompt json");
+
+    assert_eq!(
+        payload
+            .pointer("/observed_step_results/0/browser_observation/page_state")
+            .and_then(serde_json::Value::as_str),
+        Some("title_only")
+    );
+    assert_eq!(
+        payload
+            .pointer("/observed_step_results/0/browser_observation/session_reusable")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .pointer("/observed_step_results/0/raw_artifacts/0/excerpt")
+            .and_then(serde_json::Value::as_str),
+        Some("jordan peterson - YouTube\nhttps://www.youtube.com/results?search_query=jordan+peterson")
+    );
+}
+
+#[test]
+fn build_guidance_prompt_marks_google_sorry_as_anti_bot_block_page() {
+    let stdout = "https://www.google.com/search?q=site%3Ayoutube.com+%22jordan+peterson%22\nhttps://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dsite%253Ayoutube.com\n";
+    let artifact_path = write_guidance_artifact("google-sorry", stdout);
+    let tool_results = vec![PlannerToolResult::Bash {
+        command:
+            "agent-browser open https://www.google.com/search?q=site%3Ayoutube.com+%22jordan+peterson%22 --session ytsearch"
+                .to_string(),
+        disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+            run_id: RunId("run-2".to_string()),
+            exit_code: Some(0),
+            artifacts: vec![MainlineArtifact {
+                ref_id: "artifact-2".to_string(),
+                kind: MainlineArtifactKind::Stdout,
+                path: artifact_path,
+                byte_count: stdout.len() as u64,
+                line_count: 2,
+            }],
+        }),
+    }];
+
+    let prompt =
+        build_guidance_prompt("what is the top video?", 1, 3, &tool_results, &tool_results);
+    let payload: serde_json::Value = serde_json::from_str(&prompt).expect("guidance prompt json");
+
+    assert_eq!(
+        payload
+            .pointer("/observed_step_results/0/browser_observation/page_state")
+            .and_then(serde_json::Value::as_str),
+        Some("block_page")
+    );
+    assert_eq!(
+        payload
+            .pointer("/observed_step_results/0/browser_observation/interstitial_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("anti_bot")
+    );
+}
+
+#[test]
+fn build_guidance_prompt_does_not_mark_youtube_results_with_signin_links_as_interstitial() {
+    let stdout = "- document:\n  - banner:\n    - link \"Anmelden\" [ref=e8]:\n      - /url: https://accounts.google.com/ServiceLogin?service=youtube\n  - main:\n    - link [ref=e15]:\n      - /url: /@JordanBPeterson\n    - 'heading \"Jordan Peterson Live on Tour: The Hidden Key to a Fulfilling Life 1 Stunde, 25 Minuten\" [level=3]':\n      - 'link \"Jordan Peterson Live on Tour: The Hidden Key to a Fulfilling Life 1 Stunde, 25 Minuten\"':\n        - /url: /watch?v=yuc807SP_gA\n        - text: \"Jordan Peterson Live on Tour: The Hidden Key to a Fulfilling Life\"\n";
+    let artifact_path = write_guidance_artifact("yt-result-list", stdout);
+    let tool_results = vec![PlannerToolResult::Bash {
+        command: "agent-browser snapshot --session ytsearch".to_string(),
+        disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+            run_id: RunId("run-3".to_string()),
+            exit_code: Some(0),
+            artifacts: vec![MainlineArtifact {
+                ref_id: "artifact-3".to_string(),
+                kind: MainlineArtifactKind::Stdout,
+                path: artifact_path,
+                byte_count: stdout.len() as u64,
+                line_count: stdout.lines().count() as u64,
+            }],
+        }),
+    }];
+
+    let prompt =
+        build_guidance_prompt("what is the top video?", 1, 3, &tool_results, &tool_results);
+    let payload: serde_json::Value = serde_json::from_str(&prompt).expect("guidance prompt json");
+
+    assert_eq!(
+        payload
+            .pointer("/observed_step_results/0/browser_observation/page_state")
+            .and_then(serde_json::Value::as_str),
+        Some("answer_item")
+    );
+    assert!(payload
+        .pointer("/observed_step_results/0/browser_observation/interstitial_kind")
+        .map_or(true, serde_json::Value::is_null));
 }

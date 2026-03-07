@@ -47,6 +47,7 @@ impl CaseGenerator for PlannerCaseGenerator {
                 user_message,
                 allowed_tools: vec!["bash".to_string()],
                 allowed_net_connect_scopes: Vec::new(),
+                browser_sessions: Vec::new(),
                 previous_events: Vec::new(),
                 guidance: None,
             })

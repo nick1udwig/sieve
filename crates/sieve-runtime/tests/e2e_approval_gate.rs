@@ -15,10 +15,10 @@ use tokio::time::{timeout, Duration};
 async fn approval_gate_allows_execution_after_approve_once() {
     let policy_toml = r#"
 [[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
+id = "deny-trash"
+argv_prefix = ["trash"]
 decision = "deny_with_approval"
-reason = "rm -rf requires approval"
+reason = "trash requires approval"
 "#;
     let (runtime, approval_bus, _event_log) = mk_runtime(
         Arc::new(BasicShellAnalyzer),
@@ -34,7 +34,7 @@ reason = "rm -rf requires approval"
                 .orchestrate_shell(ShellRunRequest {
                     run_id: RunId("run-approve".to_string()),
                     cwd: "/tmp".to_string(),
-                    script: "rm -rf /tmp/sieve-script-approve".to_string(),
+                    script: "trash -f /tmp/sieve-script-approve".to_string(),
                     control_value_refs: BTreeSet::new(),
                     control_endorsed_by: None,
                     unknown_mode: UnknownMode::Deny,
@@ -73,10 +73,10 @@ reason = "rm -rf requires approval"
 async fn approval_gate_blocks_until_resolution() {
     let policy_toml = r#"
 [[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
+id = "deny-trash"
+argv_prefix = ["trash"]
 decision = "deny_with_approval"
-reason = "rm -rf requires approval"
+reason = "trash requires approval"
 "#;
     let (runtime, approval_bus, _event_log) = mk_runtime(
         Arc::new(BasicShellAnalyzer),
@@ -92,7 +92,7 @@ reason = "rm -rf requires approval"
                 .orchestrate_shell(ShellRunRequest {
                     run_id: RunId("run-requires-approval".to_string()),
                     cwd: "/tmp".to_string(),
-                    script: "rm -rf /tmp/sieve-script-requires-approval".to_string(),
+                    script: "trash -f /tmp/sieve-script-requires-approval".to_string(),
                     control_value_refs: BTreeSet::new(),
                     control_endorsed_by: None,
                     unknown_mode: UnknownMode::Deny,
@@ -103,7 +103,7 @@ reason = "rm -rf requires approval"
     };
 
     let requested = wait_for_approval(&approval_bus).await;
-    assert_eq!(requested.blocked_rule_id, "deny-rm-rf");
+    assert_eq!(requested.blocked_rule_id, "deny-trash");
 
     assert!(
         timeout(Duration::from_millis(75), &mut runtime_task)

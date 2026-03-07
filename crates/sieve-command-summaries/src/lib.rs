@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
 
+mod agent_browser;
 mod api;
 mod builtin;
 mod catalog;
 mod common;
 mod dispatch;
+mod gws;
 
 #[path = "brave-search.rs"]
 mod brave_search;

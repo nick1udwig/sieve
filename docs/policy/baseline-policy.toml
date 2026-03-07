@@ -1,13 +1,13 @@
 # Sieve v3 baseline MVP policy.
 # Conservative default:
-# - blocks `rm -rf` unless user approves once
+# - blocks `trash` unless user approves once
 # - denies unsupported mutating/network actions unless explicitly allowed
 
 [[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
+id = "deny-trash"
+argv_prefix = ["trash"]
 decision = "deny_with_approval"
-reason = "rm -rf requires explicit approval"
+reason = "trash requires explicit approval"
 
 [[allow_capabilities]]
 resource = "net"
@@ -47,12 +47,17 @@ scope = "https://www.wunderground.com/"
 [[allow_capabilities]]
 resource = "net"
 action = "connect"
-scope = "https://google.com/"
+scope = "https://googleapis.com/"
 
 [[allow_capabilities]]
 resource = "net"
 action = "connect"
-scope = "https://www.google.com/"
+scope = "https://www.googleapis.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.open-meteo.com/"
 
 [[allow_capabilities]]
 resource = "net"
@@ -63,11 +68,6 @@ scope = "https://x.com/"
 resource = "net"
 action = "connect"
 scope = "https://www.x.com/"
-
-[[allow_capabilities]]
-resource = "net"
-action = "connect"
-scope = "https://api.open-meteo.com/"
 
 [options]
 violation_mode = "ask"

@@ -15,7 +15,7 @@ Inspired by:
 
 You need a Rust toolchain plus a `.env` copied from `.env.example`.
 The minimum setup is `OPENAI_API_KEY`; Telegram usage also needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-Optional host tools include `st` for voice-note I/O, `codex` for image OCR, and `sieve-lcm-cli` for LCM memory flows.
+Optional host tools include `trash` for safer file deletion, `st` for voice-note I/O, `codex` for image OCR, and `sieve-lcm-cli` for LCM memory flows.
 
 Full dependency, env, runtime, logging, Telegram, troubleshooting, and external CLI repo links live in [docs/running.md](docs/running.md#running).
 

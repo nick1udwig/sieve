@@ -10,9 +10,10 @@ pub(crate) use input::{default_modality_contract, override_modality_contract};
 pub(crate) use mainline::{mainline_artifact_kind_name, AppMainlineRunner};
 #[cfg(test)]
 pub(crate) use response_refs::{
-    build_response_turn_input, requires_output_visibility, response_has_visible_selected_output,
+    build_response_evidence_records, build_response_turn_input, requires_output_visibility,
+    response_evidence_fingerprint, response_has_visible_selected_output,
 };
 pub(crate) use response_refs::{
     format_integrity, non_empty_output_ref_ids, planner_allowed_tools_for_turn,
-    summarize_with_ref_id_counted,
+    response_has_explicit_answer_candidate, summarize_with_ref_id_counted,
 };

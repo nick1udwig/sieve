@@ -112,12 +112,6 @@ require_trusted_control_for_mutating = true
 #[tokio::test]
 async fn openclaw_exec_injection_rm_rf_is_denied_without_approval() {
     let policy_toml = r#"
-[[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
-decision = "deny_with_approval"
-reason = "rm -rf requires approval"
-
 [options]
 violation_mode = "deny"
 trusted_control = true
@@ -130,7 +124,7 @@ require_trusted_control_for_mutating = true
     let target_file = target_root.join("should-survive.txt");
     fs::write(&target_file, b"still here").expect("seed file");
 
-    let (runtime, approval_bus, _event_log) = mk_runtime(
+    let (runtime, _approval_bus, _event_log) = mk_runtime(
         Arc::new(BasicShellAnalyzer),
         Arc::new(DefaultCommandSummarizer),
         policy_toml,
@@ -155,23 +149,11 @@ require_trusted_control_for_mutating = true
         })
     };
 
-    let requested = wait_for_approval(&approval_bus).await;
-    assert_eq!(requested.blocked_rule_id, "deny-rm-rf");
-    approval_bus
-        .resolve(ApprovalResolvedEvent {
-            schema_version: 1,
-            request_id: requested.request_id,
-            run_id: requested.run_id,
-            action: ApprovalAction::Deny,
-            created_at_ms: 3200,
-        })
-        .expect("resolve approval");
-
     let disposition = runtime_task.await.expect("task join").expect("runtime ok");
     assert_eq!(
         disposition,
         RuntimeDisposition::Denied {
-            reason: "approval denied".to_string(),
+            reason: "unknown command denied by mode".to_string(),
         }
     );
     assert!(target_file.exists());

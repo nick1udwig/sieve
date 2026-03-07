@@ -23,6 +23,11 @@
    - `SIEVE_RESPONSE_MODEL`, `SIEVE_GUIDANCE_MODEL`, `SIEVE_QUARANTINE_MODEL` to split planner/response/guidance/quarantine models
    - `BRAVE_API_KEY` and `SIEVE_BRAVE_API_BASE` for bash/CLI-based Brave search commands
 4. Install the repo-specific CLIs Sieve assumes when you use those paths:
+   - `trash` for safer file deletion via the desktop trash
+     - repo: [`andreafrancia/trash-cli`](https://github.com/andreafrancia/trash-cli)
+     - used for: `trash FILE...`
+     - optional: yes
+     - Linux install: `sudo apt install trash-cli` (Debian/Ubuntu), `sudo pacman -S trash-cli` (Arch), `sudo dnf install trash-cli` (Fedora), or `pipx install trash-cli`
    - `bravesearch` for agent-friendly Brave web search flows
      - repo: [`nick1udwig/brave-search`](https://github.com/nick1udwig/brave-search)
      - used for: planner-discovery/search commands run through `bash`

@@ -4,6 +4,22 @@ Date: 2026-02-26
 Worker: 3
 Owned crate: `crates/sieve-command-summaries`
 
+## 2026-03-05 update
+
+- Added `gws` command summary support for `schema` and generic service/resource/method API calls.
+- Added planner catalog guidance for `gws` including `--dry-run`, `--upload`, and `--output` behavior.
+- `gws` summary behavior:
+  - `gws schema <service.resource.method>` requires `net.connect(https://www.googleapis.com/)`.
+  - generic read-ish methods require `net.connect(https://www.googleapis.com/)`.
+  - mutating methods, `--json`, or `--upload` require Google API `net.write`.
+  - `--upload PATH` adds `fs.read(PATH)` and switches the primary sink/cap to `https://www.googleapis.com/upload/`.
+  - `--output PATH` adds `fs.write(PATH)`.
+  - `--params` and `--json` emit sink checks to the coarse Google API origin.
+  - `--sanitize` adds `net.write(https://modelarmor.googleapis.com/)`.
+  - `--dry-run` is treated as a known no-op with no caps or sink checks.
+  - service `+helpers` plus top-level `gws auth|workflow|modelarmor|mcp` remain unsupported.
+- Added `gws` unit tests for planner catalog text, schema, read/write inference, upload/output args, sanitize, dry-run, and unsupported paths.
+
 ## 2026-03-04 update
 
 - Added `codex exec` command summary support (explicitly not `codex app-server`).
@@ -27,7 +43,8 @@ Owned crate: `crates/sieve-command-summaries`
   - `is_known_safe_command`
   - `command_might_be_dangerous`
 - Expanded mutating command mappings:
-  - `rm -rf TARGET` (and `sudo rm -rf TARGET`) -> `fs.write(TARGET)`
+  - `trash TARGET...` (and `sudo trash TARGET...`) -> `fs.write(TARGET...)`
+  - `trash --trash-dir DIR TARGET...` -> `fs.write(TARGET...) + fs.write(DIR)`
   - `cp SRC DST` -> `fs.write(DST)`
   - `mv SRC DST` -> `fs.write(SRC) + fs.write(DST)`
   - `mkdir PATH` -> `fs.write(PATH)`
@@ -41,7 +58,7 @@ Owned crate: `crates/sieve-command-summaries`
   - payload without explicit `-X/--request` defaults to POST handling
   - supports `--url`/`--url=...` and strict header parsing (`-H`/`--header`)
 - Unsupported-flag routing tightened:
-  - for `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown`, `tee`, `curl`
+  - for `trash`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown`, `tee`, `curl`
   - unsupported flags route to `unknown` with `summary.unsupported_flags`
 - URL sink canonicalization for curl sink keys:
   - lower-case scheme/host
@@ -74,3 +91,18 @@ Owned crate: `crates/sieve-command-summaries`
 
 - Add explicit summary support for curl upload/form paths if product wants known handling (currently intentionally unknown with tests).
 - Optional: add property/fuzz coverage for URL canonicalization.
+
+## 2026-03-05 update
+
+- Added `agent-browser` planner catalog guidance with explicit-origin usage patterns that stay inside the current capability model.
+- Added command summaries for explicit-origin `agent-browser` flows: `open`, `connect`, `tab new [url]`, `set viewport|device|geo|offline|media`, `cookies set ... --url`, `diff url`, `record start|restart <path> <url>`, `close`, `session`, and `confirm|deny`.
+- `agent-browser` global fs-affecting flags now add capabilities for `--profile`, `--state`, `--config`, `--extension`, `--download-path`, and `--action-policy`.
+- `agent-browser open --headers ...` now emits sink checks to the explicit navigation origin.
+- Session-bound page commands without an explicit origin now route to unknown so hidden browser-session state cannot bypass caps across turns.
+- Runtime precheck now tracks `agent-browser` sessions by explicit `--session` name, while same-shell chains can reuse an implicit in-flight session established earlier in that chain.
+- Added 13 unit tests covering explicit-origin summaries, header sink extraction, fs capabilities, and deliberate unknown routing for hidden-origin page interactions.
+
+## 2026-03-06 update
+
+- Removed the explicit `rm` summary override so `rm` falls back to dangerous-command unknown routing.
+- Added `trash` command summary support plus planner catalog/docs coverage for `trash-cli`.

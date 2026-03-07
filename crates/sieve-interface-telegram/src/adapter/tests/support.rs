@@ -354,10 +354,10 @@ pub(super) fn mk_runtime(
     let policy = TomlPolicyEngine::from_toml_str(
         r#"
 [[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
+id = "deny-trash"
+argv_prefix = ["trash"]
 decision = "deny_with_approval"
-reason = "rm -rf requires approval"
+reason = "trash requires approval"
 "#,
     )
     .expect("policy config must parse");

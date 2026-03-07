@@ -288,7 +288,7 @@ fn extract_numeric_after(line: &str, marker: &str) -> Option<u16> {
 fn extract_syscall_result_number(line: &str) -> Option<i64> {
     let marker = ") =";
     let start = line.find(marker)? + marker.len();
-    let token = line[start..].trim_start().split_whitespace().next()?;
+    let token = line[start..].split_whitespace().next()?;
     let value = token.parse::<i64>().ok()?;
     if value > 0 {
         Some(value)

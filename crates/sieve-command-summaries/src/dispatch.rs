@@ -3,7 +3,8 @@ use codex_shell_command::command_safety::is_safe_command::is_known_safe_command;
 use sieve_types::CommandSummary;
 
 use crate::{
-    brave_search, builtin, codex, curl, known_outcome, st, unknown_outcome, SummaryOutcome,
+    agent_browser, brave_search, builtin, codex, curl, gws, known_outcome, st, unknown_outcome,
+    SummaryOutcome,
 };
 
 pub(crate) fn summarize_argv(argv: &[String]) -> SummaryOutcome {
@@ -19,7 +20,15 @@ pub(crate) fn summarize_argv(argv: &[String]) -> SummaryOutcome {
         return outcome;
     }
 
+    if let Some(outcome) = agent_browser::summarize_agent_browser(argv) {
+        return outcome;
+    }
+
     if let Some(outcome) = codex::summarize_codex_exec(argv) {
+        return outcome;
+    }
+
+    if let Some(outcome) = gws::summarize_gws(argv) {
         return outcome;
     }
 
