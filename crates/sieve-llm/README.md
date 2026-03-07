@@ -26,6 +26,8 @@ LLM exchange logging env:
 - Planner tool-call args validated against strict per-tool contracts (`bash|endorse|declassify`).
 - On planner tool-arg contract failure, one regeneration pass is attempted with structured diagnostics.
 - Q-LLM -> planner boundary: typed numeric guidance signals only (`PlannerGuidanceSignal` + `PlannerGuidanceFrame`).
+- Guidance input may inspect bounded raw untrusted artifact excerpts plus typed step observations; planner receives only safe typed guidance + browser-session summaries.
+- Response writing and compose gating consume typed untrusted evidence records derived from raw refs; raw artifact text stays out of trusted response/planner paths.
 - No free-form strings cross from guidance model into planner context.
 - OpenAI wire logs persist exact request JSON payloads and raw response bodies per attempt.
 

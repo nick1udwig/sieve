@@ -2,8 +2,9 @@ use super::{RuntimeDisposition, RuntimeError, RuntimeOrchestrator, ShellRunReque
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
     ApprovalRequestId, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
-    EndorseStateTransition, PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, RunId,
-    RuntimeEvent, ToolContractValidationReport, UncertainMode, UnknownMode, ValueRef,
+    EndorseStateTransition, PlannerBrowserSession, PlannerGuidanceFrame, PlannerToolCall,
+    PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport, UncertainMode,
+    UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 
@@ -14,6 +15,7 @@ pub struct PlannerRunRequest {
     pub user_message: String,
     pub allowed_tools: Vec<String>,
     pub allowed_net_connect_scopes: Vec<String>,
+    pub browser_sessions: Vec<PlannerBrowserSession>,
     pub previous_events: Vec<RuntimeEvent>,
     pub guidance: Option<PlannerGuidanceFrame>,
     pub control_value_refs: BTreeSet<ValueRef>,
@@ -57,6 +59,7 @@ impl RuntimeOrchestrator {
                 user_message: request.user_message.clone(),
                 allowed_tools: request.allowed_tools.clone(),
                 allowed_net_connect_scopes: request.allowed_net_connect_scopes.clone(),
+                browser_sessions: request.browser_sessions.clone(),
                 previous_events: request.previous_events.clone(),
                 guidance: request.guidance.clone(),
             })

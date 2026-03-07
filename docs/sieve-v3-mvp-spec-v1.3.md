@@ -25,7 +25,7 @@ Not in MVP:
 10. Both integrity and confidentiality checks are mandatory.
 11. Consequential-action integrity checks apply only to mutating/unknown commands.
 12. Mutating/safe classification is copied from Codex allowlist/denylist snapshot at commit `79d6f80`.
-13. `rm -rf` class is `deny_with_approval`.
+13. `trash` class is `deny_with_approval`; raw `rm` stays dangerous and unknown.
 14. Default policy-violation behavior is deny; configurable to ask.
 15. Policy language is pure TOML (no expression language).
 16. URL sink matching uses canonical `scheme://host[:port]/path`; ignore query/fragment.

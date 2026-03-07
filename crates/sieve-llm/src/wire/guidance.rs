@@ -5,10 +5,14 @@ use sieve_types::{PlannerGuidanceOutput, PlannerGuidanceSignal};
 pub(crate) const GUIDANCE_SYSTEM_PROMPT: &str = r#"Classify planner next-step guidance using numeric typed signals only.
 Rules:
 - Return JSON only matching schema.
-- Prefer continue codes (100-113) when additional tool actions may still recover missing facts.
+- Prefer continue codes (100-116) when additional tool actions may still recover missing facts.
 - Use final/stop codes only when further tool actions are unlikely to improve the answer.
 - For factual/time-bound requests, if current evidence looks like discovery/search snippets or URL listings without fetched primary content, prefer continue (`110` or `108`) rather than final.
+- The input may include bounded raw artifact excerpts from untrusted tool output. Use those excerpts to detect title-only browser pages, interstitial/block pages, and command-shape failures.
 - Use `110` when a primary content fetch is still missing, `102` when one source exists but corroboration is needed, and `108` when quality is low.
+- Use `114` when the right browser page/session appears open but only page-level or title-only output was observed, so the next step should inspect the current page instead of reopening search.
+- Use `115` when the observed page is an access interstitial or block page (captcha, Google sorry page, login, consent, paywall) rather than the target content.
+- Use `116` when the task still looks satisfiable but the attempted command/path should be reformulated instead of retried verbatim.
 - `guidance.code` must be one of:
   - 100 continue_need_evidence
   - 101 continue_fetch_primary_source
@@ -24,6 +28,9 @@ Rules:
   - 111 continue_need_url_extraction
   - 112 continue_need_canonical_non_asset_url
   - 113 continue_no_progress_try_different_action
+  - 114 continue_need_current_page_inspection
+  - 115 continue_encountered_access_interstitial
+  - 116 continue_need_command_reformulation
   - 200 final_answer_ready
   - 201 final_answer_partial
   - 202 final_insufficient_evidence

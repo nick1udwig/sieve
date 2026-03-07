@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[tokio::test]
 async fn matches_existing_command_summaries_for_all_supported_cases() {
     let known_cases: Vec<Vec<&str>> = vec![
-        vec!["rm", "-rf", "{{TMP_DIR}}/demo"],
+        vec!["trash", "{{TMP_DIR}}/demo"],
         vec!["cp", "{{IN_FILE}}", "{{OUT_FILE}}"],
         vec!["mv", "{{IN_FILE}}", "{{OUT_FILE}}"],
         vec!["mkdir", "-p", "{{TMP_DIR}}/work"],
@@ -19,7 +19,7 @@ async fn matches_existing_command_summaries_for_all_supported_cases() {
     ];
 
     let unknown_with_summary_cases: Vec<Vec<&str>> = vec![
-        vec!["rm", "-rfv", "{{TMP_DIR}}/demo"],
+        vec!["trash", "--bogus", "{{TMP_DIR}}/demo"],
         vec!["chown", "--from=user:group", "root:root", "{{OUT_FILE}}"],
         vec![
             "curl",

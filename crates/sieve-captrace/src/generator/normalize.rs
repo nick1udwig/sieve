@@ -208,9 +208,7 @@ fn url_host(scope: &str) -> Option<&str> {
     let rest = scope
         .strip_prefix("http://")
         .or_else(|| scope.strip_prefix("https://"))?;
-    let authority_end = rest
-        .find(|ch| matches!(ch, '/' | '?' | '#'))
-        .unwrap_or(rest.len());
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     let host_port = authority.rsplit('@').next().unwrap_or(authority);
     if host_port.is_empty() {

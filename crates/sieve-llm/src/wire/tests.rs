@@ -5,6 +5,7 @@ use sieve_types::RunId;
 fn planner_prompt_mentions_markdown_new_fetch_strategy() {
     assert!(PLANNER_SYSTEM_PROMPT.contains("markdown.new"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("discovery/search output"));
+    assert!(PLANNER_SYSTEM_PROMPT.contains("BROWSER_SESSIONS"));
 }
 
 #[test]
@@ -12,6 +13,9 @@ fn guidance_prompt_prefers_continue_for_discovery_only_evidence() {
     assert!(GUIDANCE_SYSTEM_PROMPT.contains("discovery/search snippets"));
     assert!(GUIDANCE_SYSTEM_PROMPT.contains("prefer continue"));
     assert!(GUIDANCE_SYSTEM_PROMPT.contains("110 continue_need_primary_content_fetch"));
+    assert!(GUIDANCE_SYSTEM_PROMPT.contains("114 continue_need_current_page_inspection"));
+    assert!(GUIDANCE_SYSTEM_PROMPT.contains("115 continue_encountered_access_interstitial"));
+    assert!(GUIDANCE_SYSTEM_PROMPT.contains("116 continue_need_command_reformulation"));
 }
 
 #[test]
@@ -21,6 +25,7 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
         user_message: "search for rust async docs".to_string(),
         allowed_tools: vec!["bash".to_string()],
         allowed_net_connect_scopes: vec!["https://api.open-meteo.com".to_string()],
+        browser_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: None,
     })
@@ -32,6 +37,11 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
         .expect("net connect scopes array");
     assert_eq!(net_scopes.len(), 1);
     assert_eq!(net_scopes[0].as_str(), Some("https://api.open-meteo.com"));
+    let browser_sessions = payload
+        .pointer("/BROWSER_SESSIONS")
+        .and_then(Value::as_array)
+        .expect("browser sessions array");
+    assert!(browser_sessions.is_empty());
 
     let catalog = payload
         .pointer("/BASH_COMMAND_CATALOG")
@@ -54,6 +64,7 @@ fn serialize_planner_input_omits_bash_command_catalog_when_bash_disallowed() {
         user_message: "mark value trusted".to_string(),
         allowed_tools: vec!["endorse".to_string(), "declassify".to_string()],
         allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: None,
     })
@@ -67,12 +78,38 @@ fn serialize_planner_input_omits_bash_command_catalog_when_bash_disallowed() {
 }
 
 #[test]
+fn serialize_planner_input_includes_browser_sessions() {
+    let payload = serialize_planner_input(&PlannerTurnInput {
+        run_id: RunId("run-1".to_string()),
+        user_message: "inspect the page".to_string(),
+        allowed_tools: vec!["bash".to_string()],
+        allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: vec![sieve_types::PlannerBrowserSession {
+            session_name: "ytsearch".to_string(),
+            current_origin: "https://www.youtube.com".to_string(),
+            current_url: "https://www.youtube.com/results?search_query=jordan+peterson".to_string(),
+        }],
+        previous_events: Vec::new(),
+        guidance: None,
+    })
+    .expect("serialize planner input");
+
+    assert_eq!(
+        payload
+            .pointer("/BROWSER_SESSIONS/0/session_name")
+            .and_then(Value::as_str),
+        Some("ytsearch")
+    );
+}
+
+#[test]
 fn serialize_planner_input_includes_guidance_contract_for_fetch_signal() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "latest weather".to_string(),
         allowed_tools: vec!["bash".to_string()],
         allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: Some(sieve_types::PlannerGuidanceFrame {
             code: PlannerGuidanceSignal::ContinueNeedPrimaryContentFetch.code(),
@@ -110,6 +147,7 @@ fn serialize_planner_input_includes_action_change_contract_for_denied_tool_signa
         user_message: "status".to_string(),
         allowed_tools: vec!["bash".to_string()],
         allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: Some(sieve_types::PlannerGuidanceFrame {
             code: PlannerGuidanceSignal::ContinueToolDeniedTryAlternativeAllowedTool.code(),
@@ -135,6 +173,7 @@ fn serialize_planner_input_includes_fetch_contract_for_higher_quality_signal() {
         user_message: "status".to_string(),
         allowed_tools: vec!["bash".to_string()],
         allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: Some(sieve_types::PlannerGuidanceFrame {
             code: PlannerGuidanceSignal::ContinueNeedHigherQualitySource.code(),
@@ -162,5 +201,41 @@ fn serialize_planner_input_includes_fetch_contract_for_higher_quality_signal() {
             .pointer("/guidance_contract/prefer_markdown_view")
             .is_none(),
         "higher-quality retry should allow raw-url fallback when markdown proxy underperforms"
+    );
+}
+
+#[test]
+fn serialize_planner_input_includes_browser_inspection_contract() {
+    let payload = serialize_planner_input(&PlannerTurnInput {
+        run_id: RunId("run-1".to_string()),
+        user_message: "what is the top video".to_string(),
+        allowed_tools: vec!["bash".to_string()],
+        allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: vec![sieve_types::PlannerBrowserSession {
+            session_name: "ytsearch".to_string(),
+            current_origin: "https://www.youtube.com".to_string(),
+            current_url: "https://www.youtube.com/results?search_query=jordan+peterson".to_string(),
+        }],
+        previous_events: Vec::new(),
+        guidance: Some(sieve_types::PlannerGuidanceFrame {
+            code: PlannerGuidanceSignal::ContinueNeedCurrentPageInspection.code(),
+            confidence_bps: 9000,
+            source_hit_index: None,
+            evidence_ref_index: Some(0),
+        }),
+    })
+    .expect("serialize planner input");
+
+    assert_eq!(
+        payload
+            .pointer("/guidance_contract/prefer_current_browser_session")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .pointer("/guidance_contract/required_action_class")
+            .and_then(Value::as_str),
+        Some("extract")
     );
 }

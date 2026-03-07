@@ -1,5 +1,6 @@
 use super::{RuntimeError, RuntimeOrchestrator};
 use crate::approval_allowance::{ApprovalAllowanceKey, UnknownOrUncertain};
+use crate::browser_sessions::{BrowserSessionMutations, BrowserSessionTracker};
 use crate::MainlineRunReport;
 use sieve_command_summaries::SummaryOutcome;
 use sieve_types::{
@@ -41,7 +42,8 @@ impl RuntimeOrchestrator {
             request.control_endorsed_by.clone(),
         )?;
         let shell = self.shell.analyze_shell_lc_script(&request.script)?;
-        let (knowledge, summary) = self.merge_summary(&shell.segments, shell.knowledge);
+        let (knowledge, summary, browser_session_mutations) =
+            self.merge_summary(&shell.segments, shell.knowledge)?;
 
         if knowledge == CommandKnowledge::Unknown {
             return self
@@ -100,6 +102,7 @@ impl RuntimeOrchestrator {
                     request.cwd.clone(),
                     request.script.clone(),
                     command_segments,
+                    browser_session_mutations.clone(),
                 )
                 .await
             }
@@ -116,6 +119,7 @@ impl RuntimeOrchestrator {
                             request.cwd,
                             request.script,
                             command_segments,
+                            browser_session_mutations,
                         )
                         .await;
                 }
@@ -141,6 +145,7 @@ impl RuntimeOrchestrator {
                             request.cwd,
                             request.script,
                             command_segments,
+                            browser_session_mutations,
                         )
                         .await
                     }
@@ -156,9 +161,16 @@ impl RuntimeOrchestrator {
         &self,
         segments: &[CommandSegment],
         shell_knowledge: CommandKnowledge,
-    ) -> (CommandKnowledge, Option<CommandSummary>) {
+    ) -> Result<
+        (
+            CommandKnowledge,
+            Option<CommandSummary>,
+            BrowserSessionMutations,
+        ),
+        RuntimeError,
+    > {
         if shell_knowledge != CommandKnowledge::Known {
-            return (shell_knowledge, None);
+            return Ok((shell_knowledge, None, BrowserSessionMutations::default()));
         }
 
         let mut merged = CommandSummary {
@@ -166,15 +178,21 @@ impl RuntimeOrchestrator {
             sink_checks: Vec::new(),
             unsupported_flags: Vec::new(),
         };
+        let mut tracker = BrowserSessionTracker::new(self.browser_sessions_snapshot()?);
 
         for segment in segments {
+            let stateless = self.summaries.summarize(&segment.argv);
             let SummaryOutcome {
                 knowledge, summary, ..
-            } = self.summaries.summarize(&segment.argv);
+            } = tracker.summarize_segment(&segment.argv, stateless);
             match knowledge {
                 CommandKnowledge::Known => {
                     let Some(summary) = summary else {
-                        return (CommandKnowledge::Unknown, None);
+                        return Ok((
+                            CommandKnowledge::Unknown,
+                            None,
+                            BrowserSessionMutations::default(),
+                        ));
                     };
                     merged
                         .required_capabilities
@@ -182,12 +200,24 @@ impl RuntimeOrchestrator {
                     merged.sink_checks.extend(summary.sink_checks);
                     merged.unsupported_flags.extend(summary.unsupported_flags);
                 }
-                CommandKnowledge::Unknown => return (CommandKnowledge::Unknown, None),
-                CommandKnowledge::Uncertain => return (CommandKnowledge::Uncertain, None),
+                CommandKnowledge::Unknown => {
+                    return Ok((
+                        CommandKnowledge::Unknown,
+                        None,
+                        BrowserSessionMutations::default(),
+                    ))
+                }
+                CommandKnowledge::Uncertain => {
+                    return Ok((
+                        CommandKnowledge::Uncertain,
+                        None,
+                        BrowserSessionMutations::default(),
+                    ))
+                }
             }
         }
 
-        (CommandKnowledge::Known, Some(merged))
+        Ok((CommandKnowledge::Known, Some(merged), tracker.mutations()))
     }
 
     fn remember_persistent_approval_allowances(

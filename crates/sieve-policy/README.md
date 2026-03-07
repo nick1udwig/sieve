@@ -6,10 +6,10 @@ TOML policy evaluator for pre-exec checks.
 
 ```toml
 [[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
+id = "deny-trash"
+argv_prefix = ["trash"]
 decision = "deny_with_approval" # deny | deny_with_approval
-reason = "rm -rf requires approval"
+reason = "trash requires approval"
 
 [[allow_capabilities]]
 resource = "net" # fs | net | proc | env | ipc

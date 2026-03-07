@@ -34,6 +34,10 @@ pub(crate) async fn render_assistant_message(
     }
 
     for ref_id in summarized_ref_ids {
+        let token = format!("[[summary:{ref_id}]]");
+        if !expanded.contains(&token) {
+            continue;
+        }
         if let Some((content, byte_count, line_count)) =
             resolve_ref_summary_input(ref_id, render_refs).await
         {
@@ -50,7 +54,6 @@ pub(crate) async fn render_assistant_message(
                 Ok(summary) => summary,
                 Err(err) => format!("summary unavailable: {err}"),
             };
-            let token = format!("[[summary:{ref_id}]]");
             expanded = expanded.replace(&token, &summary);
         }
     }

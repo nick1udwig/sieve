@@ -19,6 +19,7 @@ use tokio::time::{sleep, timeout, Duration};
 mod approval_core;
 mod approval_modes;
 mod approval_tools;
+mod browser_sessions;
 mod builders;
 mod jsonl;
 mod orchestrator;

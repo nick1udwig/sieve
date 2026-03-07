@@ -1,6 +1,7 @@
 use super::response_refs::{
-    build_response_turn_input, non_empty_output_ref_ids, requires_output_visibility,
-    response_evidence_fingerprint, response_has_visible_selected_output,
+    build_response_evidence_records, build_response_turn_input, non_empty_output_ref_ids,
+    requires_output_visibility, response_evidence_fingerprint,
+    response_has_visible_selected_output,
 };
 use crate::compose::{compose_assistant_message, ComposeAssistantOutcome, ComposePlannerDecision};
 use crate::config::{persist_runtime_approval_allowances, AppConfig};
@@ -93,6 +94,7 @@ pub(super) async fn generate_assistant_message(
             let has_known_value_refs = runtime.has_known_value_refs()?;
             let allowed_tools_for_turn =
                 super::planner_allowed_tools_for_turn(&cfg.allowed_tools, has_known_value_refs);
+            let browser_sessions = runtime.planner_browser_sessions()?;
             let step_result = match runtime
                 .orchestrate_planner_turn(PlannerRunRequest {
                     run_id: run_id.clone(),
@@ -100,6 +102,7 @@ pub(super) async fn generate_assistant_message(
                     user_message: planner_turn_user_message,
                     allowed_tools: allowed_tools_for_turn,
                     allowed_net_connect_scopes: cfg.allowed_net_connect_scopes.clone(),
+                    browser_sessions,
                     previous_events: event_log.snapshot(),
                     guidance: planner_guidance.clone(),
                     control_value_refs: BTreeSet::new(),
@@ -272,6 +275,16 @@ pub(super) async fn generate_assistant_message(
             &aggregated_result,
         );
         let mut response_input = response_input;
+        response_input.extracted_evidence = build_response_evidence_records(
+            summary_model,
+            run_id,
+            trusted_user_message,
+            &response_input,
+            &render_refs,
+            &mut summary_calls_used,
+            cfg.max_summary_calls_per_turn,
+        )
+        .await;
         let mut response_output = match response_model
             .write_turn_response(response_input.clone())
             .await
