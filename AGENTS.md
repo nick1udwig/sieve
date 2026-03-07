@@ -21,6 +21,7 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 - Web: search early; quote exact errors; prefer 2024–2026 sources; fallback Firecrawl (`pnpm mcp:*`) / `mcporter`.
 - Oracle: run `npx -y @steipete/oracle --help` once/session before first use.
 - Style: telegraph. Drop filler/grammar. Min tokens (global AGENTS + replies).
+- Frontend: always auto-detect light/dark mode and serve proper one; just autodetect & serve don't put a toggle button
 
 ## Screenshots (“use a screenshot”)
 - Pick newest PNG in `~/Pictures`.
