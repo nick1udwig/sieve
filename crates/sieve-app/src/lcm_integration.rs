@@ -62,35 +62,67 @@ impl LcmIntegration {
         Ok(Self { config })
     }
 
-    pub async fn ingest_user_message(&self, message: &str) -> Result<(), String> {
+    pub async fn ingest_user_message_for_session(
+        &self,
+        session_key: &str,
+        message: &str,
+    ) -> Result<(), String> {
         if message.trim().is_empty() {
             return Ok(());
         }
 
-        self.ingest_lane("trusted", &self.config.trusted_db_path, "user", message)
-            .await?;
-        self.ingest_lane("untrusted", &self.config.untrusted_db_path, "user", message)
-            .await
-    }
-
-    pub async fn ingest_assistant_message(&self, message: &str) -> Result<(), String> {
-        if message.trim().is_empty() {
-            return Ok(());
-        }
-
+        let conversation = self.conversation_id_for_session(session_key);
+        self.ingest_lane(
+            "trusted",
+            &self.config.trusted_db_path,
+            &conversation,
+            "user",
+            message,
+        )
+        .await?;
         self.ingest_lane(
             "untrusted",
             &self.config.untrusted_db_path,
+            &conversation,
+            "user",
+            message,
+        )
+        .await
+    }
+
+    pub async fn ingest_assistant_message_for_session(
+        &self,
+        session_key: &str,
+        message: &str,
+    ) -> Result<(), String> {
+        if message.trim().is_empty() {
+            return Ok(());
+        }
+
+        let conversation = self.conversation_id_for_session(session_key);
+        self.ingest_lane(
+            "untrusted",
+            &self.config.untrusted_db_path,
+            &conversation,
             "assistant",
             message,
         )
         .await
     }
 
+    fn conversation_id_for_session(&self, session_key: &str) -> String {
+        let trimmed = session_key.trim();
+        if trimmed.is_empty() || trimmed == "main" {
+            return self.config.global_session_id.clone();
+        }
+        format!("{}:{trimmed}", self.config.global_session_id)
+    }
+
     async fn ingest_lane(
         &self,
         lane_name: &str,
         db_path: &Path,
+        conversation: &str,
         role: &str,
         content: &str,
     ) -> Result<(), String> {
@@ -99,7 +131,7 @@ impl LcmIntegration {
             .arg("--db")
             .arg(db_path)
             .arg("--conversation")
-            .arg(&self.config.global_session_id)
+            .arg(conversation)
             .arg("--role")
             .arg(role)
             .arg("--content")

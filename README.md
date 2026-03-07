@@ -34,6 +34,19 @@ Start long-running mode with:
 cargo run --release -p sieve-app
 ```
 
+Long-running mode also accepts automation commands on stdin or Telegram.
+
+Examples:
+
+```text
+/heartbeat now
+/cron add main every 15m -- remind me to check deploys
+/cron add isolated cron 0 9 * * 1-5 -- send build summary
+```
+
+Heartbeat reads instructions from `HEARTBEAT.md` in `SIEVE_RUNTIME_CWD` unless `SIEVE_HEARTBEAT_PROMPT` is set.
+Durable cron and heartbeat state lives at `$SIEVE_HOME/state/automation.json`.
+
 ## Architecture
 
 Sieve keeps the planner isolated from raw untrusted tool output.

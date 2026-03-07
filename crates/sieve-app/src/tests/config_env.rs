@@ -1,4 +1,62 @@
 use super::*;
+
+struct EnvRestore {
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl EnvRestore {
+    fn capture(keys: &[&'static str]) -> Self {
+        Self {
+            saved: keys
+                .iter()
+                .map(|key| (*key, std::env::var(key).ok()))
+                .collect(),
+        }
+    }
+
+    fn clear(&self) {
+        for (key, _) in &self.saved {
+            std::env::remove_var(key);
+        }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+fn config_env_keys() -> &'static [&'static str] {
+    &[
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "SIEVE_TELEGRAM_POLL_TIMEOUT_SECS",
+        "SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS",
+        "SIEVE_POLICY_PATH",
+        "SIEVE_HOME",
+        "HOME",
+        "SIEVE_RUNTIME_CWD",
+        "SIEVE_HEARTBEAT_EVERY",
+        "SIEVE_HEARTBEAT_PROMPT",
+        "SIEVE_ALLOWED_TOOLS",
+        "SIEVE_UNKNOWN_MODE",
+        "SIEVE_UNCERTAIN_MODE",
+        "SIEVE_MAX_CONCURRENT_TURNS",
+        "SIEVE_MAX_PLANNER_STEPS",
+        "SIEVE_MAX_SUMMARY_CALLS_PER_TURN",
+        "SIEVE_LCM_ENABLED",
+        "SIEVE_LCM_GLOBAL_SESSION_ID",
+        "SIEVE_LCM_TRUSTED_DB_PATH",
+        "SIEVE_LCM_UNTRUSTED_DB_PATH",
+        "SIEVE_LCM_CLI_BIN",
+    ]
+}
 #[test]
 fn modality_contract_defaults_and_overrides() {
     let mut contract = default_modality_contract(InteractionModality::Audio);
@@ -101,6 +159,14 @@ fn parse_event_log_path_uses_sieve_home_when_set() {
             Some("/home/alice".to_string())
         )),
         PathBuf::from("/var/sieve/logs/runtime-events.jsonl")
+    );
+}
+
+#[test]
+fn automation_store_path_uses_sieve_home_state_dir() {
+    assert_eq!(
+        crate::config::automation_store_path(Path::new("/var/sieve")),
+        PathBuf::from("/var/sieve/state/automation.json")
     );
 }
 
@@ -209,4 +275,50 @@ fn parse_telegram_allowed_sender_user_ids_rejects_invalid_entry() {
     let err = parse_telegram_allowed_sender_user_ids(Some("1001,nope".to_string()))
         .expect_err("must reject invalid user id");
     assert!(err.contains("invalid SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS entry `nope`"));
+}
+
+#[test]
+fn app_config_from_env_loads_heartbeat_settings() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    std::env::set_var("TELEGRAM_BOT_TOKEN", "test-bot-token");
+    std::env::set_var("TELEGRAM_CHAT_ID", "42");
+    std::env::set_var("SIEVE_HOME", "/tmp/sieve-config-home");
+    std::env::set_var("SIEVE_RUNTIME_CWD", "/tmp/sieve-runtime");
+    std::env::set_var("SIEVE_HEARTBEAT_EVERY", "15m");
+    std::env::set_var("SIEVE_HEARTBEAT_PROMPT", "Check queued reminders.");
+    std::env::set_var("SIEVE_LCM_ENABLED", "0");
+
+    let cfg = AppConfig::from_env().expect("config");
+    assert_eq!(
+        cfg.automation_store_path,
+        PathBuf::from("/tmp/sieve-config-home/state/automation.json")
+    );
+    assert_eq!(cfg.heartbeat_interval_ms, Some(900_000));
+    assert_eq!(
+        cfg.heartbeat_prompt_override,
+        Some("Check queued reminders.".to_string())
+    );
+    assert_eq!(
+        cfg.heartbeat_file_path,
+        PathBuf::from("/tmp/sieve-runtime/HEARTBEAT.md")
+    );
+}
+
+#[test]
+fn app_config_from_env_rejects_invalid_heartbeat_duration() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    std::env::set_var("TELEGRAM_BOT_TOKEN", "test-bot-token");
+    std::env::set_var("TELEGRAM_CHAT_ID", "42");
+    std::env::set_var("SIEVE_HEARTBEAT_EVERY", "15x");
+
+    let err = AppConfig::from_env()
+        .err()
+        .expect("invalid heartbeat duration");
+    assert!(err.contains("invalid SIEVE_HEARTBEAT_EVERY"));
 }
