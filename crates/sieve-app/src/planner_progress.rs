@@ -234,6 +234,15 @@ fn infer_interstitial_kind(excerpt: &str) -> Option<&'static str> {
     None
 }
 
+fn excerpt_has_result_item_markers(excerpt: &str) -> bool {
+    let lower = excerpt.to_ascii_lowercase();
+    lower.contains("/watch?v=")
+        || lower.contains("/shorts/")
+        || lower.contains("- heading \"")
+        || lower.contains("[level=3]")
+        || (lower.contains("- main:") && lower.contains("- /url: /@"))
+}
+
 fn browser_target_looks_like_search(target_url: Option<&str>) -> bool {
     let Some(target_url) = target_url else {
         return false;
@@ -252,6 +261,19 @@ fn infer_browser_page_state(
     let Some(excerpt) = excerpt else {
         return "empty";
     };
+    let has_result_items = excerpt_has_result_item_markers(excerpt);
+    if has_result_items {
+        return if browser_target_looks_like_search(observation.target_url.as_deref()) {
+            "result_list"
+        } else if matches!(
+            observation.action_class,
+            BrowserActionClass::Inspect | BrowserActionClass::Extract
+        ) {
+            "answer_item"
+        } else {
+            "detail_page"
+        };
+    }
     if let Some(kind) = infer_interstitial_kind(excerpt) {
         return if kind == "anti_bot" {
             "block_page"
@@ -414,14 +436,16 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
                     })
                     .and_then(|artifact| read_artifact_excerpt(&artifact.path));
                 let browser_observation = browser.as_ref().map(|browser| {
-                    let interstitial_kind =
-                        stdout_excerpt.as_deref().and_then(infer_interstitial_kind);
+                    let page_state = infer_browser_page_state(browser, stdout_excerpt.as_deref());
+                    let interstitial_kind = matches!(page_state, "interstitial" | "block_page")
+                        .then(|| stdout_excerpt.as_deref().and_then(infer_interstitial_kind))
+                        .flatten();
                     serde_json::json!({
                         "action_class": browser.action_class.as_str(),
                         "session_name": browser.session_name.clone(),
                         "session_reusable": true,
                         "target_url": browser.target_url.clone(),
-                        "page_state": infer_browser_page_state(browser, stdout_excerpt.as_deref()),
+                        "page_state": page_state,
                         "interstitial_kind": interstitial_kind,
                     })
                 });

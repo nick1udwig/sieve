@@ -226,6 +226,7 @@ fn response_turn_round_trip_uses_safe_shape() {
         trusted_user_message: "hi".to_string(),
         response_modality: sieve_types::InteractionModality::Audio,
         planner_thoughts: Some("none".to_string()),
+        extracted_evidence: Vec::new(),
         tool_outcomes: vec![crate::ResponseToolOutcome {
             tool_name: "bash".to_string(),
             outcome: "execute_mainline exit_code=0".to_string(),

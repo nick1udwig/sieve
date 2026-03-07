@@ -114,6 +114,44 @@ async fn collect_source_urls_from_refs(
     urls
 }
 
+fn collect_source_urls_from_extracted_evidence(
+    evidence_records: &[sieve_llm::ResponseEvidenceRecord],
+) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut seen = BTreeSet::new();
+    for record in evidence_records {
+        for url in &record.source_urls {
+            if seen.insert(url.clone()) {
+                urls.push(url.clone());
+            }
+            if urls.len() >= 8 {
+                return urls;
+            }
+        }
+        if let Some(candidate) = &record.answer_candidate {
+            if let Some(url) = &candidate.url {
+                if seen.insert(url.clone()) {
+                    urls.push(url.clone());
+                }
+                if urls.len() >= 8 {
+                    return urls;
+                }
+            }
+        }
+        for item in &record.items {
+            if let Some(url) = &item.url {
+                if seen.insert(url.clone()) {
+                    urls.push(url.clone());
+                }
+                if urls.len() >= 8 {
+                    return urls;
+                }
+            }
+        }
+    }
+    urls
+}
+
 async fn build_compose_evidence_summaries(
     summary_model: &dyn SummaryModel,
     run_id: &RunId,
@@ -186,6 +224,7 @@ async fn run_compose_gate(
     trusted_user_message: &str,
     trusted_evidence: &[String],
     composed_message: &str,
+    extracted_evidence: &[sieve_llm::ResponseEvidenceRecord],
     evidence_summaries: &[String],
     source_urls: &[String],
     summary_calls: &mut usize,
@@ -198,6 +237,7 @@ async fn run_compose_gate(
         "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
         "trusted_evidence": trusted_evidence,
         "composed_message": composed_message,
+        "extracted_evidence": extracted_evidence,
         "evidence_summaries": evidence_summaries,
         "source_urls": source_urls,
     });
@@ -230,23 +270,39 @@ pub(crate) async fn compose_assistant_message(
         .into_iter()
         .collect();
     let mut source_urls = dedupe_preserve_order(extract_plain_urls_from_text(&draft_message));
-    source_urls.extend(collect_source_urls_from_refs(response_input, render_refs).await);
+    source_urls.extend(collect_source_urls_from_extracted_evidence(
+        &response_input.extracted_evidence,
+    ));
+    if source_urls.is_empty() {
+        source_urls.extend(collect_source_urls_from_refs(response_input, render_refs).await);
+    }
     source_urls = filter_non_asset_urls(dedupe_preserve_order(source_urls));
     let trusted_evidence = extract_trusted_evidence_lines(
         trusted_user_message,
         response_input.planner_thoughts.as_deref(),
     );
-    let evidence_summaries = build_compose_evidence_summaries(
-        summary_model,
-        run_id,
-        trusted_user_message,
-        response_input,
-        render_refs,
-        evidence_cache,
-        &mut summary_calls,
-        summary_budget,
-    )
-    .await;
+    let extracted_evidence = response_input.extracted_evidence.clone();
+    let evidence_summaries = if extracted_evidence.is_empty() {
+        build_compose_evidence_summaries(
+            summary_model,
+            run_id,
+            trusted_user_message,
+            response_input,
+            render_refs,
+            evidence_cache,
+            &mut summary_calls,
+            summary_budget,
+        )
+        .await
+    } else {
+        extracted_evidence
+            .iter()
+            .filter_map(|record| {
+                let trimmed = record.summary.trim();
+                (!trimmed.is_empty()).then_some(trimmed.to_string())
+            })
+            .collect()
+    };
     let tool_outcomes: Vec<serde_json::Value> = response_input
         .tool_outcomes
         .iter()
@@ -279,6 +335,7 @@ pub(crate) async fn compose_assistant_message(
         "assistant_draft_message": draft_message,
         "planner_thoughts": response_input.planner_thoughts.clone(),
         "tool_outcomes": tool_outcomes,
+        "extracted_evidence": extracted_evidence.clone(),
         "output_ref_ids": output_ref_ids.clone(),
         "available_plain_urls": source_urls.clone(),
         "evidence_summaries": evidence_summaries.clone(),
@@ -309,6 +366,7 @@ pub(crate) async fn compose_assistant_message(
         trusted_user_message,
         &trusted_evidence,
         &composed,
+        &extracted_evidence,
         &evidence_summaries,
         &source_urls,
         &mut summary_calls,
@@ -340,6 +398,7 @@ pub(crate) async fn compose_assistant_message(
                 .get("tool_outcomes")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "extracted_evidence": extracted_evidence.clone(),
             "output_ref_ids": output_ref_ids.clone(),
             "available_plain_urls": source_urls.clone(),
             "evidence_summaries": evidence_summaries.clone(),
@@ -369,6 +428,7 @@ pub(crate) async fn compose_assistant_message(
             trusted_user_message,
             &trusted_evidence,
             &composed,
+            &extracted_evidence,
             &evidence_summaries,
             &source_urls,
             &mut summary_calls,
