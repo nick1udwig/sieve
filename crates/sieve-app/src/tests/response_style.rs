@@ -100,10 +100,31 @@ fn source_and_detail_request_detection() {
 #[test]
 fn concise_style_diagnostic_flags_unsolicited_source_dump() {
     let message = "Answer first. https://a.example https://b.example";
-    let diagnostic = concise_style_diagnostic(message, "What is the answer?");
+    let diagnostic = concise_style_diagnostic(
+        message,
+        "What is the answer?",
+        sieve_types::ResponseVerbosity::Concise,
+    );
     assert!(diagnostic.is_some());
-    let detail_ok = concise_style_diagnostic(message, "Give sources and links");
+    let detail_ok = concise_style_diagnostic(
+        message,
+        "Give sources and links",
+        sieve_types::ResponseVerbosity::Concise,
+    );
     assert!(detail_ok.is_none());
+}
+
+#[test]
+fn concise_style_diagnostic_respects_detailed_and_telegraph_profiles() {
+    let long = "Sentence one. Sentence two. Sentence three. Sentence four. Sentence five.";
+    assert!(
+        concise_style_diagnostic(long, "answer me", sieve_types::ResponseVerbosity::Detailed,)
+            .is_none()
+    );
+    assert!(
+        concise_style_diagnostic(long, "answer me", sieve_types::ResponseVerbosity::Telegraph,)
+            .is_some()
+    );
 }
 
 #[test]

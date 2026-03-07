@@ -7,8 +7,9 @@ use crate::wire::{
 use crate::{GuidanceModel, LlmError, OpenAiGuidanceModel, OpenAiPlannerModel, PlannerModel};
 use serde_json::json;
 use sieve_types::{
-    Action, Capability, LlmModelConfig, LlmProvider, PlannerTurnInput, PolicyDecision,
-    PolicyDecisionKind, PolicyEvaluatedEvent, Resource, RunId, RuntimeEvent,
+    Action, Capability, DeliveryChannel, DeliveryContext, EmojiPolicy, LlmModelConfig, LlmProvider,
+    PlannerTurnInput, PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent,
+    ResolvedPersonality, Resource, ResponseVerbosity, RunId, RuntimeEvent,
     TOOL_CONTRACTS_VERSION_V1,
 };
 use std::collections::BTreeMap;
@@ -224,7 +225,21 @@ fn response_turn_round_trip_uses_safe_shape() {
     let payload = serialize_response_input(&crate::ResponseTurnInput {
         run_id: RunId("run-resp".to_string()),
         trusted_user_message: "hi".to_string(),
+        delivery_context: DeliveryContext {
+            channel: DeliveryChannel::Telegram,
+            destination: Some("42".to_string()),
+            input_modality: sieve_types::InteractionModality::Text,
+            response_modality: sieve_types::InteractionModality::Audio,
+        },
         response_modality: sieve_types::InteractionModality::Audio,
+        resolved_personality: ResolvedPersonality {
+            identity: "helpful assistant".to_string(),
+            style: "clear and concise".to_string(),
+            emoji_policy: EmojiPolicy::Avoid,
+            verbosity: ResponseVerbosity::Telegraph,
+            channel_guidance: vec!["Write for Telegram.".to_string()],
+            custom_instructions: vec!["Skip filler.".to_string()],
+        },
         planner_thoughts: Some("none".to_string()),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![crate::ResponseToolOutcome {
@@ -244,6 +259,8 @@ fn response_turn_round_trip_uses_safe_shape() {
     assert!(payload.get("tool_outcomes").is_some());
     assert!(payload.to_string().contains("trusted_user_message"));
     assert!(payload.to_string().contains("response_modality"));
+    assert!(payload.to_string().contains("delivery_context"));
+    assert!(payload.to_string().contains("resolved_personality"));
     assert!(payload.to_string().contains("attempted_command"));
 
     let out = decode_response_output(json!({

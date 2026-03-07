@@ -337,7 +337,7 @@ pub(crate) fn parse_compose_gate_output(raw: Option<&str>) -> Option<ComposeGate
 
 pub(crate) fn compose_gate_requires_retry(
     composed_message: &str,
-    trusted_user_message: &str,
+    response_input: &ResponseTurnInput,
     gate: Option<&ComposeGateOutput>,
 ) -> Option<String> {
     if obvious_meta_compose_pattern(composed_message) {
@@ -345,7 +345,11 @@ pub(crate) fn compose_gate_requires_retry(
             "response used third-person meta narration; respond directly to user".to_string(),
         );
     }
-    if let Some(diagnostic) = concise_style_diagnostic(composed_message, trusted_user_message) {
+    if let Some(diagnostic) = concise_style_diagnostic(
+        composed_message,
+        &response_input.trusted_user_message,
+        response_input.resolved_personality.verbosity,
+    ) {
         return Some(diagnostic);
     }
     let gate = gate?;

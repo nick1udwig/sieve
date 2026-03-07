@@ -7,6 +7,7 @@ use crate::ingress::PromptSource;
 use crate::lcm_integration::LcmIntegration;
 use crate::logging::{now_ms, ConversationLogRecord, ConversationRole, FanoutRuntimeEventLog};
 use crate::media;
+use crate::personality::resolve_turn_personality;
 use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
 use sieve_runtime::{RuntimeEventLog, RuntimeOrchestrator};
 use sieve_types::{
@@ -24,6 +25,7 @@ pub(crate) async fn run_turn(
     cfg: &AppConfig,
     run_id: RunId,
     source: PromptSource,
+    destination: Option<String>,
     input_modality: InteractionModality,
     media_file_id: Option<String>,
     user_message: String,
@@ -68,23 +70,38 @@ pub(crate) async fn run_turn(
         ))
         .await?;
 
-    let assistant_message = generate_assistant_message(
-        runtime,
-        guidance_model,
-        response_model,
-        summary_model,
-        event_log,
-        cfg,
-        &run_id,
-        &trusted_user_message,
+    let personality_resolution = resolve_turn_personality(
+        &cfg.sieve_home,
+        source,
+        destination.as_deref(),
+        input_modality,
         modality_contract.response,
-    )
-    .await?;
+        &trusted_user_message,
+    )?;
+    let assistant_message = match personality_resolution.acknowledgement {
+        Some(message) => message,
+        None => {
+            generate_assistant_message(
+                runtime,
+                guidance_model,
+                response_model,
+                summary_model,
+                event_log,
+                cfg,
+                &run_id,
+                &trusted_user_message,
+                &personality_resolution.delivery_context,
+                &personality_resolution.resolved_personality,
+            )
+            .await?
+        }
+    };
     println!("{}: {}", run_id.0, assistant_message);
 
     let delivered_audio = deliver_audio_reply_if_requested(
         cfg,
         source,
+        destination.as_deref(),
         &run_id,
         &assistant_message,
         &mut modality_contract,
@@ -122,6 +139,7 @@ pub(crate) async fn run_turn(
 async fn deliver_audio_reply_if_requested(
     cfg: &AppConfig,
     source: PromptSource,
+    destination: Option<&str>,
     run_id: &RunId,
     assistant_message: &str,
     modality_contract: &mut sieve_types::ModalityContract,
@@ -133,12 +151,11 @@ async fn deliver_audio_reply_if_requested(
 
     match media::synthesize_audio_reply(cfg, run_id, assistant_message).await {
         Ok(audio_path) => {
-            if let Err(err) = media::send_telegram_voice(
-                &cfg.telegram_bot_token,
-                cfg.telegram_chat_id,
-                &audio_path,
-            )
-            .await
+            let chat_id = destination
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(cfg.telegram_chat_id);
+            if let Err(err) =
+                media::send_telegram_voice(&cfg.telegram_bot_token, chat_id, &audio_path).await
             {
                 eprintln!("audio reply delivery failed for {}: {}", run_id.0, err);
                 override_modality_contract(

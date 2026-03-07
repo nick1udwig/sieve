@@ -134,6 +134,36 @@ fn assistant_message_event_json_round_trip() {
 }
 
 #[test]
+fn delivery_context_json_round_trip() {
+    let context = DeliveryContext {
+        channel: DeliveryChannel::Telegram,
+        destination: Some("42".to_string()),
+        input_modality: InteractionModality::Text,
+        response_modality: InteractionModality::Audio,
+    };
+
+    let encoded = serde_json::to_string(&context).expect("serialize");
+    let decoded: DeliveryContext = serde_json::from_str(&encoded).expect("deserialize");
+    assert_eq!(decoded, context);
+}
+
+#[test]
+fn resolved_personality_json_round_trip() {
+    let personality = ResolvedPersonality {
+        identity: "helpful assistant".to_string(),
+        style: "clear and concise".to_string(),
+        emoji_policy: EmojiPolicy::Light,
+        verbosity: ResponseVerbosity::Telegraph,
+        channel_guidance: vec!["Keep replies short for chat.".to_string()],
+        custom_instructions: vec!["Skip filler.".to_string()],
+    };
+
+    let encoded = serde_json::to_string(&personality).expect("serialize");
+    let decoded: ResolvedPersonality = serde_json::from_str(&encoded).expect("deserialize");
+    assert_eq!(decoded, personality);
+}
+
+#[test]
 fn endorse_payload_json_round_trip() {
     let request = EndorseRequest {
         value_ref: ValueRef("v123".into()),

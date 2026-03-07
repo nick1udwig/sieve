@@ -1,4 +1,31 @@
 use super::*;
+
+pub(crate) fn test_delivery_context(
+    channel: sieve_types::DeliveryChannel,
+    response_modality: InteractionModality,
+) -> sieve_types::DeliveryContext {
+    sieve_types::DeliveryContext {
+        channel,
+        destination: match channel {
+            sieve_types::DeliveryChannel::Telegram => Some("42".to_string()),
+            sieve_types::DeliveryChannel::Stdin => None,
+        },
+        input_modality: InteractionModality::Text,
+        response_modality,
+    }
+}
+
+pub(crate) fn test_resolved_personality() -> sieve_types::ResolvedPersonality {
+    sieve_types::ResolvedPersonality {
+        identity: "helpful assistant".to_string(),
+        style: "clear and concise".to_string(),
+        emoji_policy: sieve_types::EmojiPolicy::Avoid,
+        verbosity: sieve_types::ResponseVerbosity::Concise,
+        channel_guidance: vec!["Use plain text.".to_string()],
+        custom_instructions: Vec::new(),
+    }
+}
+
 #[derive(Clone, Default)]
 struct SharedTelegramPoller {
     updates: Arc<StdMutex<VecDeque<Vec<TestTelegramUpdate>>>>,
@@ -221,6 +248,7 @@ impl AppE2eHarness {
             &self.cfg,
             reserved_turn.run_id,
             PromptSource::Stdin,
+            None,
             InteractionModality::Text,
             None,
             prompt.to_string(),
@@ -309,6 +337,7 @@ impl AppE2eHarness {
             &self.cfg,
             reserved_turn.run_id,
             PromptSource::Telegram,
+            ingress.destination,
             ingress.modality,
             ingress.media_file_id,
             ingress.text,

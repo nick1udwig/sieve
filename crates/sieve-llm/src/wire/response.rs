@@ -9,7 +9,15 @@ Rules:
 - Produce a concise, user-facing response for this turn.
 - Answer the user request directly in the first sentence.
 - Keep default output short (1-2 sentences) unless the user explicitly asks for detailed output.
+- Follow `resolved_personality` as the style contract for this turn.
+- Respect `delivery_context.channel` and `delivery_context.response_modality`.
 - If `response_modality` is `audio`, write for speech delivery: natural spoken phrasing, minimal punctuation clutter, no bullet lists unless necessary.
+- If `resolved_personality.emoji_policy` is `avoid`, do not use emojis.
+- If `resolved_personality.emoji_policy` is `auto`, follow channel norms plus any explicit emoji direction in `resolved_personality.custom_instructions`.
+- If `resolved_personality.emoji_policy` is `light`, use at most one light emoji when natural and only for chat-like turns.
+- If `resolved_personality.verbosity` is `telegraph`, prefer clipped, terse phrasing.
+- If `resolved_personality.verbosity` is `detailed`, it is acceptable to be somewhat more detailed than the default.
+- Apply `resolved_personality.channel_guidance` and `resolved_personality.custom_instructions` unless they conflict with other rules.
 - Use only provided structured fields; do not invent actions.
 - Avoid giant messages. Prefer short responses.
 - Write in first person as a helpful assistant; never use third-person/meta narration.
@@ -66,7 +74,9 @@ pub(crate) fn serialize_response_input(input: &ResponseTurnInput) -> Result<Valu
     Ok(json!({
         "run_id": input.run_id.0,
         "trusted_user_message": input.trusted_user_message,
+        "delivery_context": input.delivery_context,
         "response_modality": input.response_modality,
+        "resolved_personality": input.resolved_personality,
         "planner_thoughts": input.planner_thoughts,
         "tool_outcomes": tool_outcomes,
         "extracted_evidence": input.extracted_evidence

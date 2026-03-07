@@ -21,8 +21,8 @@ use sieve_runtime::{
     EventLogError, PlannerRunRequest, PlannerRunResult, RuntimeEventLog, RuntimeOrchestrator,
 };
 use sieve_types::{
-    AssistantMessageEvent, InteractionModality, PlannerGuidanceFrame, PlannerGuidanceInput,
-    PlannerGuidanceSignal, RunId, RuntimeEvent,
+    AssistantMessageEvent, DeliveryContext, PlannerGuidanceFrame, PlannerGuidanceInput,
+    PlannerGuidanceSignal, ResolvedPersonality, RunId, RuntimeEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,7 +58,8 @@ pub(super) async fn generate_assistant_message(
     cfg: &AppConfig,
     run_id: &RunId,
     trusted_user_message: &str,
-    response_modality: InteractionModality,
+    delivery_context: &DeliveryContext,
+    resolved_personality: &ResolvedPersonality,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut aggregated_result = PlannerRunResult {
         thoughts: None,
@@ -271,7 +272,8 @@ pub(super) async fn generate_assistant_message(
         let (response_input, render_refs) = build_response_turn_input(
             run_id,
             trusted_user_message,
-            response_modality,
+            delivery_context.clone(),
+            resolved_personality.clone(),
             &aggregated_result,
         );
         let mut response_input = response_input;

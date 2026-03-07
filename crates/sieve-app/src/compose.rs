@@ -328,7 +328,9 @@ pub(crate) async fn compose_assistant_message(
     let payload = serde_json::json!({
         "task": "compose_user_reply",
         "trusted_user_message": trusted_user_message,
+        "delivery_context": response_input.delivery_context.clone(),
         "response_modality": response_input.response_modality,
+        "resolved_personality": response_input.resolved_personality.clone(),
         "user_requested_sources": user_requested_sources(trusted_user_message),
         "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
         "trusted_evidence": trusted_evidence.clone(),
@@ -374,8 +376,7 @@ pub(crate) async fn compose_assistant_message(
     )
     .await;
     let mut retry_diagnostics = Vec::new();
-    if let Some(diagnostic) =
-        compose_gate_requires_retry(&composed, trusted_user_message, gate.as_ref())
+    if let Some(diagnostic) = compose_gate_requires_retry(&composed, response_input, gate.as_ref())
     {
         retry_diagnostics.push(diagnostic);
     }
@@ -385,7 +386,9 @@ pub(crate) async fn compose_assistant_message(
         let retry_payload = serde_json::json!({
             "task": "compose_user_reply",
             "trusted_user_message": trusted_user_message,
+            "delivery_context": response_input.delivery_context.clone(),
             "response_modality": response_input.response_modality,
+            "resolved_personality": response_input.resolved_personality.clone(),
             "user_requested_sources": user_requested_sources(trusted_user_message),
             "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
             "trusted_evidence": trusted_evidence.clone(),

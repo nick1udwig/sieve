@@ -31,6 +31,7 @@ impl PromptSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IngressPrompt {
     pub(crate) source: PromptSource,
+    pub(crate) destination: Option<String>,
     pub(crate) text: String,
     pub(crate) modality: InteractionModality,
     pub(crate) media_file_id: Option<String>,
@@ -80,6 +81,7 @@ impl TelegramEventBridge for RuntimeBridge {
         if let Some(prompt_tx) = &self.prompt_tx {
             if let Err(err) = prompt_tx.send(IngressPrompt {
                 source: PromptSource::Telegram,
+                destination: Some(prompt.chat_id.to_string()),
                 text,
                 modality: prompt.modality,
                 media_file_id: prompt.media_file_id,
@@ -167,6 +169,7 @@ pub(crate) fn spawn_stdin_prompt_loop(
                     }
                     if let Err(err) = prompt_tx.send(IngressPrompt {
                         source: PromptSource::Stdin,
+                        destination: None,
                         text: prompt.to_string(),
                         modality: InteractionModality::Text,
                         media_file_id: None,

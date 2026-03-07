@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sieve_types::{
-    InteractionModality, LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput,
-    PlannerTurnInput, PlannerTurnOutput, RunId,
+    DeliveryContext, InteractionModality, LlmModelConfig, PlannerGuidanceInput,
+    PlannerGuidanceOutput, PlannerTurnInput, PlannerTurnOutput, ResolvedPersonality, RunId,
 };
 use std::collections::BTreeSet;
 use thiserror::Error;
@@ -106,7 +106,9 @@ pub struct ResponseEvidenceRecord {
 pub struct ResponseTurnInput {
     pub run_id: RunId,
     pub trusted_user_message: String,
+    pub delivery_context: DeliveryContext,
     pub response_modality: InteractionModality,
+    pub resolved_personality: ResolvedPersonality,
     pub planner_thoughts: Option<String>,
     pub tool_outcomes: Vec<ResponseToolOutcome>,
     pub extracted_evidence: Vec<ResponseEvidenceRecord>,

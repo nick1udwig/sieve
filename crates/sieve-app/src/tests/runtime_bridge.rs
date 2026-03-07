@@ -86,6 +86,7 @@ async fn runtime_bridge_submit_prompt_enqueues_telegram_input() {
 
     let prompt = rx.recv().await.expect("expected prompt");
     assert_eq!(prompt.source, PromptSource::Telegram);
+    assert_eq!(prompt.destination.as_deref(), Some("42"));
     assert_eq!(prompt.text, "check logs");
     assert_eq!(prompt.modality, InteractionModality::Text);
     assert!(prompt.media_file_id.is_none());

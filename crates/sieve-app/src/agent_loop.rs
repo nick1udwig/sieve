@@ -42,6 +42,7 @@ pub(crate) async fn run_agent_loop(
         let cfg = cfg.clone();
         let telegram_tx = telegram_tx.clone();
         let source = prompt.source;
+        let destination = prompt.destination;
         let text = prompt.text;
         let modality = prompt.modality;
         let media_file_id = prompt.media_file_id;
@@ -66,6 +67,7 @@ pub(crate) async fn run_agent_loop(
                 &cfg,
                 reserved_turn.run_id.clone(),
                 source,
+                destination,
                 modality,
                 media_file_id,
                 text,
