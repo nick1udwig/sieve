@@ -1,7 +1,8 @@
 use super::mainline::{count_newlines, mainline_artifact_kind_name};
 use crate::render_refs::RenderRef;
 use sieve_llm::{
-    ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput, SummaryModel, SummaryRequest,
+    ResponseEvidenceRecord, ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput,
+    SummaryModel, SummaryRequest,
 };
 use sieve_runtime::{PlannerRunResult, PlannerToolResult, RuntimeDisposition};
 use sieve_types::{Integrity, InteractionModality, RunId};
@@ -42,6 +43,7 @@ pub(crate) fn build_response_turn_input(
             response_modality,
             planner_thoughts: planner_result.thoughts.clone(),
             tool_outcomes,
+            extracted_evidence: Vec::new(),
         },
         render_refs,
     )
@@ -99,7 +101,7 @@ pub(crate) async fn summarize_with_ref_id_counted(
     summarize_with_ref_id(summary_model, run_id, ref_id, payload).await
 }
 
-pub(super) fn response_evidence_fingerprint(input: &ResponseTurnInput) -> String {
+pub(crate) fn response_evidence_fingerprint(input: &ResponseTurnInput) -> String {
     let mut parts = Vec::new();
     for outcome in &input.tool_outcomes {
         parts.push(format!(
@@ -111,12 +113,180 @@ pub(super) fn response_evidence_fingerprint(input: &ResponseTurnInput) -> String
         ));
         for metadata in &outcome.refs {
             parts.push(format!(
-                "ref:{}:{}:{}:{}",
-                metadata.ref_id, metadata.kind, metadata.byte_count, metadata.line_count
+                "ref:{}:{}:{}",
+                metadata.kind, metadata.byte_count, metadata.line_count
             ));
         }
     }
+    if !input.extracted_evidence.is_empty() {
+        let normalized_evidence: Vec<_> = input
+            .extracted_evidence
+            .iter()
+            .cloned()
+            .map(|mut record| {
+                record.ref_id.clear();
+                record
+            })
+            .collect();
+        parts
+            .push(serde_json::to_string(&normalized_evidence).unwrap_or_else(|_| "[]".to_string()));
+    }
     parts.join("\n")
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ResponseEvidenceBatchWire {
+    #[serde(default)]
+    records: Vec<ResponseEvidenceRecord>,
+}
+
+pub(crate) fn response_has_explicit_answer_candidate(input: &ResponseTurnInput) -> bool {
+    input.extracted_evidence.iter().any(|record| {
+        record
+            .answer_candidate
+            .as_ref()
+            .map(|candidate| {
+                candidate.support == "explicit_item" && !candidate.title.trim().is_empty()
+            })
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) async fn build_response_evidence_records(
+    summary_model: &dyn SummaryModel,
+    run_id: &RunId,
+    trusted_user_message: &str,
+    input: &ResponseTurnInput,
+    render_refs: &BTreeMap<String, RenderRef>,
+    summary_calls: &mut usize,
+    summary_budget: usize,
+) -> Vec<ResponseEvidenceRecord> {
+    if *summary_calls >= summary_budget {
+        return Vec::new();
+    }
+
+    let mut refs = Vec::new();
+    let mut seen = BTreeSet::new();
+    for metadata in input
+        .tool_outcomes
+        .iter()
+        .flat_map(|outcome| outcome.refs.iter())
+        .filter(|metadata| metadata.byte_count > 0)
+    {
+        if refs.len() >= 4 || !seen.insert(metadata.ref_id.clone()) {
+            continue;
+        }
+        let Some((content, _, _)) =
+            crate::render_refs::resolve_ref_summary_input(&metadata.ref_id, render_refs).await
+        else {
+            continue;
+        };
+        refs.push(serde_json::json!({
+            "ref_id": metadata.ref_id,
+            "kind": metadata.kind,
+            "byte_count": metadata.byte_count,
+            "line_count": metadata.line_count,
+            "content": content,
+        }));
+    }
+
+    if refs.is_empty() {
+        return Vec::new();
+    }
+
+    let payload = serde_json::json!({
+        "task": "extract_response_evidence_batch",
+        "trusted_user_message": trusted_user_message,
+        "refs": refs,
+    });
+    let Some(raw) = summarize_with_ref_id_counted(
+        summary_model,
+        run_id,
+        &format!("assistant-response-evidence:{}", run_id.0),
+        &payload,
+        summary_calls,
+        summary_budget,
+    )
+    .await
+    else {
+        return Vec::new();
+    };
+
+    parse_response_evidence_batch(&raw)
+}
+
+fn parse_response_evidence_batch(raw: &str) -> Vec<ResponseEvidenceRecord> {
+    let parsed: ResponseEvidenceBatchWire = match serde_json::from_str(raw) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    parsed
+        .records
+        .into_iter()
+        .filter_map(|record| {
+            let summary = record.summary.trim();
+            if summary.is_empty() {
+                return None;
+            }
+            Some(ResponseEvidenceRecord {
+                ref_id: record.ref_id,
+                summary: summary.to_string(),
+                page_state: record.page_state.map(|value| value.trim().to_string()),
+                blockers: record
+                    .blockers
+                    .into_iter()
+                    .filter_map(|value| {
+                        let trimmed = value.trim();
+                        (!trimmed.is_empty()).then_some(trimmed.to_string())
+                    })
+                    .collect(),
+                source_urls: record
+                    .source_urls
+                    .into_iter()
+                    .filter_map(|value| {
+                        let trimmed = value.trim();
+                        (!trimmed.is_empty()).then_some(trimmed.to_string())
+                    })
+                    .collect(),
+                items: record
+                    .items
+                    .into_iter()
+                    .filter_map(|item| {
+                        let title = item.title.trim();
+                        if title.is_empty() {
+                            return None;
+                        }
+                        Some(sieve_llm::ResponseEvidenceItem {
+                            kind: item.kind.trim().to_string(),
+                            rank: item.rank,
+                            title: title.to_string(),
+                            url: item
+                                .url
+                                .map(|value| value.trim().to_string())
+                                .filter(|value| !value.is_empty()),
+                        })
+                    })
+                    .collect(),
+                answer_candidate: record.answer_candidate.and_then(|candidate| {
+                    let title = candidate.title.trim();
+                    if title.is_empty() {
+                        return None;
+                    }
+                    Some(sieve_llm::ResponseAnswerCandidate {
+                        target: candidate.target.trim().to_string(),
+                        item_kind: candidate.item_kind.trim().to_string(),
+                        title: title.to_string(),
+                        url: candidate
+                            .url
+                            .map(|value| value.trim().to_string())
+                            .filter(|value| !value.is_empty()),
+                        support: candidate.support.trim().to_string(),
+                        rank: candidate.rank,
+                    })
+                }),
+            })
+        })
+        .collect()
 }
 
 fn user_explicitly_requests_output_visibility(message: &str) -> bool {

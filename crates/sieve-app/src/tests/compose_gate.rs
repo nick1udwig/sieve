@@ -34,6 +34,7 @@ fn denied_outcomes_only_message_reports_attempt_and_reason() {
         trusted_user_message: "weather".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
             outcome: "denied".to_string(),
@@ -68,4 +69,50 @@ fn obvious_meta_compose_pattern_catches_evidence_summary_diagnostic_format() {
 fn strip_unexpanded_render_tokens_removes_ref_markers() {
     let message = "answer [[ref:artifact-1]] and [[summary:artifact-2]] done";
     assert_eq!(strip_unexpanded_render_tokens(message), "answer  and  done");
+}
+
+#[test]
+fn compose_gate_followup_signal_ignores_interstitial_continue_when_explicit_answer_exists() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "what is the top video?".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: None,
+        extracted_evidence: vec![sieve_llm::ResponseEvidenceRecord {
+            ref_id: "artifact-1".to_string(),
+            summary: "The first visible video result is Jordan Peterson Live on Tour.".to_string(),
+            page_state: Some("result_list".to_string()),
+            blockers: vec![],
+            source_urls: vec!["https://www.youtube.com/watch?v=yuc807SP_gA".to_string()],
+            items: vec![],
+            answer_candidate: Some(sieve_llm::ResponseAnswerCandidate {
+                target: "top_video".to_string(),
+                item_kind: "video".to_string(),
+                title: "Jordan Peterson Live on Tour: The Hidden Key to a Fulfilling Life"
+                    .to_string(),
+                url: Some("https://www.youtube.com/watch?v=yuc807SP_gA".to_string()),
+                support: "explicit_item".to_string(),
+                rank: Some(1),
+            }),
+        }],
+        tool_outcomes: vec![ResponseToolOutcome {
+            tool_name: "bash".to_string(),
+            outcome: "executed".to_string(),
+            attempted_command: Some("agent-browser snapshot --session ytsearch".to_string()),
+            failure_reason: None,
+            refs: vec![ResponseRefMetadata {
+                ref_id: "artifact-1".to_string(),
+                kind: "stdout".to_string(),
+                byte_count: 28058,
+                line_count: 398,
+            }],
+        }],
+    };
+    let gate = Some(ComposeGateOutput {
+        verdict: "REVISE".to_string(),
+        reason: Some("evidence hit login/interstitial pages".to_string()),
+        continue_code: Some(115),
+    });
+
+    assert!(compose_gate_followup_signal(gate.as_ref(), &input).is_none());
 }

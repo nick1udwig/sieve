@@ -3,8 +3,8 @@ use crate::summarize_argv;
 use sieve_types::{Action, Capability, CommandKnowledge, Resource};
 
 #[test]
-fn rm_rf_maps_to_fs_write_capability() {
-    let out = summarize_argv(&argv(&["rm", "-rf", "/tmp/demo"]));
+fn trash_maps_targets_to_fs_write_capability() {
+    let out = summarize_argv(&argv(&["trash", "/tmp/demo"]));
 
     assert_eq!(out.knowledge, CommandKnowledge::Known);
     let summary = out.summary.expect("expected summary");
@@ -21,14 +21,42 @@ fn rm_rf_maps_to_fs_write_capability() {
 }
 
 #[test]
-fn rm_unknown_flag_routes_to_unknown() {
-    let out = summarize_argv(&argv(&["rm", "-rfv", "/tmp/demo"]));
+fn trash_custom_trash_dir_adds_fs_write_capability() {
+    let out = summarize_argv(&argv(&[
+        "trash",
+        "--trash-dir",
+        "/tmp/custom-trash",
+        "/tmp/demo",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "/tmp/demo".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "/tmp/custom-trash".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
+fn trash_unknown_flag_routes_to_unknown() {
+    let out = summarize_argv(&argv(&["trash", "--bogus", "/tmp/demo"]));
 
     assert_eq!(out.knowledge, CommandKnowledge::Unknown);
     let summary = out
         .summary
         .expect("expected summary with unsupported flags");
-    assert_eq!(summary.unsupported_flags, vec!["-rfv".to_string()]);
+    assert_eq!(summary.unsupported_flags, vec!["--bogus".to_string()]);
 }
 
 #[test]

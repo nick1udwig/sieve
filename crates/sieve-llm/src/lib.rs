@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sieve_types::{
     InteractionModality, LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput,
     PlannerTurnInput, PlannerTurnOutput, RunId,
@@ -72,6 +73,35 @@ pub struct ResponseToolOutcome {
     pub refs: Vec<ResponseRefMetadata>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseEvidenceItem {
+    pub kind: String,
+    pub rank: Option<u32>,
+    pub title: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseAnswerCandidate {
+    pub target: String,
+    pub item_kind: String,
+    pub title: String,
+    pub url: Option<String>,
+    pub support: String,
+    pub rank: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseEvidenceRecord {
+    pub ref_id: String,
+    pub summary: String,
+    pub page_state: Option<String>,
+    pub blockers: Vec<String>,
+    pub source_urls: Vec<String>,
+    pub items: Vec<ResponseEvidenceItem>,
+    pub answer_candidate: Option<ResponseAnswerCandidate>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseTurnInput {
     pub run_id: RunId,
@@ -79,6 +109,7 @@ pub struct ResponseTurnInput {
     pub response_modality: InteractionModality,
     pub planner_thoughts: Option<String>,
     pub tool_outcomes: Vec<ResponseToolOutcome>,
+    pub extracted_evidence: Vec<ResponseEvidenceRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

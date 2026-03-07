@@ -87,12 +87,8 @@ pub(super) fn builtin_case_templates(
             command,
             known_command_paths,
         )],
-        "rm" => vec![planned_case(
-            vec![
-                "rm".to_string(),
-                "-f".to_string(),
-                TOKEN_OUT_FILE.to_string(),
-            ],
+        "trash" => vec![planned_case(
+            vec!["trash".to_string(), TOKEN_OUT_FILE.to_string()],
             command,
             known_command_paths,
         )],

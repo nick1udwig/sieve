@@ -1,13 +1,13 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource};
+use sieve_types::{Action, CommandSummary};
 
 use crate::{
     collect_positionals_with_no_value_flags, is_named_command, is_short_flag_cluster,
-    known_fs_outcome, known_outcome, strip_sudo, unknown_outcome, unknown_with_flags,
-    SummaryOutcome,
+    known_fs_outcome, known_outcome, split_flag_value, strip_sudo, unknown_outcome,
+    unknown_with_flags, SummaryOutcome,
 };
 
 pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
-    summarize_rm(argv)
+    summarize_trash(argv)
         .or_else(|| summarize_cp(argv))
         .or_else(|| summarize_mv(argv))
         .or_else(|| summarize_mkdir(argv))
@@ -17,69 +17,125 @@ pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
         .or_else(|| summarize_tee(argv))
 }
 
-fn summarize_rm(argv: &[String]) -> Option<SummaryOutcome> {
+fn summarize_trash(argv: &[String]) -> Option<SummaryOutcome> {
     let inner = strip_sudo(argv);
-    if !is_named_command(inner, "rm") {
+    if !is_named_command(inner, "trash") {
         return None;
     }
 
-    let mut recursive = false;
-    let mut force = false;
+    let mut saw_meta_only_flag = false;
     let mut saw_end_of_flags = false;
+    let mut trash_dir = None;
     let mut targets = Vec::new();
     let mut unsupported_flags = Vec::new();
+    let mut i = 1usize;
 
-    for arg in inner.iter().skip(1) {
+    while i < inner.len() {
+        let arg = &inner[i];
         if saw_end_of_flags {
             targets.push(arg.clone());
+            i += 1;
             continue;
         }
         if arg == "--" {
             saw_end_of_flags = true;
+            i += 1;
             continue;
         }
-        if arg.starts_with('-') {
-            match arg.as_str() {
-                "-r" | "-R" | "--recursive" => recursive = true,
-                "-f" | "--force" => force = true,
-                "-rf" | "-fr" => {
-                    recursive = true;
-                    force = true;
-                }
-                _ => unsupported_flags.push(arg.clone()),
+        if !arg.starts_with('-') || arg == "-" {
+            targets.push(arg.clone());
+            i += 1;
+            continue;
+        }
+
+        match arg.as_str() {
+            "-h" | "--help" | "--version" => {
+                saw_meta_only_flag = true;
+                i += 1;
             }
-            continue;
+            "-d" | "--directory" | "-f" | "--force" | "-i" | "--interactive" | "-r" | "-R"
+            | "--recursive" | "-v" | "--verbose" => {
+                i += 1;
+            }
+            "--trash-dir" => {
+                let Some(value) = inner.get(i + 1) else {
+                    return Some(unknown_outcome("trash --trash-dir missing value"));
+                };
+                trash_dir = Some(value.clone());
+                i += 2;
+            }
+            "--print-completion" => {
+                let Some(value) = inner.get(i + 1) else {
+                    return Some(unknown_outcome("trash --print-completion missing value"));
+                };
+                if !matches!(value.as_str(), "bash" | "zsh" | "tcsh") {
+                    return Some(unknown_outcome("trash --print-completion invalid shell"));
+                }
+                saw_meta_only_flag = true;
+                i += 2;
+            }
+            _ if is_short_flag_cluster(arg, &['d', 'f', 'h', 'i', 'r', 'R', 'v']) => {
+                if arg.contains('h') {
+                    saw_meta_only_flag = true;
+                }
+                i += 1;
+            }
+            _ => {
+                if let Some((flag, value)) = split_flag_value(arg) {
+                    match flag {
+                        "--trash-dir" if !value.is_empty() => {
+                            trash_dir = Some(value.to_string());
+                            i += 1;
+                            continue;
+                        }
+                        "--print-completion" if !value.is_empty() => {
+                            if !matches!(value, "bash" | "zsh" | "tcsh") {
+                                return Some(unknown_outcome(
+                                    "trash --print-completion invalid shell",
+                                ));
+                            }
+                            saw_meta_only_flag = true;
+                            i += 1;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                unsupported_flags.push(arg.clone());
+                i += 1;
+            }
         }
-        targets.push(arg.clone());
     }
 
     if !unsupported_flags.is_empty() {
         return Some(unknown_with_flags(
-            "unsupported rm flags",
+            "unsupported trash flags",
             unsupported_flags,
         ));
     }
 
-    if !(recursive && force) {
-        return None;
+    if saw_meta_only_flag {
+        if trash_dir.is_some() || !targets.is_empty() {
+            return Some(unknown_outcome(
+                "trash metadata flags cannot be combined with file targets",
+            ));
+        }
+        return Some(known_outcome(CommandSummary {
+            required_capabilities: Vec::new(),
+            sink_checks: Vec::new(),
+            unsupported_flags: Vec::new(),
+        }));
     }
 
     if targets.is_empty() {
-        targets.push("*".to_string());
+        return Some(unknown_outcome("trash missing target"));
     }
 
-    Some(known_outcome(CommandSummary {
-        required_capabilities: targets
-            .into_iter()
-            .map(|target| Capability {
-                resource: Resource::Fs,
-                action: Action::Write,
-                scope: target,
-            })
-            .collect(),
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    }))
+    if let Some(trash_dir) = trash_dir {
+        targets.push(trash_dir);
+    }
+
+    Some(known_fs_outcome(targets, Action::Write))
 }
 
 fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {

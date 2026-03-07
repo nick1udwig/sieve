@@ -21,6 +21,7 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 - Web: search early; quote exact errors; prefer 2024–2026 sources; fallback Firecrawl (`pnpm mcp:*`) / `mcporter`.
 - Oracle: run `npx -y @steipete/oracle --help` once/session before first use.
 - Style: telegraph. Drop filler/grammar. Min tokens (global AGENTS + replies).
+- Frontend: always auto-detect light/dark mode and serve proper one; just autodetect & serve don't put a toggle button
 
 ## Screenshots (“use a screenshot”)
 - Pick newest PNG in `~/Pictures`.
@@ -49,7 +50,7 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 ## Flow & Runtime
 - Use repo’s package manager/runtime; no swaps w/o approval.
 - Use Codex background for long jobs; tmux only for interactive/persistent (debugger/server).
-- Sieve runtime: tmux session `sr` with command `cargo build --release && SIEVE_PLANNER_MODEL=gpt-5.2 SIEVE_QUARANTINE_MODEL=gpt-5.2 ./target/release/sieve-app`.
+- Sieve runtime: tmux session `sieve-app` with command `cargo build --release && SIEVE_PLANNER_MODEL=gpt-5.4 SIEVE_QUARANTINE_MODEL=gpt-5.4 ./target/release/sieve-app`.
 - Testing workflow: always look for running sieve process and stop it before tests.
 - Post-change workflow: look for and stop sieve, then build and start sieve in `sr`.
 
@@ -97,6 +98,9 @@ Read `~/agent-scripts/tools.md` for the full tool catalog if it exists.
 
 ### gdb
 - Use `gdb` inside tmux to debug native apps; attach to the running app to inspect state.
+
+### trash
+- Move files to Trash: `trash ...`.
 
 ### oracle
 - Bundle prompt+files for 2nd model. Use when stuck/buggy/review.

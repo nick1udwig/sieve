@@ -3,6 +3,7 @@ use crate::response_style::{
     compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
     obvious_meta_compose_pattern,
 };
+use crate::turn::response_has_explicit_answer_candidate;
 use serde::{Deserialize, Serialize};
 use sieve_llm::ResponseTurnInput;
 use sieve_types::PlannerGuidanceSignal;
@@ -116,12 +117,56 @@ fn followup_signal_from_reason(
     }
 
     let lower = reason.to_ascii_lowercase();
+    let has_explicit_answer_candidate = response_has_explicit_answer_candidate(response_input);
+    if has_explicit_answer_candidate
+        && (lower.contains("interstitial")
+            || lower.contains("google sorry")
+            || lower.contains("sorry page")
+            || lower.contains("captcha")
+            || lower.contains("login")
+            || lower.contains("title-only")
+            || lower.contains("page title")
+            || lower.contains("page-level output")
+            || lower.contains("higher quality"))
+    {
+        return None;
+    }
+
     let is_style_only = lower.contains("third-person")
         || lower.contains("third person")
         || lower.contains("meta narration")
         || lower.contains("tone");
     if is_style_only {
         return None;
+    }
+
+    if lower.contains("current page")
+        || lower.contains("already-open page")
+        || lower.contains("title-only")
+        || lower.contains("page title")
+        || lower.contains("page-level output")
+    {
+        return Some(PlannerGuidanceSignal::ContinueNeedCurrentPageInspection);
+    }
+
+    if lower.contains("captcha")
+        || lower.contains("interstitial")
+        || lower.contains("google sorry")
+        || lower.contains("sorry page")
+        || lower.contains("unusual traffic")
+        || lower.contains("consent")
+        || lower.contains("paywall")
+        || lower.contains("login")
+    {
+        return Some(PlannerGuidanceSignal::ContinueEncounteredAccessInterstitial);
+    }
+
+    if lower.contains("reformulate")
+        || lower.contains("command shape")
+        || lower.contains("same target")
+        || lower.contains("different command form")
+    {
+        return Some(PlannerGuidanceSignal::ContinueNeedCommandReformulation);
     }
 
     let denied_command_present = response_input.tool_outcomes.iter().any(|outcome| {
@@ -319,6 +364,20 @@ pub(crate) fn compose_gate_followup_signal(
 ) -> Option<PlannerGuidanceSignal> {
     let gate = gate?;
     if let Some(signal) = gate.continue_code.and_then(continue_signal_from_code) {
+        let has_explicit_answer_candidate = response_has_explicit_answer_candidate(response_input);
+        if has_explicit_answer_candidate
+            && matches!(
+                signal,
+                PlannerGuidanceSignal::ContinueNeedEvidence
+                    | PlannerGuidanceSignal::ContinueNeedHigherQualitySource
+                    | PlannerGuidanceSignal::ContinueNeedPrimaryContentFetch
+                    | PlannerGuidanceSignal::ContinueNeedCurrentPageInspection
+                    | PlannerGuidanceSignal::ContinueEncounteredAccessInterstitial
+                    | PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction
+            )
+        {
+            return None;
+        }
         return Some(signal);
     }
     if gate.verdict.eq_ignore_ascii_case("PASS") {

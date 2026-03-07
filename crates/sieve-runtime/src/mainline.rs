@@ -76,6 +76,7 @@ impl RuntimeOrchestrator {
         cwd: String,
         script: String,
         command_segments: Vec<CommandSegment>,
+        browser_session_mutations: crate::browser_sessions::BrowserSessionMutations,
     ) -> Result<RuntimeDisposition, RuntimeError> {
         let report = self
             .mainline
@@ -86,6 +87,22 @@ impl RuntimeOrchestrator {
                 command_segments,
             })
             .await?;
+        if report.exit_code == Some(0) && !browser_session_mutations.is_empty() {
+            let mut sessions = self
+                .browser_sessions
+                .lock()
+                .map_err(|_| crate::ValueStateError::LockPoisoned)?;
+            for (name, state) in browser_session_mutations {
+                match state {
+                    Some(state) => {
+                        sessions.insert(name, state);
+                    }
+                    None => {
+                        sessions.remove(&name);
+                    }
+                }
+            }
+        }
         Ok(RuntimeDisposition::ExecuteMainline(report))
     }
 }

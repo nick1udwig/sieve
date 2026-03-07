@@ -16,13 +16,13 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 #[tokio::test]
-async fn rm_rf_is_gated_by_deny_with_approval() {
+async fn trash_is_gated_by_deny_with_approval() {
     let policy_toml = r#"
 [[deny_rules]]
-id = "deny-rm-rf"
-argv_prefix = ["rm", "-rf"]
+id = "deny-trash"
+argv_prefix = ["trash"]
 decision = "deny_with_approval"
-reason = "rm -rf requires approval"
+reason = "trash requires approval"
 
 [options]
 violation_mode = "deny"
@@ -42,9 +42,9 @@ require_trusted_control_for_mutating = true
         tokio::spawn(async move {
             runtime
                 .orchestrate_shell(ShellRunRequest {
-                    run_id: RunId("run-rm".to_string()),
+                    run_id: RunId("run-trash".to_string()),
                     cwd: "/tmp".to_string(),
-                    script: "rm -rf /tmp/demo".to_string(),
+                    script: "trash -f /tmp/demo".to_string(),
                     control_value_refs: BTreeSet::new(),
                     control_endorsed_by: None,
                     unknown_mode: UnknownMode::Deny,
@@ -55,10 +55,14 @@ require_trusted_control_for_mutating = true
     };
 
     let requested = wait_for_approval(&approval_bus).await;
-    assert_eq!(requested.blocked_rule_id, "deny-rm-rf");
+    assert_eq!(requested.blocked_rule_id, "deny-trash");
     assert_eq!(
         requested.command_segments[0].argv,
-        vec!["rm".to_string(), "-rf".to_string(), "/tmp/demo".to_string()]
+        vec![
+            "trash".to_string(),
+            "-f".to_string(),
+            "/tmp/demo".to_string()
+        ]
     );
     approval_bus
         .resolve(ApprovalResolvedEvent {
@@ -73,7 +77,7 @@ require_trusted_control_for_mutating = true
     let disposition = runtime_task.await.expect("task join").expect("runtime ok");
     match disposition {
         RuntimeDisposition::ExecuteMainline(report) => {
-            assert_eq!(report.run_id, RunId("run-rm".to_string()));
+            assert_eq!(report.run_id, RunId("run-trash".to_string()));
             assert_eq!(report.exit_code, Some(0));
         }
         other => panic!("expected mainline execution, got {other:?}"),

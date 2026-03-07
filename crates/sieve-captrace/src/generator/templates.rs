@@ -89,13 +89,11 @@ pub(super) fn infer_command_path(
             .iter()
             .take(known_path.len())
             .eq(known_path.iter())
-        {
-            if best_match
+            && best_match
                 .as_ref()
                 .is_none_or(|existing| known_path.len() > existing.len())
-            {
-                best_match = Some(known_path.clone());
-            }
+        {
+            best_match = Some(known_path.clone());
         }
     }
     if let Some(best_match) = best_match {
