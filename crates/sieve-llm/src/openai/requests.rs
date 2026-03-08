@@ -5,7 +5,6 @@ use crate::wire::{
 use crate::{ResponseTurnInput, SummaryRequest};
 use serde_json::{json, Value};
 use sieve_types::PlannerGuidanceInput;
-
 pub(super) fn build_guidance_request(input: PlannerGuidanceInput, model: &str) -> Value {
     json!({
         "model": model,

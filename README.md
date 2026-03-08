@@ -21,7 +21,6 @@ Full dependency, env, runtime, logging, Telegram, troubleshooting, and external 
 
 ## Running
 
-
 Send a one-off request with:
 
 ```bash
@@ -33,6 +32,19 @@ Start long-running mode with:
 ```bash
 cargo run --release -p sieve-app
 ```
+
+Long-running mode also accepts automation commands on stdin or Telegram.
+
+Examples:
+
+```text
+/heartbeat now
+/cron add main every 15m -- remind me to check deploys
+/cron add isolated cron 0 9 * * 1-5 -- send build summary
+```
+
+Heartbeat reads instructions from `HEARTBEAT.md` in `SIEVE_RUNTIME_CWD` unless `SIEVE_HEARTBEAT_PROMPT` is set.
+Durable cron and heartbeat state lives at `$SIEVE_HOME/state/automation.json`.
 
 ## Architecture
 
@@ -62,3 +74,8 @@ cargo test -p sieve-app e2e_fake_ -- --nocapture
 ```
 
 Commands and coverage notes: [docs/running.md](docs/running.md#testing).
+
+## Docker
+
+A multi-arch Docker image is built from [`Dockerfile`](Dockerfile) and published to Docker Hub as `nick1udwig/sieve`.
+Container usage, bundled CLI tools, and release automation live in [docs/running.md](docs/running.md#docker).

@@ -33,6 +33,10 @@ pub struct PlannerTurnInput {
     pub user_message: String,
     pub allowed_tools: Vec<String>,
     #[serde(default)]
+    pub current_time_utc: Option<String>,
+    #[serde(default)]
+    pub current_timezone: Option<String>,
+    #[serde(default)]
     pub allowed_net_connect_scopes: Vec<String>,
     #[serde(default)]
     pub browser_sessions: Vec<PlannerBrowserSession>,

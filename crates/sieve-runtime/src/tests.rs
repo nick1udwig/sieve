@@ -6,9 +6,10 @@ use sieve_policy::TomlPolicyEngine;
 use sieve_shell::{BasicShellAnalyzer, ShellAnalysis};
 use sieve_tool_contracts::TOOL_CONTRACTS_VERSION;
 use sieve_types::{
-    Action, ApprovalResolvedEvent, Capability, CommandKnowledge, CommandSummary, Integrity,
-    LlmModelConfig, LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput,
-    PolicyDecision, Resource, SinkCheck, SinkKey, Source, ValueLabel, ValueRef,
+    Action, ApprovalResolvedEvent, AutomationAction, AutomationRequest, AutomationSchedule,
+    AutomationTarget, Capability, CommandKnowledge, CommandSummary, Integrity, LlmModelConfig,
+    LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, Resource,
+    SinkCheck, SinkKey, Source, ValueLabel, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env::temp_dir;

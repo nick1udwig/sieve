@@ -3,6 +3,7 @@
 mod approval_allowance;
 mod approval_bus;
 mod approval_tools;
+mod automation;
 mod browser_session_summary;
 mod browser_sessions;
 mod event_log;
@@ -42,6 +43,7 @@ pub(crate) use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) use std::sync::Arc;
 
 pub use approval_bus::{ApprovalBus, ApprovalBusError, InProcessApprovalBus};
+pub use automation::{AutomationTool, AutomationToolResult};
 pub use event_log::{EventLogError, JsonlRuntimeEventLog, RuntimeEventLog};
 pub use mainline::{
     BashMainlineRunner, MainlineArtifact, MainlineArtifactKind, MainlineRunError,

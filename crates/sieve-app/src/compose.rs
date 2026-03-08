@@ -1,6 +1,7 @@
 use crate::compose_gate::{
     combine_gate_reasons, compose_gate_followup_signal, compose_gate_requires_retry,
-    extract_trusted_evidence_lines, parse_compose_gate_output, ComposeGateOutput,
+    extract_trusted_evidence_lines, message_negates_trusted_effects, parse_compose_gate_output,
+    ComposeGateOutput,
 };
 use crate::logging::{now_ms, FanoutRuntimeEventLog};
 use crate::render_refs::{resolve_ref_summary_input, RenderRef};
@@ -11,8 +12,9 @@ use crate::response_style::{
     user_requested_sources,
 };
 use crate::turn::{non_empty_output_ref_ids, summarize_with_ref_id_counted};
+use chrono::{TimeZone, Utc};
 use sieve_llm::{ResponseTurnInput, SummaryModel};
-use sieve_types::{PlannerGuidanceSignal, RunId};
+use sieve_types::{AutomationDeliveryMode, PlannerGuidanceSignal, RunId, TrustedToolEffect};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -223,6 +225,7 @@ async fn run_compose_gate(
     run_id: &RunId,
     trusted_user_message: &str,
     trusted_evidence: &[String],
+    trusted_effects: &[TrustedToolEffect],
     composed_message: &str,
     extracted_evidence: &[sieve_llm::ResponseEvidenceRecord],
     evidence_summaries: &[String],
@@ -236,6 +239,7 @@ async fn run_compose_gate(
         "user_requested_sources": user_requested_sources(trusted_user_message),
         "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
         "trusted_evidence": trusted_evidence,
+        "trusted_effects": trusted_effects,
         "composed_message": composed_message,
         "extracted_evidence": extracted_evidence,
         "evidence_summaries": evidence_summaries,
@@ -251,6 +255,36 @@ async fn run_compose_gate(
     )
     .await;
     parse_compose_gate_output(raw.as_deref())
+}
+
+fn trusted_effect_fallback_message(response_input: &ResponseTurnInput) -> Option<String> {
+    response_input
+        .trusted_effects
+        .iter()
+        .find_map(|effect| match effect {
+            TrustedToolEffect::CronAdded {
+                prompt,
+                run_at_ms,
+                delivery_mode,
+                ..
+            } => {
+                let when = Utc
+                    .timestamp_millis_opt(*run_at_ms as i64)
+                    .single()
+                    .map(|value| value.to_rfc3339())
+                    .unwrap_or_else(|| run_at_ms.to_string());
+                let destination = match delivery_mode {
+                    AutomationDeliveryMode::MainSessionMessage => "here",
+                    AutomationDeliveryMode::IsolatedTurn => "in a separate turn",
+                };
+                Some(format!(
+                    "Scheduled. I'll send `{}` {} at {}.",
+                    prompt.trim(),
+                    destination,
+                    when
+                ))
+            }
+        })
 }
 
 pub(crate) async fn compose_assistant_message(
@@ -332,6 +366,7 @@ pub(crate) async fn compose_assistant_message(
         "user_requested_sources": user_requested_sources(trusted_user_message),
         "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
         "trusted_evidence": trusted_evidence.clone(),
+        "trusted_effects": response_input.trusted_effects.clone(),
         "assistant_draft_message": draft_message,
         "planner_thoughts": response_input.planner_thoughts.clone(),
         "tool_outcomes": tool_outcomes,
@@ -365,6 +400,7 @@ pub(crate) async fn compose_assistant_message(
         run_id,
         trusted_user_message,
         &trusted_evidence,
+        &response_input.trusted_effects,
         &composed,
         &extracted_evidence,
         &evidence_summaries,
@@ -374,9 +410,12 @@ pub(crate) async fn compose_assistant_message(
     )
     .await;
     let mut retry_diagnostics = Vec::new();
-    if let Some(diagnostic) =
-        compose_gate_requires_retry(&composed, trusted_user_message, gate.as_ref())
-    {
+    if let Some(diagnostic) = compose_gate_requires_retry(
+        &composed,
+        trusted_user_message,
+        response_input,
+        gate.as_ref(),
+    ) {
         retry_diagnostics.push(diagnostic);
     }
     let did_retry = !retry_diagnostics.is_empty() && summary_calls < summary_budget;
@@ -389,6 +428,7 @@ pub(crate) async fn compose_assistant_message(
             "user_requested_sources": user_requested_sources(trusted_user_message),
             "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
             "trusted_evidence": trusted_evidence.clone(),
+            "trusted_effects": response_input.trusted_effects.clone(),
             "assistant_draft_message": payload
                 .get("assistant_draft_message")
                 .and_then(serde_json::Value::as_str)
@@ -427,6 +467,7 @@ pub(crate) async fn compose_assistant_message(
             run_id,
             trusted_user_message,
             &trusted_evidence,
+            &response_input.trusted_effects,
             &composed,
             &extracted_evidence,
             &evidence_summaries,
@@ -485,6 +526,21 @@ pub(crate) async fn compose_assistant_message(
     }
     composed = strip_asset_urls_from_message(&composed);
     composed = strip_unexpanded_render_tokens(&composed);
+    if message_negates_trusted_effects(&composed, response_input) {
+        let draft_fallback = payload
+            .get("assistant_draft_message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !draft_fallback.is_empty()
+            && !message_negates_trusted_effects(&draft_fallback, response_input)
+        {
+            composed = draft_fallback;
+        } else if let Some(fallback) = trusted_effect_fallback_message(response_input) {
+            composed = fallback;
+        }
+    }
     if let Err(err) = write_compose_audit_artifacts(
         sieve_home,
         event_log,

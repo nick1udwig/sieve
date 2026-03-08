@@ -46,6 +46,8 @@ impl CaseGenerator for PlannerCaseGenerator {
                 run_id: RunId(format!("captrace-llm-{}", now_ms())),
                 user_message,
                 allowed_tools: vec!["bash".to_string()],
+                current_time_utc: None,
+                current_timezone: None,
                 allowed_net_connect_scopes: Vec::new(),
                 browser_sessions: Vec::new(),
                 previous_events: Vec::new(),

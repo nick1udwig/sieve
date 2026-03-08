@@ -79,6 +79,7 @@ fn requires_output_visibility_detects_non_empty_stdout_or_stderr_refs() {
         trusted_user_message: "show output".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -112,6 +113,7 @@ fn requires_output_visibility_skips_when_user_did_not_ask_for_output() {
             trusted_user_message: "What is the weather tomorrow in Livermore?".to_string(),
             response_modality: InteractionModality::Text,
             planner_thoughts: None,
+            trusted_effects: Vec::new(),
             extracted_evidence: Vec::new(),
             tool_outcomes: vec![ResponseToolOutcome {
                 tool_name: "bash".to_string(),
@@ -140,6 +142,7 @@ fn response_has_visible_selected_output_requires_message_token() {
         trusted_user_message: "show output".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -177,6 +180,7 @@ fn response_has_visible_selected_output_accepts_summary_token() {
         trusted_user_message: "summarize output".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -207,6 +211,7 @@ fn response_evidence_fingerprint_ignores_ref_ids_for_identical_evidence() {
         trusted_user_message: "what is the top video?".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: vec![sieve_llm::ResponseEvidenceRecord {
             ref_id: ref_id.to_string(),
             summary: "The first visible video result is Jordan Peterson Live on Tour.".to_string(),
@@ -251,6 +256,7 @@ async fn build_response_evidence_records_batches_and_parses_structured_output() 
         trusted_user_message: "what is the top video?".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),

@@ -62,6 +62,151 @@ async fn e2e_fake_greeting_uses_guided_zero_tool_turn_without_approval() {
 }
 
 #[tokio::test]
+async fn e2e_fake_zero_tool_final_no_tool_action_needed_skips_compose() {
+    let planner_output = PlannerTurnOutput {
+        thoughts: Some("chat only".to_string()),
+        tool_calls: Vec::new(),
+    };
+    let response_output = sieve_llm::ResponseTurnOutput {
+        message: "Handled directly by response writer.".to_string(),
+        referenced_ref_ids: BTreeSet::new(),
+        summarized_ref_ids: BTreeSet::new(),
+    };
+    let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalNoToolActionNeeded),
+    )]));
+    let response: Arc<dyn ResponseModel> =
+        Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+    let summary_impl = Arc::new(QueuedSummaryModel::new(vec![Ok(
+        "compose should not run".to_string()
+    )]));
+    let summary: Arc<dyn SummaryModel> = summary_impl.clone();
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ],
+        E2E_POLICY_BASE,
+    );
+
+    harness
+        .run_text_turn("hi")
+        .await
+        .expect("zero-tool final turn should succeed");
+
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["Handled directly by response writer.".to_string()]
+    );
+    assert_eq!(
+        summary_impl.call_count(),
+        0,
+        "compose summary model should not run for zero-tool final_no_tool_action_needed turns"
+    );
+}
+
+#[tokio::test]
+async fn e2e_fake_heartbeat_deliver_bypasses_response_and_compose() {
+    let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+        thoughts: Some("{\"action\":\"deliver\",\"message\":\"hello\"}".to_string()),
+        tool_calls: Vec::new(),
+    })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalNoToolActionNeeded),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(Vec::new()));
+    let summary_impl = Arc::new(QueuedSummaryModel::new(Vec::new()));
+    let summary: Arc<dyn SummaryModel> = summary_impl.clone();
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    let outcome = harness
+        .run_prompt_turn(crate::ingress::IngressPrompt {
+            source: crate::ingress::PromptSource::Automation,
+            session_key: "main".to_string(),
+            turn_kind: TurnKind::Heartbeat {
+                reason: Some("cron".to_string()),
+                queued_event_ids: vec!["evt-1".to_string()],
+            },
+            text: "queued heartbeat".to_string(),
+            modality: InteractionModality::Text,
+            media_file_id: None,
+        })
+        .await
+        .expect("heartbeat deliver turn should succeed");
+
+    assert_eq!(outcome.assistant_message, "hello");
+    assert!(outcome.assistant_delivered);
+    assert!(!outcome.assistant_suppressed_heartbeat_ok);
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["hello".to_string()]
+    );
+    assert_eq!(summary_impl.call_count(), 0);
+}
+
+#[tokio::test]
+async fn e2e_fake_heartbeat_noop_suppresses_output() {
+    let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+        thoughts: Some("{\"action\":\"noop\"}".to_string()),
+        tool_calls: Vec::new(),
+    })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalNoToolActionNeeded),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(Vec::new()));
+    let summary_impl = Arc::new(QueuedSummaryModel::new(Vec::new()));
+    let summary: Arc<dyn SummaryModel> = summary_impl.clone();
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    let outcome = harness
+        .run_prompt_turn(crate::ingress::IngressPrompt {
+            source: crate::ingress::PromptSource::Automation,
+            session_key: "main".to_string(),
+            turn_kind: TurnKind::Heartbeat {
+                reason: Some("cron".to_string()),
+                queued_event_ids: vec!["evt-1".to_string()],
+            },
+            text: "queued heartbeat".to_string(),
+            modality: InteractionModality::Text,
+            media_file_id: None,
+        })
+        .await
+        .expect("heartbeat noop turn should succeed");
+
+    assert_eq!(outcome.assistant_message, "");
+    assert!(!outcome.assistant_delivered);
+    assert!(outcome.assistant_suppressed_heartbeat_ok);
+    assert!(assistant_messages(&harness.runtime_events()).is_empty());
+    assert_eq!(summary_impl.call_count(), 0);
+}
+
+#[tokio::test]
 async fn e2e_fake_lcm_does_not_auto_inject_trusted_memory_into_planner() {
     let _guard = env_test_lock()
         .lock()
@@ -191,6 +336,147 @@ async fn telegram_full_flow_greeting_polls_ingress_and_sends_chat_reply() {
             .iter()
             .any(|event| matches!(event, RuntimeEvent::PolicyEvaluated(_))),
         "chat-only greeting should not dispatch tools"
+    );
+}
+
+#[tokio::test]
+async fn e2e_fake_natural_language_reminder_can_use_automation_tool() {
+    let planner: Arc<dyn PlannerModel> =
+        Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+            thoughts: Some("schedule reminder".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "automation".to_string(),
+                args: BTreeMap::from([
+                    ("action".to_string(), serde_json::json!("cron_add")),
+                    ("target".to_string(), serde_json::json!("main")),
+                    (
+                        "schedule".to_string(),
+                        serde_json::json!({
+                            "kind": "at",
+                            "timestamp": "2026-12-01T09:00:00Z"
+                        }),
+                    ),
+                    ("prompt".to_string(), serde_json::json!("say hi")),
+                ]),
+            }],
+        })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+        sieve_llm::ResponseTurnOutput {
+            message: "Scheduled it.".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        },
+    )]));
+    let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    harness
+        .run_text_turn("Remind me at 2026-12-01T09:00:00Z to say hi")
+        .await
+        .expect("natural-language reminder turn should succeed");
+
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["Scheduled it.".to_string()]
+    );
+
+    let store: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&harness.cfg.automation_store_path)
+            .expect("automation store should exist"),
+    )
+    .expect("parse automation store");
+    assert_eq!(store["cron_jobs"]["cron-1"]["prompt"], "say hi");
+    assert_eq!(store["cron_jobs"]["cron-1"]["target"], "main");
+    assert_eq!(store["cron_jobs"]["cron-1"]["schedule"]["kind"], "at");
+    assert_eq!(
+        store["cron_jobs"]["cron-1"]["schedule"]["at_ms"],
+        serde_json::json!(1_796_115_600_000_u64)
+    );
+}
+
+#[tokio::test]
+async fn e2e_fake_relative_reminder_uses_after_schedule_and_succeeds() {
+    let planner: Arc<dyn PlannerModel> =
+        Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+            thoughts: Some("schedule reminder".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "automation".to_string(),
+                args: BTreeMap::from([
+                    ("action".to_string(), serde_json::json!("cron_add")),
+                    ("target".to_string(), serde_json::json!("main")),
+                    (
+                        "schedule".to_string(),
+                        serde_json::json!({
+                            "kind": "after",
+                            "delay": "1m"
+                        }),
+                    ),
+                    ("prompt".to_string(), serde_json::json!("say hi")),
+                ]),
+            }],
+        })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+        sieve_llm::ResponseTurnOutput {
+            message: "Scheduled it.".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        },
+    )]));
+    let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    let before_ms = crate::logging::now_ms();
+    harness
+        .run_text_turn("in one minute send me a message saying hi")
+        .await
+        .expect("relative reminder turn should succeed");
+    let after_ms = crate::logging::now_ms();
+
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["Scheduled it.".to_string()]
+    );
+
+    let store: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&harness.cfg.automation_store_path)
+            .expect("automation store should exist"),
+    )
+    .expect("parse automation store");
+    let at_ms = store["cron_jobs"]["cron-1"]["schedule"]["at_ms"]
+        .as_u64()
+        .expect("at_ms should be u64");
+    assert_eq!(store["cron_jobs"]["cron-1"]["schedule"]["kind"], "at");
+    assert!(
+        at_ms >= before_ms.saturating_add(60_000),
+        "scheduled time should be at least one minute out"
+    );
+    assert!(
+        at_ms <= after_ms.saturating_add(65_000),
+        "scheduled time should stay close to one minute out"
     );
 }
 

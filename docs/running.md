@@ -13,6 +13,8 @@
    - `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` for Telegram sender allowlisting
    - `SIEVE_POLICY_PATH` to override the default policy file (`docs/policy/baseline-policy.toml`)
    - `SIEVE_HOME` to override the default state root (`~/.sieve`)
+   - `SIEVE_HEARTBEAT_EVERY` to enable periodic main-session heartbeat wakeups (for example `15m`, `1h`, `1d`)
+   - `SIEVE_HEARTBEAT_PROMPT` to override heartbeat instructions inline instead of reading `HEARTBEAT.md`
    - `SIEVE_MAX_CONCURRENT_TURNS` to cap long-running mode concurrency (default `4`)
    - `SIEVE_MAX_PLANNER_STEPS` to cap planner act/observe loops (default `3`)
    - `SIEVE_MAX_SUMMARY_CALLS_PER_TURN` to cap compose/evidence/gate summary calls per turn (default `12`)
@@ -71,10 +73,74 @@ Expected result:
 - current working directory printed by `pwd`
 - `run-1: ...` assistant reply from the response-writer phase
 
+### Docker
+
+The repo ships a multi-stage Debian image in [`Dockerfile`](../Dockerfile).
+The runtime image is `debian:bookworm-slim` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
+The Nick CLI tools are downloaded from their latest GitHub releases at build time instead of being built from source.
+Container defaults:
+- workdir: `/workspace`
+- `SIEVE_RUNTIME_CWD=/workspace`
+- `SIEVE_HOME=/data/.sieve`
+- `SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml`
+
+Build locally:
+
+```bash
+docker build -t sieve:local .
+```
+
+Run against the current checkout:
+
+```bash
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local "review workspace status"
+```
+
+Run long-lived mode:
+
+```bash
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local
+```
+
+If `bubblewrap` quarantine fails under Docker, allow unprivileged user namespaces on the host or add the extra container privileges your runtime requires.
+If a release asset name ever changes, override the matcher with `--build-arg BRAVE_SEARCH_ASSET_REGEX=...`, `ST_ASSET_REGEX=...`, or `SIEVE_LCM_ASSET_REGEX=...`.
+`CODEX_NPM_SPEC` still controls the installed Codex npm package spec.
+
+### Release Automation
+
+`.github/workflows/release.yml` runs on pushes to `master`.
+For non-release commits it bumps the shared workspace patch version, regenerates both lockfiles, commits the bump back to `master`, and then builds and pushes `nick1udwig/sieve:<version>` plus `nick1udwig/sieve:latest` for `linux/amd64` and `linux/arm64`.
+The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+
 ### Modes
 
 - Single command mode: pass a CLI prompt, for example `cargo run -p sieve-app -- "review workspace status"`.
 - Long-running agent mode: omit the CLI prompt. The app stays up, accepts prompts from stdin and Telegram chat, and executes turns concurrently up to `SIEVE_MAX_CONCURRENT_TURNS`.
+- Heartbeat and cron automation run only in long-running mode.
+
+### Heartbeat And Cron
+
+- Heartbeat wakes the durable `main` session on an interval or via `/heartbeat now`.
+- Heartbeat instructions come from `HEARTBEAT.md` under `SIEVE_RUNTIME_CWD`, unless `SIEVE_HEARTBEAT_PROMPT` overrides them.
+- If heartbeat decides nothing needs user-facing output, it replies internally with `HEARTBEAT_OK` and Sieve stays silent.
+- Durable automation state lives at `$SIEVE_HOME/state/automation.json`.
+- `main` cron queues a trusted system event into the durable main session, then heartbeat decides what to surface.
+- `isolated` cron runs a separate synthetic turn under logical session key `cron:<job_id>` and does not share main-session conversation state.
+- One-shot `at` jobs disable themselves after firing.
+- One-shot relative `after` jobs resolve to a single future run time, then disable themselves after firing.
+- Repeating `every` and `cron` jobs reschedule automatically.
+
+Long-running mode command surface:
+
+- `/heartbeat now`
+- `/cron list`
+- `/cron add main after 1m -- remind me to say hi`
+- `/cron add main every 15m -- remind me to check deploys`
+- `/cron add main at 2026-03-06T09:00:00Z -- remind me about standup`
+- `/cron add isolated cron 0 9 * * 1-5 -- send build summary`
+- `/cron pause cron-1`
+- `/cron resume cron-1`
+- `/cron rm cron-1`
 
 ### Telegram Approval Flow
 
@@ -90,6 +156,7 @@ Expected result:
 - Runtime JSONL logs are one canonical event stream at `$SIEVE_HOME/logs/runtime-events.jsonl`.
 - Canonical events include runtime events, conversation turns, planner/controller decisions, and compose audit records.
 - Canonical event records include `session_id`, unique `turn_id`, and per-session `turn_seq`.
+- Canonical event records also include logical `turn_kind` and `logical_session_key` metadata for user, heartbeat, and cron turns.
 - LLM provider wire logs default to `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl` and contain exact request payloads plus raw response bodies per attempt.
 - Planner turns run in an act/observe loop bounded by `SIEVE_MAX_PLANNER_STEPS`, with typed Q-LLM guidance deciding whether to continue tool actions or finalize.
 - Planner never sees raw untrusted stdout/stderr strings.

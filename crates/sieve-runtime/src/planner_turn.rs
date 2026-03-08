@@ -3,8 +3,8 @@ use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION}
 use sieve_types::{
     ApprovalRequestId, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
     EndorseStateTransition, PlannerBrowserSession, PlannerGuidanceFrame, PlannerToolCall,
-    PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport, UncertainMode,
-    UnknownMode, ValueRef,
+    PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport, TrustedToolEffect,
+    UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 
@@ -14,6 +14,8 @@ pub struct PlannerRunRequest {
     pub cwd: String,
     pub user_message: String,
     pub allowed_tools: Vec<String>,
+    pub current_time_utc: Option<String>,
+    pub current_timezone: Option<String>,
     pub allowed_net_connect_scopes: Vec<String>,
     pub browser_sessions: Vec<PlannerBrowserSession>,
     pub previous_events: Vec<RuntimeEvent>,
@@ -26,6 +28,12 @@ pub struct PlannerRunRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannerToolResult {
+    Automation {
+        request: sieve_types::AutomationRequest,
+        message: Option<String>,
+        effect: Option<TrustedToolEffect>,
+        failure_reason: Option<String>,
+    },
     Bash {
         command: String,
         disposition: RuntimeDisposition,
@@ -58,6 +66,8 @@ impl RuntimeOrchestrator {
                 run_id: request.run_id.clone(),
                 user_message: request.user_message.clone(),
                 allowed_tools: request.allowed_tools.clone(),
+                current_time_utc: request.current_time_utc.clone(),
+                current_timezone: request.current_timezone.clone(),
                 allowed_net_connect_scopes: request.allowed_net_connect_scopes.clone(),
                 browser_sessions: request.browser_sessions.clone(),
                 previous_events: request.previous_events.clone(),
@@ -70,6 +80,27 @@ impl RuntimeOrchestrator {
             Self::ensure_tool_allowed(idx, &tool_call.tool_name, &request.allowed_tools)?;
             let typed_call = self.validate_planner_tool_call(idx, &tool_call)?;
             match typed_call {
+                TypedCall::Automation(automation_request) => {
+                    let automation = self.automation.as_ref().ok_or_else(|| {
+                        RuntimeError::Automation(
+                            "automation tool is not configured for this runtime".to_string(),
+                        )
+                    })?;
+                    match automation.handle_request(automation_request.clone()).await {
+                        Ok(result) => tool_results.push(PlannerToolResult::Automation {
+                            request: automation_request,
+                            message: Some(result.message),
+                            effect: result.effect,
+                            failure_reason: None,
+                        }),
+                        Err(err) => tool_results.push(PlannerToolResult::Automation {
+                            request: automation_request,
+                            message: None,
+                            effect: None,
+                            failure_reason: Some(err),
+                        }),
+                    }
+                }
                 TypedCall::Bash(args) => {
                     let disposition = self
                         .orchestrate_shell(ShellRunRequest {
