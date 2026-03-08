@@ -1,0 +1,98 @@
+name: release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bubblewrap ffmpeg libssl-dev pkg-config strace
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Compute release version
+        id: version
+        run: |
+          if [[ "${{ github.event.head_commit.message }}" == chore\(release\):\ bump\ version\ to\ * ]]; then
+            version="$(scripts/bump-version.sh --current)"
+            bumped=false
+          else
+            version="$(scripts/bump-version.sh --write)"
+            bumped=true
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "bumped=${bumped}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check version sync
+        run: scripts/bump-version.sh --check
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Typecheck workspace
+        run: cargo check --workspace --locked
+
+      - name: Test workspace
+        run: cargo test --workspace --locked
+
+      - name: Commit version bump
+        if: steps.version.outputs.bumped == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock crates/sieve-tool-contracts/Cargo.toml crates/sieve-tool-contracts/Cargo.lock
+          git commit -m "chore(release): bump version to ${{ steps.version.outputs.version }}"
+          git push origin HEAD:master
+
+      - name: Capture build metadata
+        id: meta
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            nick1udwig/sieve:${{ steps.version.outputs.version }}
+            nick1udwig/sieve:latest
+          build-args: |
+            SIEVE_VERSION=${{ steps.version.outputs.version }}
+            VCS_REF=${{ steps.meta.outputs.sha }}
+            BUILD_DATE=${{ steps.meta.outputs.created }}

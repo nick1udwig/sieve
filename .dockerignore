@@ -1,0 +1,12 @@
+.git
+.github
+.sieve
+target
+**/target
+.env
+.env.*
+!.env.example
+docs/*
+!docs/policy/
+!docs/policy/**
+papers

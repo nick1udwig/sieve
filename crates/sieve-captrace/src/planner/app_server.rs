@@ -132,7 +132,7 @@ impl AppServerWsClient {
                 "clientInfo": {
                     "name": "sieve_captrace",
                     "title": "Sieve CapTrace",
-                    "version": "0.1.0"
+                    "version": env!("CARGO_PKG_VERSION")
                 }
             }),
             Duration::from_secs(5),
