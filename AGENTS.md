@@ -81,6 +81,7 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 
 ## Critical Thinking
 - Fix root cause (not band-aid).
+- Typed tool args with hidden format rules: avoid opaque strings; prefer typed unions or let runtime parse higher-level natural language.
 - Unsure: read more code; if still stuck, ask w/ short options.
 - Conflicts: call out; pick safer path.
 - Unrecognized changes: assume other agent; keep going; focus your changes. If it causes issues, stop + ask user.

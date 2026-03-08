@@ -6,6 +6,132 @@
         "args": {
           "additionalProperties": false,
           "properties": {
+            "action": {
+              "enum": [
+                "cron_list",
+                "cron_add",
+                "cron_remove",
+                "cron_pause",
+                "cron_resume"
+              ],
+              "type": "string"
+            },
+            "job_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prompt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "schedule": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "delay": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "after"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "delay"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "at"
+                    },
+                    "timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "timestamp"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "interval": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "every"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "interval"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "expr": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "cron"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "expr"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "enum": [
+                "main",
+                "isolated",
+                null
+              ],
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        "tool_name": {
+          "const": "automation"
+        }
+      },
+      "required": [
+        "tool_name",
+        "args"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "additionalProperties": false,
+          "properties": {
             "cmd": {
               "type": "string"
             }

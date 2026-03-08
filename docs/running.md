@@ -13,6 +13,8 @@
    - `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` for Telegram sender allowlisting
    - `SIEVE_POLICY_PATH` to override the default policy file (`docs/policy/baseline-policy.toml`)
    - `SIEVE_HOME` to override the default state root (`~/.sieve`)
+   - `SIEVE_HEARTBEAT_EVERY` to enable periodic main-session heartbeat wakeups (for example `15m`, `1h`, `1d`)
+   - `SIEVE_HEARTBEAT_PROMPT` to override heartbeat instructions inline instead of reading `HEARTBEAT.md`
    - `SIEVE_MAX_CONCURRENT_TURNS` to cap long-running mode concurrency (default `4`)
    - `SIEVE_MAX_PLANNER_STEPS` to cap planner act/observe loops (default `3`)
    - `SIEVE_MAX_SUMMARY_CALLS_PER_TURN` to cap compose/evidence/gate summary calls per turn (default `12`)
@@ -114,6 +116,31 @@ The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKE
 
 - Single command mode: pass a CLI prompt, for example `cargo run -p sieve-app -- "review workspace status"`.
 - Long-running agent mode: omit the CLI prompt. The app stays up, accepts prompts from stdin and Telegram chat, and executes turns concurrently up to `SIEVE_MAX_CONCURRENT_TURNS`.
+- Heartbeat and cron automation run only in long-running mode.
+
+### Heartbeat And Cron
+
+- Heartbeat wakes the durable `main` session on an interval or via `/heartbeat now`.
+- Heartbeat instructions come from `HEARTBEAT.md` under `SIEVE_RUNTIME_CWD`, unless `SIEVE_HEARTBEAT_PROMPT` overrides them.
+- If heartbeat decides nothing needs user-facing output, it replies internally with `HEARTBEAT_OK` and Sieve stays silent.
+- Durable automation state lives at `$SIEVE_HOME/state/automation.json`.
+- `main` cron queues a trusted system event into the durable main session, then heartbeat decides what to surface.
+- `isolated` cron runs a separate synthetic turn under logical session key `cron:<job_id>` and does not share main-session conversation state.
+- One-shot `at` jobs disable themselves after firing.
+- One-shot relative `after` jobs resolve to a single future run time, then disable themselves after firing.
+- Repeating `every` and `cron` jobs reschedule automatically.
+
+Long-running mode command surface:
+
+- `/heartbeat now`
+- `/cron list`
+- `/cron add main after 1m -- remind me to say hi`
+- `/cron add main every 15m -- remind me to check deploys`
+- `/cron add main at 2026-03-06T09:00:00Z -- remind me about standup`
+- `/cron add isolated cron 0 9 * * 1-5 -- send build summary`
+- `/cron pause cron-1`
+- `/cron resume cron-1`
+- `/cron rm cron-1`
 
 ### Telegram Approval Flow
 
@@ -129,6 +156,7 @@ The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKE
 - Runtime JSONL logs are one canonical event stream at `$SIEVE_HOME/logs/runtime-events.jsonl`.
 - Canonical events include runtime events, conversation turns, planner/controller decisions, and compose audit records.
 - Canonical event records include `session_id`, unique `turn_id`, and per-session `turn_seq`.
+- Canonical event records also include logical `turn_kind` and `logical_session_key` metadata for user, heartbeat, and cron turns.
 - LLM provider wire logs default to `$SIEVE_HOME/logs/llm-provider-exchanges.jsonl` and contain exact request payloads plus raw response bodies per attempt.
 - Planner turns run in an act/observe loop bounded by `SIEVE_MAX_PLANNER_STEPS`, with typed Q-LLM guidance deciding whether to continue tool actions or finalize.
 - Planner never sees raw untrusted stdout/stderr strings.

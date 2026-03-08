@@ -34,6 +34,7 @@ fn denied_outcomes_only_message_reports_attempt_and_reason() {
         trusted_user_message: "weather".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -78,6 +79,7 @@ fn compose_gate_followup_signal_ignores_interstitial_continue_when_explicit_answ
         trusted_user_message: "what is the top video?".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: vec![sieve_llm::ResponseEvidenceRecord {
             ref_id: "artifact-1".to_string(),
             summary: "The first visible video result is Jordan Peterson Live on Tour.".to_string(),
@@ -115,4 +117,64 @@ fn compose_gate_followup_signal_ignores_interstitial_continue_when_explicit_answ
     });
 
     assert!(compose_gate_followup_signal(gate.as_ref(), &input).is_none());
+}
+
+#[test]
+fn compose_gate_ignores_gate_negation_when_trusted_effect_exists() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "in one minute send me a message saying hi".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: Some("scheduled reminder".to_string()),
+        trusted_effects: vec![sieve_types::TrustedToolEffect::CronAdded {
+            job_id: "cron-1".to_string(),
+            target: sieve_types::AutomationTarget::Main,
+            run_at_ms: 1_762_839_600_000,
+            prompt: "hi".to_string(),
+            delivery_mode: sieve_types::AutomationDeliveryMode::MainSessionMessage,
+        }],
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![],
+    };
+    let gate = ComposeGateOutput {
+        verdict: "REVISE".to_string(),
+        reason: Some("unsupported external action; cannot send that message".to_string()),
+        continue_code: Some(102),
+    };
+
+    assert!(compose_gate_requires_retry(
+        "Scheduled. I'll send `hi` here in about a minute.",
+        "in one minute send me a message saying hi",
+        &input,
+        Some(&gate)
+    )
+    .is_none());
+    assert!(compose_gate_followup_signal(Some(&gate), &input).is_none());
+}
+
+#[test]
+fn compose_gate_retries_when_message_negates_trusted_effect() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "in one minute send me a message saying hi".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: Some("scheduled reminder".to_string()),
+        trusted_effects: vec![sieve_types::TrustedToolEffect::CronAdded {
+            job_id: "cron-1".to_string(),
+            target: sieve_types::AutomationTarget::Main,
+            run_at_ms: 1_762_839_600_000,
+            prompt: "hi".to_string(),
+            delivery_mode: sieve_types::AutomationDeliveryMode::MainSessionMessage,
+        }],
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![],
+    };
+
+    assert!(compose_gate_requires_retry(
+        "I can't actually send you a message saying hi.",
+        "in one minute send me a message saying hi",
+        &input,
+        None,
+    )
+    .is_some());
 }

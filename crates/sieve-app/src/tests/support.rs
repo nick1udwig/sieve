@@ -74,6 +74,7 @@ pub(crate) struct TelegramFlowResult {
 
 pub(crate) struct AppE2eHarness {
     runtime: Arc<RuntimeOrchestrator>,
+    _automation: Option<Arc<AutomationManager>>,
     approval_bus: Arc<InProcessApprovalBus>,
     guidance_model: Arc<dyn GuidanceModel>,
     response_model: Arc<dyn ResponseModel>,
@@ -121,7 +122,11 @@ impl AppE2eHarness {
             sieve_home: root.clone(),
             policy_path: PathBuf::from(DEFAULT_POLICY_PATH),
             event_log_path: event_log_path.clone(),
+            automation_store_path: root.join("state/automation.json"),
             runtime_cwd: root.to_string_lossy().to_string(),
+            heartbeat_interval_ms: None,
+            heartbeat_prompt_override: None,
+            heartbeat_file_path: root.join("HEARTBEAT.md"),
             allowed_tools,
             allowed_net_connect_scopes: Vec::new(),
             unknown_mode: UnknownMode::Deny,
@@ -165,6 +170,15 @@ impl AppE2eHarness {
                 .expect("create e2e fanout event log"),
         );
         let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let automation = if cfg.allowed_tools.iter().any(|tool| tool == "automation") {
+            let (prompt_tx, _prompt_rx) = tokio_mpsc::unbounded_channel();
+            Some(Arc::new(
+                AutomationManager::new(&cfg, prompt_tx, Arc::new(RuntimeClock))
+                    .expect("create automation manager"),
+            ))
+        } else {
+            None
+        };
         let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
             shell: Arc::new(BasicShellAnalyzer),
             summaries: Arc::new(DefaultCommandSummarizer),
@@ -172,6 +186,9 @@ impl AppE2eHarness {
             quarantine: Arc::new(BwrapQuarantineRunner::default()),
             mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
             planner,
+            automation: automation
+                .clone()
+                .map(|manager| -> Arc<dyn sieve_runtime::AutomationTool> { manager }),
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),
             clock: Arc::new(RuntimeClock),
@@ -179,6 +196,7 @@ impl AppE2eHarness {
 
         Self {
             runtime,
+            _automation: automation,
             approval_bus,
             guidance_model,
             response_model,
@@ -209,8 +227,15 @@ impl AppE2eHarness {
         self
     }
 
-    pub(crate) async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
-        let reserved_turn = self.event_log.reserve_turn(PromptSource::Stdin.as_str());
+    pub(crate) async fn run_prompt_turn(
+        &self,
+        prompt: IngressPrompt,
+    ) -> Result<TurnOutcome, String> {
+        let reserved_turn = self.event_log.reserve_turn_with_metadata(
+            prompt.source.as_str(),
+            &prompt.session_key,
+            prompt.turn_kind.as_str(),
+        );
         run_turn(
             &self.runtime,
             self.guidance_model.as_ref(),
@@ -220,13 +245,22 @@ impl AppE2eHarness {
             &self.event_log,
             &self.cfg,
             reserved_turn.run_id,
-            PromptSource::Stdin,
-            InteractionModality::Text,
-            None,
-            prompt.to_string(),
+            &prompt,
         )
         .await
+        .map(|outcome| outcome)
         .map_err(|err| err.to_string())
+    }
+
+    pub(crate) async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
+        self.run_prompt_turn(IngressPrompt::user(
+            PromptSource::Stdin,
+            prompt.to_string(),
+            InteractionModality::Text,
+            None,
+        ))
+        .await
+        .map(|_| ())
     }
 
     fn drain_telegram_events(
@@ -292,7 +326,11 @@ impl AppE2eHarness {
             .map_err(|_| "timed out waiting for telegram ingress prompt".to_string())?
             .ok_or_else(|| "telegram ingress prompt channel closed".to_string())?;
 
-        let reserved_turn = self.event_log.reserve_turn(PromptSource::Telegram.as_str());
+        let reserved_turn = self.event_log.reserve_turn_with_metadata(
+            PromptSource::Telegram.as_str(),
+            &ingress.session_key,
+            ingress.turn_kind.as_str(),
+        );
         let typing_guard = TypingGuard::start(
             self.telegram_event_tx.clone(),
             reserved_turn.run_id.0.clone(),
@@ -308,10 +346,7 @@ impl AppE2eHarness {
             &self.event_log,
             &self.cfg,
             reserved_turn.run_id,
-            PromptSource::Telegram,
-            ingress.modality,
-            ingress.media_file_id,
-            ingress.text,
+            &ingress,
         )
         .await
         .map_err(|err| err.to_string())?;

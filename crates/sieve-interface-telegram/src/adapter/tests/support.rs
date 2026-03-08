@@ -373,6 +373,7 @@ reason = "trash requires approval"
         approval_bus: approval_bus.clone(),
         event_log: event_log.clone(),
         clock: Arc::new(RuntimeSystemClock),
+        automation: None,
     }));
     (runtime, approval_bus, event_log)
 }

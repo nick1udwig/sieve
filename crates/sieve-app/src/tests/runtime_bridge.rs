@@ -86,6 +86,8 @@ async fn runtime_bridge_submit_prompt_enqueues_telegram_input() {
 
     let prompt = rx.recv().await.expect("expected prompt");
     assert_eq!(prompt.source, PromptSource::Telegram);
+    assert_eq!(prompt.session_key, "main");
+    assert_eq!(prompt.turn_kind, TurnKind::User);
     assert_eq!(prompt.text, "check logs");
     assert_eq!(prompt.modality, InteractionModality::Text);
     assert!(prompt.media_file_id.is_none());
@@ -99,7 +101,7 @@ async fn fanout_runtime_event_log_records_and_forwards_events() {
     let _ = fs::remove_file(&path);
     let log = FanoutRuntimeEventLog::with_session_id(path.clone(), tx, "sess-log".to_string())
         .expect("create fanout log");
-    let turn = log.reserve_turn("telegram");
+    let turn = log.reserve_turn_with_metadata("telegram", "main", "user");
     let event = RuntimeEvent::PolicyEvaluated(PolicyEvaluatedEvent {
         schema_version: 1,
         run_id: turn.run_id.clone(),
@@ -137,6 +139,8 @@ async fn fanout_runtime_event_log_records_and_forwards_events() {
     assert_eq!(records[0]["turn_id"], Value::from(turn.run_id.0.clone()));
     assert_eq!(records[0]["turn_seq"], Value::from(1));
     assert_eq!(records[0]["source"], Value::from("telegram"));
+    assert_eq!(records[0]["logical_session_key"], Value::from("main"));
+    assert_eq!(records[0]["turn_kind"], Value::from("user"));
     assert_eq!(records[0]["component"], Value::from("policy"));
     assert_eq!(
         records[0]["payload"]["decision"]["kind"],

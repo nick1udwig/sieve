@@ -72,6 +72,8 @@ pub(crate) struct ReservedTurn {
 struct TurnLogContext {
     turn_seq: u64,
     source: String,
+    session_key: String,
+    turn_kind: String,
 }
 
 pub(crate) struct FanoutRuntimeEventLog {
@@ -106,7 +108,17 @@ impl FanoutRuntimeEventLog {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn reserve_turn(&self, source: &str) -> ReservedTurn {
+        self.reserve_turn_with_metadata(source, "main", "user")
+    }
+
+    pub(crate) fn reserve_turn_with_metadata(
+        &self,
+        source: &str,
+        session_key: &str,
+        turn_kind: &str,
+    ) -> ReservedTurn {
         let turn_seq = self.next_turn_seq.fetch_add(1, Ordering::Relaxed);
         let run_id = RunId(format!("{}-t{}", self.session_id, turn_seq));
         self.turn_contexts
@@ -117,6 +129,8 @@ impl FanoutRuntimeEventLog {
                 TurnLogContext {
                     turn_seq,
                     source: source.to_string(),
+                    session_key: session_key.to_string(),
+                    turn_kind: turn_kind.to_string(),
                 },
             );
         ReservedTurn { run_id, turn_seq }
@@ -190,6 +204,8 @@ impl FanoutRuntimeEventLog {
         if let Some(context) = context {
             record["turn_seq"] = serde_json::json!(context.turn_seq);
             record["source"] = serde_json::json!(context.source);
+            record["logical_session_key"] = serde_json::json!(context.session_key);
+            record["turn_kind"] = serde_json::json!(context.turn_kind);
         }
         Ok(record)
     }

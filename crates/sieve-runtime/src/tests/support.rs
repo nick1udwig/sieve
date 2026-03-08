@@ -220,6 +220,73 @@ impl PlannerModel for CapturingPlanner {
     }
 }
 
+pub(crate) struct CapturingAutomation {
+    message: String,
+    requests: StdMutex<Vec<AutomationRequest>>,
+}
+
+impl CapturingAutomation {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            requests: StdMutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn requests(&self) -> Vec<AutomationRequest> {
+        self.requests.lock().expect("automation lock").clone()
+    }
+}
+
+#[async_trait]
+impl AutomationTool for CapturingAutomation {
+    async fn handle_request(
+        &self,
+        request: AutomationRequest,
+    ) -> Result<AutomationToolResult, String> {
+        self.requests
+            .lock()
+            .map_err(|_| "automation lock poisoned".to_string())?
+            .push(request);
+        Ok(AutomationToolResult {
+            message: self.message.clone(),
+            effect: None,
+        })
+    }
+}
+
+pub(crate) struct FailingAutomation {
+    error: String,
+    requests: StdMutex<Vec<AutomationRequest>>,
+}
+
+impl FailingAutomation {
+    pub(crate) fn new(error: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            requests: StdMutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn requests(&self) -> Vec<AutomationRequest> {
+        self.requests.lock().expect("automation lock").clone()
+    }
+}
+
+#[async_trait]
+impl AutomationTool for FailingAutomation {
+    async fn handle_request(
+        &self,
+        request: AutomationRequest,
+    ) -> Result<AutomationToolResult, String> {
+        self.requests
+            .lock()
+            .map_err(|_| "automation lock poisoned".to_string())?
+            .push(request);
+        Err(self.error.clone())
+    }
+}
+
 pub(crate) struct DeterministicClock {
     now: AtomicU64,
 }

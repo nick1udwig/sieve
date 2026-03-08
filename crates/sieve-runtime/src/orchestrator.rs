@@ -1,5 +1,6 @@
 use crate::approval_allowance::ApprovalAllowanceKey;
 use crate::approval_bus::{ApprovalBus, ApprovalBusError};
+use crate::automation::AutomationTool;
 use crate::browser_sessions::BrowserSessionState;
 use crate::event_log::{EventLogError, RuntimeEventLog};
 use crate::mainline::{MainlineRunError, MainlineRunner};
@@ -51,6 +52,8 @@ pub enum RuntimeError {
     Mainline(#[from] MainlineRunError),
     #[error("value state failed: {0}")]
     ValueState(#[from] ValueStateError),
+    #[error("automation tool failed: {0}")]
+    Automation(String),
     #[error("planner tool call contract validation failed")]
     ToolContract {
         report: ToolContractValidationReport,
@@ -70,6 +73,7 @@ pub struct RuntimeOrchestrator {
     pub(crate) quarantine: Arc<dyn QuarantineRunner>,
     pub(crate) mainline: Arc<dyn MainlineRunner>,
     pub(crate) planner: Arc<dyn PlannerModel>,
+    pub(crate) automation: Option<Arc<dyn AutomationTool>>,
     pub(crate) approval_bus: Arc<dyn ApprovalBus>,
     pub(crate) event_log: Arc<dyn RuntimeEventLog>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -86,6 +90,7 @@ pub struct RuntimeDeps {
     pub quarantine: Arc<dyn QuarantineRunner>,
     pub mainline: Arc<dyn MainlineRunner>,
     pub planner: Arc<dyn PlannerModel>,
+    pub automation: Option<Arc<dyn AutomationTool>>,
     pub approval_bus: Arc<dyn ApprovalBus>,
     pub event_log: Arc<dyn RuntimeEventLog>,
     pub clock: Arc<dyn Clock>,
@@ -102,6 +107,7 @@ impl RuntimeOrchestrator {
             quarantine: deps.quarantine,
             mainline: deps.mainline,
             planner: deps.planner,
+            automation: deps.automation,
             approval_bus: deps.approval_bus,
             event_log: deps.event_log,
             clock: deps.clock,
@@ -189,6 +195,10 @@ impl RuntimeOrchestrator {
                 current_url: state.current_url.clone(),
             })
             .collect())
+    }
+
+    pub fn has_automation_tool(&self) -> bool {
+        self.automation.is_some()
     }
 
     pub fn runtime_policy_context_for_control(

@@ -24,6 +24,8 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
         run_id: RunId("run-1".to_string()),
         user_message: "search for rust async docs".to_string(),
         allowed_tools: vec!["bash".to_string()],
+        current_time_utc: Some("2026-03-08T06:30:00Z".to_string()),
+        current_timezone: Some("UTC".to_string()),
         allowed_net_connect_scopes: vec!["https://api.open-meteo.com".to_string()],
         browser_sessions: Vec::new(),
         previous_events: Vec::new(),
@@ -42,6 +44,14 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
         .and_then(Value::as_array)
         .expect("browser sessions array");
     assert!(browser_sessions.is_empty());
+    assert_eq!(
+        payload.pointer("/CURRENT_TIME_UTC").and_then(Value::as_str),
+        Some("2026-03-08T06:30:00Z")
+    );
+    assert_eq!(
+        payload.pointer("/CURRENT_TIMEZONE").and_then(Value::as_str),
+        Some("UTC")
+    );
 
     let catalog = payload
         .pointer("/BASH_COMMAND_CATALOG")
@@ -63,6 +73,8 @@ fn serialize_planner_input_omits_bash_command_catalog_when_bash_disallowed() {
         run_id: RunId("run-1".to_string()),
         user_message: "mark value trusted".to_string(),
         allowed_tools: vec!["endorse".to_string(), "declassify".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
         previous_events: Vec::new(),
@@ -83,6 +95,8 @@ fn serialize_planner_input_includes_browser_sessions() {
         run_id: RunId("run-1".to_string()),
         user_message: "inspect the page".to_string(),
         allowed_tools: vec!["bash".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: vec![sieve_types::PlannerBrowserSession {
             session_name: "ytsearch".to_string(),
@@ -108,6 +122,8 @@ fn serialize_planner_input_includes_guidance_contract_for_fetch_signal() {
         run_id: RunId("run-1".to_string()),
         user_message: "latest weather".to_string(),
         allowed_tools: vec!["bash".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
         previous_events: Vec::new(),
@@ -146,6 +162,8 @@ fn serialize_planner_input_includes_action_change_contract_for_denied_tool_signa
         run_id: RunId("run-1".to_string()),
         user_message: "status".to_string(),
         allowed_tools: vec!["bash".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
         previous_events: Vec::new(),
@@ -172,6 +190,8 @@ fn serialize_planner_input_includes_fetch_contract_for_higher_quality_signal() {
         run_id: RunId("run-1".to_string()),
         user_message: "status".to_string(),
         allowed_tools: vec!["bash".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
         previous_events: Vec::new(),
@@ -210,6 +230,8 @@ fn serialize_planner_input_includes_browser_inspection_contract() {
         run_id: RunId("run-1".to_string()),
         user_message: "what is the top video".to_string(),
         allowed_tools: vec!["bash".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: vec![sieve_types::PlannerBrowserSession {
             session_name: "ytsearch".to_string(),

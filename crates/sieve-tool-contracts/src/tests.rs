@@ -1,7 +1,8 @@
 use super::*;
 use serde_json::{json, Value};
 use sieve_types::{
-    DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ToolContractErrorCode, ValueRef,
+    AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, DeclassifyRequest,
+    EndorseRequest, Integrity, SinkKey, ToolContractErrorCode, ValueRef,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -116,6 +117,82 @@ fn validate_declassify_rejects_invalid_sink() {
 }
 
 #[test]
+fn validate_automation_cron_add_success() {
+    let call = validate(
+        "automation",
+        &json!({
+            "action": "cron_add",
+            "target": "main",
+            "schedule": {
+                "kind": "at",
+                "timestamp": "2026-03-08T12:34:56Z"
+            },
+            "prompt": "remind me to say hi"
+        }),
+    )
+    .expect("valid automation cron_add");
+    assert_eq!(
+        call,
+        TypedCall::Automation(AutomationRequest {
+            action: AutomationAction::CronAdd,
+            target: Some(AutomationTarget::Main),
+            schedule: Some(AutomationSchedule::At {
+                timestamp: "2026-03-08T12:34:56Z".to_string(),
+            }),
+            prompt: Some("remind me to say hi".to_string()),
+            job_id: None,
+        })
+    );
+}
+
+#[test]
+fn validate_automation_cron_add_requires_target() {
+    let err = validate(
+        "automation",
+        &json!({
+            "action": "cron_add",
+            "schedule": {
+                "kind": "after",
+                "delay": "15m"
+            },
+            "prompt": "remind me to check deploys"
+        }),
+    )
+    .expect_err("missing target should fail");
+    assert_eq!(err.code, ToolContractErrorCode::MissingRequiredField);
+    assert_eq!(err.argument_path, "/target");
+}
+
+#[test]
+fn validate_automation_cron_add_after_success() {
+    let call = validate(
+        "automation",
+        &json!({
+            "action": "cron_add",
+            "target": "main",
+            "schedule": {
+                "kind": "after",
+                "delay": "1m"
+            },
+            "prompt": "say hi"
+        }),
+    )
+    .expect("valid automation cron_add after");
+    assert_eq!(
+        call,
+        TypedCall::Automation(AutomationRequest {
+            action: AutomationAction::CronAdd,
+            target: Some(AutomationTarget::Main),
+            schedule: Some(AutomationSchedule::After {
+                delay: "1m".to_string(),
+            }),
+            prompt: Some("say hi".to_string()),
+            job_id: None,
+        })
+    );
+}
+
+#[test]
 fn validate_at_index_sets_tool_call_index() {
     let err = validate_at_index(3, "bash", &json!({})).expect_err("missing cmd");
     assert_eq!(err.code, ToolContractErrorCode::MissingRequiredField);
@@ -131,6 +208,7 @@ fn emitted_schema_documents_have_expected_keys() {
     assert_eq!(
         keys,
         vec![
+            "automation-args.schema.json".to_string(),
             "bash-args.schema.json".to_string(),
             "declassify-args.schema.json".to_string(),
             "endorse-args.schema.json".to_string(),
@@ -143,6 +221,7 @@ fn emitted_schema_documents_have_expected_keys() {
 #[test]
 fn planner_tool_call_schema_mentions_supported_tools() {
     let schema = planner_tool_call_schema().to_string();
+    assert!(schema.contains("\"automation\""));
     assert!(schema.contains("\"bash\""));
     assert!(schema.contains("\"endorse\""));
     assert!(schema.contains("\"declassify\""));

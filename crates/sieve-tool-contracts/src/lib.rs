@@ -5,7 +5,7 @@ mod validate;
 
 use serde::{Deserialize, Serialize};
 use sieve_types::{
-    DeclassifyRequest, EndorseRequest, Integrity, ToolContractErrorCode,
+    AutomationRequest, DeclassifyRequest, EndorseRequest, Integrity, ToolContractErrorCode,
     ToolContractValidationError, TOOL_CONTRACTS_VERSION_V1,
 };
 use thiserror::Error;
@@ -17,6 +17,7 @@ pub use schemas::{
 pub use validate::{validate, validate_at_index};
 
 pub const TOOL_CONTRACTS_VERSION: u16 = TOOL_CONTRACTS_VERSION_V1;
+pub const TOOL_AUTOMATION: &str = "automation";
 pub const TOOL_BASH: &str = "bash";
 pub const TOOL_ENDORSE: &str = "endorse";
 pub const TOOL_DECLASSIFY: &str = "declassify";
@@ -25,6 +26,16 @@ pub const TOOL_DECLASSIFY: &str = "declassify";
 #[serde(deny_unknown_fields)]
 pub struct BashArgs {
     pub cmd: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationArgs {
+    pub action: String,
+    pub target: Option<String>,
+    pub schedule: Option<serde_json::Value>,
+    pub prompt: Option<String>,
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +72,7 @@ impl From<ContractIntegrity> for Integrity {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypedCall {
+    Automation(AutomationRequest),
     Bash(BashArgs),
     Endorse(EndorseRequest),
     Declassify(DeclassifyRequest),
@@ -101,7 +113,7 @@ impl ContractError {
 }
 
 pub fn supported_tools() -> &'static [&'static str] {
-    &[TOOL_BASH, TOOL_ENDORSE, TOOL_DECLASSIFY]
+    &[TOOL_AUTOMATION, TOOL_BASH, TOOL_ENDORSE, TOOL_DECLASSIFY]
 }
 
 pub(crate) fn make_error(
