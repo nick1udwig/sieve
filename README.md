@@ -21,7 +21,6 @@ Full dependency, env, runtime, logging, Telegram, troubleshooting, and external 
 
 ## Running
 
-
 Send a one-off request with:
 
 ```bash
@@ -33,6 +32,11 @@ Start long-running mode with:
 ```bash
 cargo run --release -p sieve-app
 ```
+
+## Docker
+
+A multi-arch Docker image is built from [`Dockerfile`](Dockerfile) and published to Docker Hub as `nick1udwig/sieve`.
+Container usage, bundled CLI tools, and release automation live in [docs/running.md](docs/running.md#docker).
 
 ## Architecture
 
