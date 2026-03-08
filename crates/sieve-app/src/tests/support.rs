@@ -74,6 +74,7 @@ pub(crate) struct TelegramFlowResult {
 
 pub(crate) struct AppE2eHarness {
     runtime: Arc<RuntimeOrchestrator>,
+    _automation: Option<Arc<AutomationManager>>,
     approval_bus: Arc<InProcessApprovalBus>,
     guidance_model: Arc<dyn GuidanceModel>,
     response_model: Arc<dyn ResponseModel>,
@@ -169,6 +170,15 @@ impl AppE2eHarness {
                 .expect("create e2e fanout event log"),
         );
         let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let automation = if cfg.allowed_tools.iter().any(|tool| tool == "automation") {
+            let (prompt_tx, _prompt_rx) = tokio_mpsc::unbounded_channel();
+            Some(Arc::new(
+                AutomationManager::new(&cfg, prompt_tx, Arc::new(RuntimeClock))
+                    .expect("create automation manager"),
+            ))
+        } else {
+            None
+        };
         let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
             shell: Arc::new(BasicShellAnalyzer),
             summaries: Arc::new(DefaultCommandSummarizer),
@@ -176,6 +186,9 @@ impl AppE2eHarness {
             quarantine: Arc::new(BwrapQuarantineRunner::default()),
             mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
             planner,
+            automation: automation
+                .clone()
+                .map(|manager| -> Arc<dyn sieve_runtime::AutomationTool> { manager }),
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),
             clock: Arc::new(RuntimeClock),
@@ -183,6 +196,7 @@ impl AppE2eHarness {
 
         Self {
             runtime,
+            _automation: automation,
             approval_bus,
             guidance_model,
             response_model,

@@ -26,6 +26,10 @@ pub struct PlannerRunRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannerToolResult {
+    Automation {
+        request: sieve_types::AutomationRequest,
+        message: String,
+    },
     Bash {
         command: String,
         disposition: RuntimeDisposition,
@@ -70,6 +74,21 @@ impl RuntimeOrchestrator {
             Self::ensure_tool_allowed(idx, &tool_call.tool_name, &request.allowed_tools)?;
             let typed_call = self.validate_planner_tool_call(idx, &tool_call)?;
             match typed_call {
+                TypedCall::Automation(automation_request) => {
+                    let automation = self.automation.as_ref().ok_or_else(|| {
+                        RuntimeError::Automation(
+                            "automation tool is not configured for this runtime".to_string(),
+                        )
+                    })?;
+                    let result = automation
+                        .handle_request(automation_request.clone())
+                        .await
+                        .map_err(RuntimeError::Automation)?;
+                    tool_results.push(PlannerToolResult::Automation {
+                        request: automation_request,
+                        message: result.message,
+                    });
+                }
                 TypedCall::Bash(args) => {
                     let disposition = self
                         .orchestrate_shell(ShellRunRequest {

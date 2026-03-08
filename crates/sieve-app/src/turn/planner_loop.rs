@@ -92,8 +92,11 @@ pub(super) async fn generate_assistant_message(
                 (None, None) => planner_user_message.clone(),
             };
             let has_known_value_refs = runtime.has_known_value_refs()?;
-            let allowed_tools_for_turn =
-                super::planner_allowed_tools_for_turn(&cfg.allowed_tools, has_known_value_refs);
+            let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
+                &cfg.allowed_tools,
+                has_known_value_refs,
+                runtime.has_automation_tool(),
+            );
             let browser_sessions = runtime.planner_browser_sessions()?;
             let step_result = match runtime
                 .orchestrate_planner_turn(PlannerRunRequest {

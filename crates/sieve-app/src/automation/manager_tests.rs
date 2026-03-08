@@ -4,7 +4,10 @@ use crate::config::DEFAULT_POLICY_PATH;
 use crate::lcm_integration::LcmIntegrationConfig;
 use crate::logging::now_ms;
 use sieve_runtime::Clock;
-use sieve_types::{UncertainMode, UnknownMode};
+use sieve_types::{
+    AutomationAction, AutomationRequest, AutomationScheduleKind, AutomationTarget, UncertainMode,
+    UnknownMode,
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -114,5 +117,80 @@ async fn process_ready_enqueues_heartbeat_for_due_main_cron_job() {
     assert_eq!(prompt.session_key, MAIN_SESSION_KEY);
     assert!(matches!(prompt.turn_kind, TurnKind::Heartbeat { .. }));
     assert!(prompt.text.contains("Reminder: check deploys"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn handle_tool_request_supports_cron_lifecycle_actions() {
+    let root = unique_root("automation-manager-tool");
+    fs::create_dir_all(&root).expect("create root");
+    let (prompt_tx, _prompt_rx) = tokio_mpsc::unbounded_channel();
+    let clock = Arc::new(TestClock::new(ts("2026-03-05T10:00:00Z")));
+    let manager = AutomationManager::new(&test_cfg(&root), prompt_tx, clock).expect("manager");
+
+    let added = manager
+        .handle_tool_request(AutomationRequest {
+            action: AutomationAction::CronAdd,
+            target: Some(AutomationTarget::Main),
+            schedule_kind: Some(AutomationScheduleKind::Every),
+            schedule: Some("15m".to_string()),
+            prompt: Some("remind me to check build".to_string()),
+            job_id: None,
+        })
+        .await
+        .expect("add request");
+    assert!(added.contains("cron added: cron-1"));
+
+    let listed = manager
+        .handle_tool_request(AutomationRequest {
+            action: AutomationAction::CronList,
+            target: None,
+            schedule_kind: None,
+            schedule: None,
+            prompt: None,
+            job_id: None,
+        })
+        .await
+        .expect("list request");
+    assert!(listed.contains("cron-1 main every 15m"));
+
+    let paused = manager
+        .handle_tool_request(AutomationRequest {
+            action: AutomationAction::CronPause,
+            target: None,
+            schedule_kind: None,
+            schedule: None,
+            prompt: None,
+            job_id: Some("cron-1".to_string()),
+        })
+        .await
+        .expect("pause request");
+    assert_eq!(paused, "cron paused: cron-1");
+
+    let resumed = manager
+        .handle_tool_request(AutomationRequest {
+            action: AutomationAction::CronResume,
+            target: None,
+            schedule_kind: None,
+            schedule: None,
+            prompt: None,
+            job_id: Some("cron-1".to_string()),
+        })
+        .await
+        .expect("resume request");
+    assert!(resumed.contains("cron resumed: cron-1 next"));
+
+    let removed = manager
+        .handle_tool_request(AutomationRequest {
+            action: AutomationAction::CronRemove,
+            target: None,
+            schedule_kind: None,
+            schedule: None,
+            prompt: None,
+            job_id: Some("cron-1".to_string()),
+        })
+        .await
+        .expect("remove request");
+    assert_eq!(removed, "cron removed: cron-1");
     let _ = fs::remove_dir_all(root);
 }

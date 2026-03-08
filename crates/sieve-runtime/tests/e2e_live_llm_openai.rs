@@ -89,6 +89,7 @@ fn mk_live_runtime(
         quarantine: Arc::new(RecordingQuarantine::default()),
         mainline: Arc::new(BashMainlineRunner),
         planner,
+        automation: None,
         approval_bus: approval_bus.clone(),
         event_log,
         clock: Arc::new(RuntimeClock),

@@ -79,12 +79,25 @@ fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmE
             "type": "function",
             "function": {
                 "name": tool_name,
+                "description": tool_description(tool_name),
                 "parameters": schema
             }
         }));
     }
 
     Ok(tools)
+}
+
+fn tool_description(tool_name: &str) -> &'static str {
+    match tool_name {
+        "automation" => {
+            "Manage heartbeat/cron automation. Use for reminders, scheduling, listing, pausing, resuming, or removing cron jobs."
+        }
+        "bash" => "Run a cataloged shell command through runtime policy gates.",
+        "endorse" => "Raise integrity of a labeled value_ref after explicit approval.",
+        "declassify" => "Allow a labeled value_ref to flow to one exact sink after explicit approval.",
+        _ => "Planner tool",
+    }
 }
 
 fn ensure_allowed_tools(

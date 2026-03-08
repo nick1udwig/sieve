@@ -87,7 +87,8 @@ pub(crate) use sieve_llm::{
 use sieve_policy::{canonicalize_net_origin_scope, TomlPolicyEngine};
 use sieve_quarantine::BwrapQuarantineRunner;
 use sieve_runtime::{
-    InProcessApprovalBus, RuntimeDeps, RuntimeOrchestrator, SystemClock as RuntimeClock,
+    AutomationTool, InProcessApprovalBus, RuntimeDeps, RuntimeOrchestrator,
+    SystemClock as RuntimeClock,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -199,17 +200,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         event_tx,
     )?);
 
-    let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
-        shell: Arc::new(BasicShellAnalyzer),
-        summaries: Arc::new(DefaultCommandSummarizer),
-        policy: Arc::new(policy),
-        quarantine: Arc::new(BwrapQuarantineRunner::default()),
-        mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
-        planner: Arc::new(planner),
-        approval_bus,
-        event_log: event_log.clone(),
-        clock: Arc::new(RuntimeClock),
-    }));
     let automation = match prompt_tx {
         Some(prompt_tx) => Some(Arc::new(AutomationManager::new(
             &cfg,
@@ -218,6 +208,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?)),
         None => None,
     };
+    let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+        shell: Arc::new(BasicShellAnalyzer),
+        summaries: Arc::new(DefaultCommandSummarizer),
+        policy: Arc::new(policy),
+        quarantine: Arc::new(BwrapQuarantineRunner::default()),
+        mainline: Arc::new(AppMainlineRunner::new(cfg.sieve_home.join("artifacts"))),
+        planner: Arc::new(planner),
+        automation: automation
+            .clone()
+            .map(|manager| -> Arc<dyn AutomationTool> { manager }),
+        approval_bus,
+        event_log: event_log.clone(),
+        clock: Arc::new(RuntimeClock),
+    }));
     if let Some(automation) = automation.clone() {
         tokio::spawn(automation.run_loop());
     }

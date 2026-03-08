@@ -13,6 +13,8 @@ use sieve_types::{
 pub(crate) const PLANNER_SYSTEM_PROMPT: &str = r#"You are a planner in a capability-secured system.
 Rules:
 - If `bash` available, use only commands listed in BASH_COMMAND_CATALOG.
+- If `automation` available, use it for reminder/scheduling requests and for listing, pausing, resuming, or removing cron jobs instead of answering with slash-command instructions.
+- For reminder/scheduling requests, prefer `automation` `cron_add` with `target=\"main\"` unless the user explicitly asks for an isolated/background-only cron job.
 - Prefer cataloged commands that directly match the user task.
 - Requests needs prior conversation memory? Use cataloged memory commands (e.g. `sieve-lcm-cli query --lane both --query \"...\" --json`) instead of guessing.
 - If user explicitly names a site/domain/app, that site is the target origin.

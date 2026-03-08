@@ -1,9 +1,12 @@
 use crate::{
-    make_error, supported_tools, BashArgs, ContractError, ToolContractErrorCode, TypedCall,
-    TOOL_BASH, TOOL_DECLASSIFY, TOOL_ENDORSE,
+    make_error, supported_tools, AutomationArgs, BashArgs, ContractError, ToolContractErrorCode,
+    TypedCall, TOOL_AUTOMATION, TOOL_BASH, TOOL_DECLASSIFY, TOOL_ENDORSE,
 };
 use serde_json::{Map, Value};
-use sieve_types::{DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ValueRef};
+use sieve_types::{
+    AutomationAction, AutomationRequest, AutomationScheduleKind, AutomationTarget,
+    DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ValueRef,
+};
 use url::Url;
 
 pub fn validate(tool_name: &str, args_json: &Value) -> Result<TypedCall, ContractError> {
@@ -16,6 +19,9 @@ pub fn validate_at_index(
     args_json: &Value,
 ) -> Result<TypedCall, ContractError> {
     match tool_name {
+        TOOL_AUTOMATION => {
+            parse_automation(tool_call_index, tool_name, args_json).map(TypedCall::Automation)
+        }
         TOOL_BASH => parse_bash(tool_call_index, tool_name, args_json).map(TypedCall::Bash),
         TOOL_ENDORSE => {
             parse_endorse(tool_call_index, tool_name, args_json).map(TypedCall::Endorse)
@@ -34,6 +40,150 @@ pub fn validate_at_index(
             Some("use one of ALLOWED_TOOLS"),
         )),
     }
+}
+
+fn parse_automation(
+    tool_call_index: usize,
+    tool_name: &str,
+    args_json: &Value,
+) -> Result<AutomationRequest, ContractError> {
+    let obj = expect_object(tool_call_index, tool_name, args_json)?;
+    reject_unknown_fields(
+        tool_call_index,
+        tool_name,
+        obj,
+        &[
+            "action",
+            "target",
+            "schedule_kind",
+            "schedule",
+            "prompt",
+            "job_id",
+        ],
+    )?;
+    let args = AutomationArgs {
+        action: required_string(tool_call_index, tool_name, obj, "action")?,
+        target: optional_string(tool_call_index, tool_name, obj, "target")?,
+        schedule_kind: optional_string(tool_call_index, tool_name, obj, "schedule_kind")?,
+        schedule: optional_string(tool_call_index, tool_name, obj, "schedule")?,
+        prompt: optional_string(tool_call_index, tool_name, obj, "prompt")?,
+        job_id: optional_string(tool_call_index, tool_name, obj, "job_id")?,
+    };
+
+    let action = match args.action.as_str() {
+        "cron_list" => AutomationAction::CronList,
+        "cron_add" => AutomationAction::CronAdd,
+        "cron_remove" => AutomationAction::CronRemove,
+        "cron_pause" => AutomationAction::CronPause,
+        "cron_resume" => AutomationAction::CronResume,
+        _ => {
+            return Err(make_error(
+                ToolContractErrorCode::InvalidEnumVariant,
+                tool_call_index,
+                tool_name,
+                "/action",
+                Some("cron_list|cron_add|cron_remove|cron_pause|cron_resume".to_string()),
+                Some(args.action),
+                "action is not a supported variant".to_string(),
+                Some("use a supported automation action"),
+            ))
+        }
+    };
+
+    let target = match args.target {
+        Some(target) => Some(match target.as_str() {
+            "main" => AutomationTarget::Main,
+            "isolated" => AutomationTarget::Isolated,
+            _ => {
+                return Err(make_error(
+                    ToolContractErrorCode::InvalidEnumVariant,
+                    tool_call_index,
+                    tool_name,
+                    "/target",
+                    Some("main|isolated".to_string()),
+                    Some(target),
+                    "target is not a supported variant".to_string(),
+                    Some("use `main` or `isolated`"),
+                ))
+            }
+        }),
+        None => None,
+    };
+
+    let schedule_kind = match args.schedule_kind {
+        Some(kind) => Some(match kind.as_str() {
+            "every" => AutomationScheduleKind::Every,
+            "at" => AutomationScheduleKind::At,
+            "cron" => AutomationScheduleKind::Cron,
+            _ => {
+                return Err(make_error(
+                    ToolContractErrorCode::InvalidEnumVariant,
+                    tool_call_index,
+                    tool_name,
+                    "/schedule_kind",
+                    Some("every|at|cron".to_string()),
+                    Some(kind),
+                    "schedule_kind is not a supported variant".to_string(),
+                    Some("use `every`, `at`, or `cron`"),
+                ))
+            }
+        }),
+        None => None,
+    };
+
+    match action {
+        AutomationAction::CronList => {}
+        AutomationAction::CronAdd => {
+            require_present(
+                tool_call_index,
+                tool_name,
+                "/target",
+                target.as_ref().map(|_| "ok"),
+                "cron_add requires target",
+            )?;
+            require_present(
+                tool_call_index,
+                tool_name,
+                "/schedule_kind",
+                schedule_kind.as_ref().map(|_| "ok"),
+                "cron_add requires schedule_kind",
+            )?;
+            require_present(
+                tool_call_index,
+                tool_name,
+                "/schedule",
+                args.schedule.as_deref(),
+                "cron_add requires schedule",
+            )?;
+            require_present(
+                tool_call_index,
+                tool_name,
+                "/prompt",
+                args.prompt.as_deref(),
+                "cron_add requires prompt",
+            )?;
+        }
+        AutomationAction::CronRemove
+        | AutomationAction::CronPause
+        | AutomationAction::CronResume => {
+            require_present(
+                tool_call_index,
+                tool_name,
+                "/job_id",
+                args.job_id.as_deref(),
+                "cron action requires job_id",
+            )?;
+        }
+    }
+
+    Ok(AutomationRequest {
+        action,
+        target,
+        schedule_kind,
+        schedule: args.schedule,
+        prompt: args.prompt,
+        job_id: args.job_id,
+    })
 }
 
 fn parse_bash(
@@ -57,6 +207,28 @@ fn parse_bash(
         ));
     }
     Ok(BashArgs { cmd })
+}
+
+fn require_present<T>(
+    tool_call_index: usize,
+    tool_name: &str,
+    argument_path: &str,
+    value: Option<T>,
+    message: &str,
+) -> Result<(), ContractError> {
+    if value.is_some() {
+        return Ok(());
+    }
+    Err(make_error(
+        ToolContractErrorCode::MissingRequiredField,
+        tool_call_index,
+        tool_name,
+        argument_path,
+        Some("present".to_string()),
+        None,
+        message.to_string(),
+        None,
+    ))
 }
 
 fn parse_endorse(

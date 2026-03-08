@@ -178,6 +178,7 @@ pub fn mk_runtime(
         quarantine,
         mainline: Arc::new(NoopMainline),
         planner,
+        automation: None,
         approval_bus: approval_bus.clone(),
         event_log: event_log.clone(),
         clock: Arc::new(TestClock::new(1000)),

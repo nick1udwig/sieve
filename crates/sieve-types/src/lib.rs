@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod automation;
 mod capabilities;
 mod commands;
 mod contract_freeze_v1;
@@ -13,6 +14,7 @@ mod policy;
 mod tests;
 mod tools;
 
+pub use automation::*;
 pub use capabilities::*;
 pub use commands::*;
 pub use contract_freeze_v1::*;

@@ -12,14 +12,14 @@ use std::path::PathBuf;
 pub(crate) fn planner_allowed_tools_for_turn(
     configured_tools: &[String],
     has_known_value_refs: bool,
+    automation_available: bool,
 ) -> Vec<String> {
-    if has_known_value_refs {
-        return configured_tools.to_vec();
-    }
-
     configured_tools
         .iter()
-        .filter(|tool| tool.as_str() != "endorse" && tool.as_str() != "declassify")
+        .filter(|tool| {
+            (has_known_value_refs || (tool.as_str() != "endorse" && tool.as_str() != "declassify"))
+                && (automation_available || tool.as_str() != "automation")
+        })
         .cloned()
         .collect()
 }
@@ -311,6 +311,23 @@ fn summarize_tool_result(
     render_refs: &mut BTreeMap<String, RenderRef>,
 ) -> ResponseToolOutcome {
     match result {
+        PlannerToolResult::Automation { request, message } => ResponseToolOutcome {
+            tool_name: "automation".to_string(),
+            outcome: format!(
+                "automation {}: {}",
+                match request.action {
+                    sieve_types::AutomationAction::CronList => "listed cron jobs",
+                    sieve_types::AutomationAction::CronAdd => "scheduled cron job",
+                    sieve_types::AutomationAction::CronRemove => "removed cron job",
+                    sieve_types::AutomationAction::CronPause => "paused cron job",
+                    sieve_types::AutomationAction::CronResume => "resumed cron job",
+                },
+                message
+            ),
+            attempted_command: None,
+            failure_reason: None,
+            refs: Vec::new(),
+        },
         PlannerToolResult::Bash {
             disposition,
             command,

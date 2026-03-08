@@ -1,4 +1,5 @@
 use super::{parse_at_timestamp_ms, parse_duration_ms, CronJobSchedule, CronSessionTarget};
+use sieve_types::{AutomationAction, AutomationRequest, AutomationScheduleKind, AutomationTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AutomationCommand {
@@ -134,6 +135,61 @@ pub(crate) fn parse_automation_command(
         schedule,
         prompt: prompt.to_string(),
     }))
+}
+
+pub(crate) fn automation_command_from_request(
+    request: AutomationRequest,
+    now_ms: u64,
+) -> Result<AutomationCommand, String> {
+    match request.action {
+        AutomationAction::CronList => Ok(AutomationCommand::CronList),
+        AutomationAction::CronAdd => {
+            let target = match request.target {
+                Some(AutomationTarget::Main) => CronSessionTarget::Main,
+                Some(AutomationTarget::Isolated) => CronSessionTarget::Isolated,
+                None => return Err("cron_add requires target".to_string()),
+            };
+            let schedule_kind = request
+                .schedule_kind
+                .ok_or_else(|| "cron_add requires schedule_kind".to_string())?;
+            let schedule_raw = request
+                .schedule
+                .ok_or_else(|| "cron_add requires schedule".to_string())?;
+            let schedule = match schedule_kind {
+                AutomationScheduleKind::Every => CronJobSchedule::Every {
+                    every_ms: parse_duration_ms(&schedule_raw)?,
+                    anchor_ms: now_ms,
+                },
+                AutomationScheduleKind::At => CronJobSchedule::At {
+                    at_ms: parse_at_timestamp_ms(&schedule_raw)?,
+                },
+                AutomationScheduleKind::Cron => CronJobSchedule::Cron { expr: schedule_raw },
+            };
+            let prompt = request
+                .prompt
+                .ok_or_else(|| "cron_add requires prompt".to_string())?;
+            Ok(AutomationCommand::CronAdd {
+                target,
+                schedule,
+                prompt,
+            })
+        }
+        AutomationAction::CronRemove => Ok(AutomationCommand::CronRemove {
+            job_id: request
+                .job_id
+                .ok_or_else(|| "cron_remove requires job_id".to_string())?,
+        }),
+        AutomationAction::CronPause => Ok(AutomationCommand::CronPause {
+            job_id: request
+                .job_id
+                .ok_or_else(|| "cron_pause requires job_id".to_string())?,
+        }),
+        AutomationAction::CronResume => Ok(AutomationCommand::CronResume {
+            job_id: request
+                .job_id
+                .ok_or_else(|| "cron_resume requires job_id".to_string())?,
+        }),
+    }
 }
 
 #[cfg(test)]

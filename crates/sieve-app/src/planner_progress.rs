@@ -346,6 +346,7 @@ fn summarize_tool_progress(tool_results: &[PlannerToolResult]) -> ToolProgressSu
     let mut summary = ToolProgressSummary::default();
     for result in tool_results {
         match result {
+            PlannerToolResult::Automation { .. } => {}
             PlannerToolResult::Bash {
                 command,
                 disposition,
@@ -408,6 +409,16 @@ fn summarize_tool_progress(tool_results: &[PlannerToolResult]) -> ToolProgressSu
 
 fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Value {
     match result {
+        PlannerToolResult::Automation { request, message } => serde_json::json!({
+            "tool": "automation",
+            "action": request.action.as_str(),
+            "target": request.target.as_ref().map(|value| value.as_str()),
+            "schedule_kind": request.schedule_kind.as_ref().map(|value| value.as_str()),
+            "has_schedule": request.schedule.as_ref().map(|value| !value.trim().is_empty()).unwrap_or(false),
+            "has_prompt": request.prompt.as_ref().map(|value| !value.trim().is_empty()).unwrap_or(false),
+            "has_job_id": request.job_id.as_ref().map(|value| !value.trim().is_empty()).unwrap_or(false),
+            "message_len": message.len(),
+        }),
         PlannerToolResult::Bash {
             command,
             disposition,

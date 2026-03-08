@@ -104,15 +104,28 @@ fn parse_policy_path_honors_explicit_env_override() {
 fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() {
     let configured = vec![
         "bash".to_string(),
+        "automation".to_string(),
         "endorse".to_string(),
         "declassify".to_string(),
     ];
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, false),
+        planner_allowed_tools_for_turn(&configured, false, false),
         vec!["bash".to_string()]
     );
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, true),
+        planner_allowed_tools_for_turn(&configured, false, true),
+        vec!["bash".to_string(), "automation".to_string()]
+    );
+    assert_eq!(
+        planner_allowed_tools_for_turn(&configured, true, false),
+        vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]
+    );
+    assert_eq!(
+        planner_allowed_tools_for_turn(&configured, true, true),
         configured
     );
 }

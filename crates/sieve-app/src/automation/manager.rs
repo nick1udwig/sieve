@@ -1,13 +1,16 @@
 use super::heartbeat::build_heartbeat_prompt;
 use super::{
-    load_automation_store, parse_automation_command, save_automation_store, AutomationCommand,
-    AutomationStore, CronJob, CronJobStatus, CronSessionTarget, MAIN_SESSION_KEY,
+    automation_command_from_request, load_automation_store, parse_automation_command,
+    save_automation_store, AutomationCommand, AutomationStore, CronJob, CronJobStatus,
+    CronSessionTarget, MAIN_SESSION_KEY,
 };
 use crate::config::AppConfig;
 use crate::ingress::{IngressPrompt, PromptSource, TurnKind};
 use crate::turn::TurnOutcome;
+use async_trait::async_trait;
 use chrono::TimeZone;
-use sieve_runtime::Clock;
+use sieve_runtime::{AutomationTool, AutomationToolResult, Clock};
+use sieve_types::AutomationRequest;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -54,17 +57,29 @@ impl AutomationManager {
             return Ok(None);
         };
 
+        self.run_command(command).await.map(Some)
+    }
+
+    pub(crate) async fn handle_tool_request(
+        &self,
+        request: AutomationRequest,
+    ) -> Result<String, String> {
+        let command = automation_command_from_request(request, self.clock.now_ms())?;
+        self.run_command(command).await
+    }
+
+    async fn run_command(&self, command: AutomationCommand) -> Result<String, String> {
         match command {
             AutomationCommand::HeartbeatNow => {
                 self.request_heartbeat_now(Some("manual".to_string())).await;
-                Ok(Some("heartbeat queued".to_string()))
+                Ok("heartbeat queued".to_string())
             }
             AutomationCommand::CronList => {
                 let jobs = {
                     let store = self.store.lock().await;
                     store.cron_jobs.values().cloned().collect::<Vec<CronJob>>()
                 };
-                Ok(Some(format_cron_job_list(&jobs)))
+                Ok(format_cron_job_list(&jobs))
             }
             AutomationCommand::CronAdd {
                 target,
@@ -77,12 +92,12 @@ impl AutomationManager {
                     })
                     .await?;
                 self.notify.notify_waiters();
-                Ok(Some(format!(
+                Ok(format!(
                     "cron added: {} {} {}",
                     job.id,
                     target_label(&job.target),
                     job.schedule.describe()
-                )))
+                ))
             }
             AutomationCommand::CronRemove { job_id } => {
                 let removed = self
@@ -93,7 +108,7 @@ impl AutomationManager {
                     })
                     .await?;
                 self.notify.notify_waiters();
-                Ok(Some(format!("cron removed: {}", removed.id)))
+                Ok(format!("cron removed: {}", removed.id))
             }
             AutomationCommand::CronPause { job_id } => {
                 self.mutate_store(|store, now_ms| {
@@ -106,7 +121,7 @@ impl AutomationManager {
                 })
                 .await?;
                 self.notify.notify_waiters();
-                Ok(Some(format!("cron paused: {job_id}")))
+                Ok(format!("cron paused: {job_id}"))
             }
             AutomationCommand::CronResume { job_id } => {
                 let resumed = self
@@ -120,11 +135,11 @@ impl AutomationManager {
                     })
                     .await?;
                 self.notify.notify_waiters();
-                Ok(Some(format!(
+                Ok(format!(
                     "cron resumed: {} next {}",
                     resumed.id,
                     render_optional_timestamp(resumed.next_run_at_ms)
-                )))
+                ))
             }
         }
     }
@@ -405,6 +420,18 @@ impl AutomationManager {
         };
         save_automation_store(&self.store_path, &snapshot)?;
         Ok(result)
+    }
+}
+
+#[async_trait]
+impl AutomationTool for AutomationManager {
+    async fn handle_request(
+        &self,
+        request: AutomationRequest,
+    ) -> Result<AutomationToolResult, String> {
+        self.handle_tool_request(request)
+            .await
+            .map(|message| AutomationToolResult { message })
     }
 }
 

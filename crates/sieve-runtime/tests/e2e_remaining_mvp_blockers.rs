@@ -107,6 +107,7 @@ fn mk_runtime(
         quarantine: Arc::new(RecordingQuarantine::default()) as Arc<dyn QuarantineRunner>,
         mainline,
         planner: Arc::new(StaticPlanner::new(planner_output)),
+        automation: None,
         approval_bus: approval_bus.clone(),
         event_log: event_log.clone() as Arc<dyn RuntimeEventLog>,
         clock: Arc::new(SystemClock),

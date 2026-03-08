@@ -247,6 +247,71 @@ async fn telegram_full_flow_greeting_polls_ingress_and_sends_chat_reply() {
 }
 
 #[tokio::test]
+async fn e2e_fake_natural_language_reminder_can_use_automation_tool() {
+    let planner: Arc<dyn PlannerModel> =
+        Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+            thoughts: Some("schedule reminder".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "automation".to_string(),
+                args: BTreeMap::from([
+                    ("action".to_string(), serde_json::json!("cron_add")),
+                    ("target".to_string(), serde_json::json!("main")),
+                    ("schedule_kind".to_string(), serde_json::json!("at")),
+                    (
+                        "schedule".to_string(),
+                        serde_json::json!("2026-12-01T09:00:00Z"),
+                    ),
+                    ("prompt".to_string(), serde_json::json!("say hi")),
+                ]),
+            }],
+        })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+        sieve_llm::ResponseTurnOutput {
+            message: "Scheduled it.".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        },
+    )]));
+    let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    harness
+        .run_text_turn("Remind me at 2026-12-01T09:00:00Z to say hi")
+        .await
+        .expect("natural-language reminder turn should succeed");
+
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["Scheduled it.".to_string()]
+    );
+
+    let store: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&harness.cfg.automation_store_path)
+            .expect("automation store should exist"),
+    )
+    .expect("parse automation store");
+    assert_eq!(store["cron_jobs"]["cron-1"]["prompt"], "say hi");
+    assert_eq!(store["cron_jobs"]["cron-1"]["target"], "main");
+    assert_eq!(store["cron_jobs"]["cron-1"]["schedule"]["kind"], "at");
+    assert_eq!(
+        store["cron_jobs"]["cron-1"]["schedule"]["at_ms"],
+        serde_json::json!(1_796_115_600_000_u64)
+    );
+}
+
+#[tokio::test]
 async fn telegram_full_flow_weather_runs_bash_and_sends_weather_text() {
     let planner: Arc<dyn PlannerModel> = Arc::new(QueuedPlannerModel::new(vec![Ok(
             PlannerTurnOutput {
