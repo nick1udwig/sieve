@@ -1,7 +1,9 @@
 use super::input::{
     default_modality_contract, override_modality_contract, resolve_trusted_user_message,
 };
-use super::planner_loop::{emit_assistant_error_message, generate_assistant_message};
+use super::planner_loop::{
+    emit_assistant_error_message, generate_assistant_message, GeneratedAssistantMessage,
+};
 use crate::config::AppConfig;
 use crate::ingress::{IngressPrompt, PromptSource};
 use crate::lcm_integration::LcmIntegration;
@@ -95,15 +97,16 @@ pub(crate) async fn run_turn(
         &run_id,
         &trusted_user_message,
         modality_contract.response,
+        &prompt.turn_kind,
     )
     .await?;
 
-    let normalized_heartbeat = normalize_heartbeat_message(prompt, &assistant_message);
-    let delivered_text = normalized_heartbeat
-        .as_ref()
-        .map(|message| message.as_str())
-        .unwrap_or(assistant_message.as_str());
-    let assistant_delivered = normalized_heartbeat.is_some();
+    let (assistant_message, assistant_delivered, assistant_suppressed_heartbeat_ok) =
+        match assistant_message {
+            GeneratedAssistantMessage::Deliver(message) => (message, true, false),
+            GeneratedAssistantMessage::SuppressHeartbeat => (String::new(), false, true),
+        };
+    let delivered_text = assistant_message.as_str();
     if assistant_delivered {
         println!("{}: {}", run_id.0, delivered_text);
     }
@@ -157,9 +160,9 @@ pub(crate) async fn run_turn(
     }
     Ok(TurnOutcome {
         trusted_user_message,
-        assistant_message: delivered_text.to_string(),
+        assistant_message,
         assistant_delivered: assistant_delivered || delivered_audio,
-        assistant_suppressed_heartbeat_ok: normalized_heartbeat.is_none(),
+        assistant_suppressed_heartbeat_ok,
     })
 }
 
@@ -205,15 +208,4 @@ async fn deliver_audio_reply_if_requested(
             false
         }
     }
-}
-
-fn normalize_heartbeat_message(prompt: &IngressPrompt, message: &str) -> Option<String> {
-    if !matches!(prompt.turn_kind, crate::ingress::TurnKind::Heartbeat { .. }) {
-        return Some(message.to_string());
-    }
-    let trimmed = message.trim();
-    if trimmed == crate::automation::HEARTBEAT_OK_TOKEN {
-        return None;
-    }
-    Some(trimmed.to_string())
 }

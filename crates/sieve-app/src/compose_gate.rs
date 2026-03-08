@@ -3,10 +3,10 @@ use crate::response_style::{
     compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
     obvious_meta_compose_pattern,
 };
-use crate::turn::response_has_explicit_answer_candidate;
+use crate::turn::{response_has_explicit_answer_candidate, response_has_trusted_effect};
 use serde::{Deserialize, Serialize};
 use sieve_llm::ResponseTurnInput;
-use sieve_types::PlannerGuidanceSignal;
+use sieve_types::{PlannerGuidanceSignal, TrustedToolEffect};
 
 pub(crate) fn extract_trusted_evidence_lines(
     trusted_user_message: &str,
@@ -108,6 +108,9 @@ fn followup_signal_from_reason(
     reason: &str,
     response_input: &ResponseTurnInput,
 ) -> Option<PlannerGuidanceSignal> {
+    if reason_negates_trusted_effects(reason, response_input) {
+        return None;
+    }
     let has_tool_context = response_input
         .tool_outcomes
         .iter()
@@ -273,6 +276,50 @@ fn followup_signal_from_reason(
     Some(PlannerGuidanceSignal::ContinueRefineApproach)
 }
 
+fn message_or_reason_negates_scheduling(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let denies_action = lower.contains("i can't")
+        || lower.contains("i cannot")
+        || lower.contains("can't actually")
+        || lower.contains("cannot actually")
+        || lower.contains("unable to")
+        || lower.contains("do not have")
+        || lower.contains("don't have")
+        || lower.contains("not available")
+        || lower.contains("unsupported")
+        || lower.contains("not actionable");
+    let mentions_schedule = lower.contains("schedule")
+        || lower.contains("cron")
+        || lower.contains("reminder")
+        || lower.contains("message")
+        || lower.contains("send")
+        || lower.contains("tool");
+    denies_action && mentions_schedule
+}
+
+fn text_negates_effect(text: &str, effect: &TrustedToolEffect) -> bool {
+    match effect {
+        TrustedToolEffect::CronAdded { .. } => message_or_reason_negates_scheduling(text),
+    }
+}
+
+pub(crate) fn message_negates_trusted_effects(
+    message: &str,
+    response_input: &ResponseTurnInput,
+) -> bool {
+    response_input
+        .trusted_effects
+        .iter()
+        .any(|effect| text_negates_effect(message, effect))
+}
+
+fn reason_negates_trusted_effects(reason: &str, response_input: &ResponseTurnInput) -> bool {
+    response_input
+        .trusted_effects
+        .iter()
+        .any(|effect| text_negates_effect(reason, effect))
+}
+
 #[cfg(test)]
 pub(crate) fn compose_quality_followup_signal(
     quality_gate: Option<&str>,
@@ -338,6 +385,7 @@ pub(crate) fn parse_compose_gate_output(raw: Option<&str>) -> Option<ComposeGate
 pub(crate) fn compose_gate_requires_retry(
     composed_message: &str,
     trusted_user_message: &str,
+    response_input: &ResponseTurnInput,
     gate: Option<&ComposeGateOutput>,
 ) -> Option<String> {
     if obvious_meta_compose_pattern(composed_message) {
@@ -348,8 +396,14 @@ pub(crate) fn compose_gate_requires_retry(
     if let Some(diagnostic) = concise_style_diagnostic(composed_message, trusted_user_message) {
         return Some(diagnostic);
     }
+    if message_negates_trusted_effects(composed_message, response_input) {
+        return Some("response contradicted a trusted runtime side effect".to_string());
+    }
     let gate = gate?;
     if gate.verdict.eq_ignore_ascii_case("PASS") {
+        return None;
+    }
+    if reason_negates_trusted_effects(gate.reason.as_deref().unwrap_or_default(), response_input) {
         return None;
     }
     gate.reason
@@ -363,9 +417,12 @@ pub(crate) fn compose_gate_followup_signal(
     response_input: &ResponseTurnInput,
 ) -> Option<PlannerGuidanceSignal> {
     let gate = gate?;
+    if reason_negates_trusted_effects(gate.reason.as_deref().unwrap_or_default(), response_input) {
+        return None;
+    }
     if let Some(signal) = gate.continue_code.and_then(continue_signal_from_code) {
         let has_explicit_answer_candidate = response_has_explicit_answer_candidate(response_input);
-        if has_explicit_answer_candidate
+        if (has_explicit_answer_candidate || response_has_trusted_effect(response_input))
             && matches!(
                 signal,
                 PlannerGuidanceSignal::ContinueNeedEvidence

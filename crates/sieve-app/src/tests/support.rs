@@ -227,15 +227,12 @@ impl AppE2eHarness {
         self
     }
 
-    pub(crate) async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
-        let prompt = IngressPrompt::user(
-            PromptSource::Stdin,
-            prompt.to_string(),
-            InteractionModality::Text,
-            None,
-        );
+    pub(crate) async fn run_prompt_turn(
+        &self,
+        prompt: IngressPrompt,
+    ) -> Result<TurnOutcome, String> {
         let reserved_turn = self.event_log.reserve_turn_with_metadata(
-            PromptSource::Stdin.as_str(),
+            prompt.source.as_str(),
             &prompt.session_key,
             prompt.turn_kind.as_str(),
         );
@@ -251,8 +248,19 @@ impl AppE2eHarness {
             &prompt,
         )
         .await
-        .map(|_| ())
+        .map(|outcome| outcome)
         .map_err(|err| err.to_string())
+    }
+
+    pub(crate) async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
+        self.run_prompt_turn(IngressPrompt::user(
+            PromptSource::Stdin,
+            prompt.to_string(),
+            InteractionModality::Text,
+            None,
+        ))
+        .await
+        .map(|_| ())
     }
 
     fn drain_telegram_events(

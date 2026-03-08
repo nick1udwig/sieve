@@ -6,6 +6,7 @@ fn compose_quality_followup_only_triggers_for_missing_evidence() {
         trusted_user_message: "weather".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -49,6 +50,7 @@ fn compose_quality_followup_maps_required_parameter_signal() {
         trusted_user_message: "where do i live".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "lcm_expand_query".to_string(),
@@ -81,6 +83,7 @@ fn compose_quality_followup_maps_denied_tool_signal() {
         trusted_user_message: "weather tomorrow".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -105,6 +108,7 @@ fn compose_quality_followup_maps_conflict_signal() {
         trusted_user_message: "compare claims".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -136,6 +140,7 @@ fn compose_quality_followup_maps_primary_content_fetch_signal() {
         trusted_user_message: "latest status".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -169,6 +174,7 @@ fn compose_quality_followup_maps_url_extraction_signal() {
         trusted_user_message: "summarize".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: Vec::new(),
         tool_outcomes: vec![ResponseToolOutcome {
             tool_name: "bash".to_string(),
@@ -200,6 +206,7 @@ fn compose_quality_followup_suppresses_continue_when_explicit_answer_candidate_e
         trusted_user_message: "what is the top video?".to_string(),
         response_modality: InteractionModality::Text,
         planner_thoughts: None,
+        trusted_effects: Vec::new(),
         extracted_evidence: vec![sieve_llm::ResponseEvidenceRecord {
             ref_id: "artifact-1".to_string(),
             summary: "The first video result is Jordan Peterson Live on Tour.".to_string(),

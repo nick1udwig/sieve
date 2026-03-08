@@ -413,6 +413,7 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
             request,
             message,
             failure_reason,
+            ..
         } => serde_json::json!({
             "tool": "automation",
             "action": request.action.as_str(),

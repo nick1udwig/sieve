@@ -250,6 +250,7 @@ impl AutomationTool for CapturingAutomation {
             .push(request);
         Ok(AutomationToolResult {
             message: self.message.clone(),
+            effect: None,
         })
     }
 }

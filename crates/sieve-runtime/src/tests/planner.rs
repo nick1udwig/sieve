@@ -200,6 +200,7 @@ async fn orchestrate_planner_turn_dispatches_automation_tool() {
         PlannerToolResult::Automation {
             request,
             message,
+            effect,
             failure_reason,
         } => {
             assert_eq!(
@@ -215,6 +216,7 @@ async fn orchestrate_planner_turn_dispatches_automation_tool() {
                 }
             );
             assert_eq!(message.as_deref(), Some("Scheduled cron-1."));
+            assert_eq!(effect, &None);
             assert_eq!(failure_reason, &None);
         }
         other => panic!("expected automation result, got {other:?}"),
@@ -326,6 +328,7 @@ async fn orchestrate_planner_turn_keeps_automation_argument_failures_recoverable
         PlannerToolResult::Automation {
             request,
             message,
+            effect,
             failure_reason,
         } => {
             assert_eq!(
@@ -341,6 +344,7 @@ async fn orchestrate_planner_turn_keeps_automation_argument_failures_recoverable
                 }
             );
             assert_eq!(message, &None);
+            assert_eq!(effect, &None);
             assert_eq!(
                 failure_reason.as_deref(),
                 Some("timestamp must be RFC3339 or unix-ms")

@@ -114,6 +114,99 @@ async fn e2e_fake_zero_tool_final_no_tool_action_needed_skips_compose() {
 }
 
 #[tokio::test]
+async fn e2e_fake_heartbeat_deliver_bypasses_response_and_compose() {
+    let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+        thoughts: Some("{\"action\":\"deliver\",\"message\":\"hello\"}".to_string()),
+        tool_calls: Vec::new(),
+    })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalNoToolActionNeeded),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(Vec::new()));
+    let summary_impl = Arc::new(QueuedSummaryModel::new(Vec::new()));
+    let summary: Arc<dyn SummaryModel> = summary_impl.clone();
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    let outcome = harness
+        .run_prompt_turn(crate::ingress::IngressPrompt {
+            source: crate::ingress::PromptSource::Automation,
+            session_key: "main".to_string(),
+            turn_kind: TurnKind::Heartbeat {
+                reason: Some("cron".to_string()),
+                queued_event_ids: vec!["evt-1".to_string()],
+            },
+            text: "queued heartbeat".to_string(),
+            modality: InteractionModality::Text,
+            media_file_id: None,
+        })
+        .await
+        .expect("heartbeat deliver turn should succeed");
+
+    assert_eq!(outcome.assistant_message, "hello");
+    assert!(outcome.assistant_delivered);
+    assert!(!outcome.assistant_suppressed_heartbeat_ok);
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["hello".to_string()]
+    );
+    assert_eq!(summary_impl.call_count(), 0);
+}
+
+#[tokio::test]
+async fn e2e_fake_heartbeat_noop_suppresses_output() {
+    let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+        thoughts: Some("{\"action\":\"noop\"}".to_string()),
+        tool_calls: Vec::new(),
+    })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalNoToolActionNeeded),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(Vec::new()));
+    let summary_impl = Arc::new(QueuedSummaryModel::new(Vec::new()));
+    let summary: Arc<dyn SummaryModel> = summary_impl.clone();
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    let outcome = harness
+        .run_prompt_turn(crate::ingress::IngressPrompt {
+            source: crate::ingress::PromptSource::Automation,
+            session_key: "main".to_string(),
+            turn_kind: TurnKind::Heartbeat {
+                reason: Some("cron".to_string()),
+                queued_event_ids: vec!["evt-1".to_string()],
+            },
+            text: "queued heartbeat".to_string(),
+            modality: InteractionModality::Text,
+            media_file_id: None,
+        })
+        .await
+        .expect("heartbeat noop turn should succeed");
+
+    assert_eq!(outcome.assistant_message, "");
+    assert!(!outcome.assistant_delivered);
+    assert!(outcome.assistant_suppressed_heartbeat_ok);
+    assert!(assistant_messages(&harness.runtime_events()).is_empty());
+    assert_eq!(summary_impl.call_count(), 0);
+}
+
+#[tokio::test]
 async fn e2e_fake_lcm_does_not_auto_inject_trusted_memory_into_planner() {
     let _guard = env_test_lock()
         .lock()

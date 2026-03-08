@@ -38,6 +38,13 @@ impl AutomationTarget {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationDeliveryMode {
+    MainSessionMessage,
+    IsolatedTurn,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AutomationSchedule {
@@ -65,4 +72,16 @@ pub struct AutomationRequest {
     pub schedule: Option<AutomationSchedule>,
     pub prompt: Option<String>,
     pub job_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TrustedToolEffect {
+    CronAdded {
+        job_id: String,
+        target: AutomationTarget,
+        run_at_ms: u64,
+        prompt: String,
+        delivery_mode: AutomationDeliveryMode,
+    },
 }

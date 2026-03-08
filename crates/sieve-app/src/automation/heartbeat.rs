@@ -1,5 +1,6 @@
 use super::{AutomationStore, MAIN_SESSION_KEY};
 use chrono::{TimeZone, Utc};
+use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
@@ -7,6 +8,34 @@ use std::path::Path;
 pub(crate) struct HeartbeatPrompt {
     pub(crate) text: String,
     pub(crate) queued_event_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub(crate) enum HeartbeatPlannerAction {
+    Noop,
+    Deliver { message: String },
+}
+
+pub(crate) fn parse_heartbeat_planner_action(raw: &str) -> Option<HeartbeatPlannerAction> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Some(HeartbeatPlannerAction::Noop);
+    }
+    if trimmed == super::HEARTBEAT_OK_TOKEN {
+        return Some(HeartbeatPlannerAction::Noop);
+    }
+    if let Ok(action) = serde_json::from_str::<HeartbeatPlannerAction>(trimmed) {
+        return Some(match action {
+            HeartbeatPlannerAction::Deliver { message } if message.trim().is_empty() => {
+                HeartbeatPlannerAction::Noop
+            }
+            other => other,
+        });
+    }
+    Some(HeartbeatPlannerAction::Deliver {
+        message: trimmed.to_string(),
+    })
 }
 
 pub(crate) fn build_heartbeat_prompt(
@@ -32,7 +61,7 @@ pub(crate) fn build_heartbeat_prompt(
 
     let prompt = if queued_events.is_empty() {
         format!(
-            "Heartbeat wake.\nCurrent time: {now}\nReason: {}\n\nInstructions:\n{}\n\nIf nothing needs user attention right now, reply exactly HEARTBEAT_OK.",
+            "Heartbeat wake.\nCurrent time: {now}\nReason: {}\n\nInstructions:\n{}\n\nReturn exactly one JSON object.\n- If nothing needs user attention right now: {{\"action\":\"noop\"}}\n- If user-facing output is needed: {{\"action\":\"deliver\",\"message\":\"...\"}}\nDo not use markdown fences or extra text.",
             reason.unwrap_or("interval"),
             instructions.unwrap_or_default()
         )
@@ -57,10 +86,13 @@ pub(crate) fn build_heartbeat_prompt(
             )
         }));
         lines.push(String::new());
+        lines.push("Handle the queued events now.".to_string());
+        lines.push("Return exactly one JSON object.".to_string());
+        lines.push("- If nothing needs user-facing output: {\"action\":\"noop\"}".to_string());
         lines.push(
-            "Handle the queued events now. If nothing needs user-facing output, reply exactly HEARTBEAT_OK."
-                .to_string(),
+            "- If output is needed: {\"action\":\"deliver\",\"message\":\"...\"}".to_string(),
         );
+        lines.push("Do not use markdown fences or extra text.".to_string());
         lines.join("\n")
     };
 
@@ -152,6 +184,29 @@ mod tests {
         .expect("heartbeat prompt");
         assert!(prompt.text.contains("Reminder: check deploys"));
         assert!(prompt.text.contains("Review the queue."));
+        assert!(prompt
+            .text
+            .contains("{\"action\":\"deliver\",\"message\":\"...\"}"));
         assert_eq!(prompt.queued_event_ids.len(), 1);
+    }
+
+    #[test]
+    fn parse_heartbeat_planner_action_handles_json_and_legacy_text() {
+        assert_eq!(
+            parse_heartbeat_planner_action("{\"action\":\"noop\"}"),
+            Some(HeartbeatPlannerAction::Noop)
+        );
+        assert_eq!(
+            parse_heartbeat_planner_action("{\"action\":\"deliver\",\"message\":\"hello\"}"),
+            Some(HeartbeatPlannerAction::Deliver {
+                message: "hello".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_heartbeat_planner_action("hello"),
+            Some(HeartbeatPlannerAction::Deliver {
+                message: "hello".to_string(),
+            })
+        );
     }
 }

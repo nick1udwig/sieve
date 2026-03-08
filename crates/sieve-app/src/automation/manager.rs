@@ -10,7 +10,7 @@ use crate::turn::TurnOutcome;
 use async_trait::async_trait;
 use chrono::TimeZone;
 use sieve_runtime::{AutomationTool, AutomationToolResult, Clock};
-use sieve_types::AutomationRequest;
+use sieve_types::{AutomationDeliveryMode, AutomationRequest, AutomationTarget, TrustedToolEffect};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -28,6 +28,11 @@ pub(crate) struct AutomationManager {
     pending_heartbeat_reason: Mutex<Option<String>>,
     main_turns_in_flight: AtomicUsize,
     heartbeat_running: AtomicBool,
+}
+
+struct AutomationCommandResult {
+    message: String,
+    effect: Option<TrustedToolEffect>,
 }
 
 impl AutomationManager {
@@ -57,29 +62,45 @@ impl AutomationManager {
             return Ok(None);
         };
 
-        self.run_command(command).await.map(Some)
+        self.run_command(command)
+            .await
+            .map(|result| Some(result.message))
     }
 
     pub(crate) async fn handle_tool_request(
         &self,
         request: AutomationRequest,
-    ) -> Result<String, String> {
+    ) -> Result<AutomationToolResult, String> {
         let command = automation_command_from_request(request, self.clock.now_ms())?;
-        self.run_command(command).await
+        self.run_command(command)
+            .await
+            .map(|result| AutomationToolResult {
+                message: result.message,
+                effect: result.effect,
+            })
     }
 
-    async fn run_command(&self, command: AutomationCommand) -> Result<String, String> {
+    async fn run_command(
+        &self,
+        command: AutomationCommand,
+    ) -> Result<AutomationCommandResult, String> {
         match command {
             AutomationCommand::HeartbeatNow => {
                 self.request_heartbeat_now(Some("manual".to_string())).await;
-                Ok("heartbeat queued".to_string())
+                Ok(AutomationCommandResult {
+                    message: "heartbeat queued".to_string(),
+                    effect: None,
+                })
             }
             AutomationCommand::CronList => {
                 let jobs = {
                     let store = self.store.lock().await;
                     store.cron_jobs.values().cloned().collect::<Vec<CronJob>>()
                 };
-                Ok(format_cron_job_list(&jobs))
+                Ok(AutomationCommandResult {
+                    message: format_cron_job_list(&jobs),
+                    effect: None,
+                })
             }
             AutomationCommand::CronAdd {
                 target,
@@ -92,12 +113,15 @@ impl AutomationManager {
                     })
                     .await?;
                 self.notify.notify_waiters();
-                Ok(format!(
-                    "cron added: {} {} {}",
-                    job.id,
-                    target_label(&job.target),
-                    job.schedule.describe()
-                ))
+                Ok(AutomationCommandResult {
+                    message: format!(
+                        "cron added: {} {} {}",
+                        job.id,
+                        target_label(&job.target),
+                        job.schedule.describe()
+                    ),
+                    effect: Some(trusted_effect_for_added_job(&job)),
+                })
             }
             AutomationCommand::CronRemove { job_id } => {
                 let removed = self
@@ -108,7 +132,10 @@ impl AutomationManager {
                     })
                     .await?;
                 self.notify.notify_waiters();
-                Ok(format!("cron removed: {}", removed.id))
+                Ok(AutomationCommandResult {
+                    message: format!("cron removed: {}", removed.id),
+                    effect: None,
+                })
             }
             AutomationCommand::CronPause { job_id } => {
                 self.mutate_store(|store, now_ms| {
@@ -121,7 +148,10 @@ impl AutomationManager {
                 })
                 .await?;
                 self.notify.notify_waiters();
-                Ok(format!("cron paused: {job_id}"))
+                Ok(AutomationCommandResult {
+                    message: format!("cron paused: {job_id}"),
+                    effect: None,
+                })
             }
             AutomationCommand::CronResume { job_id } => {
                 let resumed = self
@@ -135,11 +165,14 @@ impl AutomationManager {
                     })
                     .await?;
                 self.notify.notify_waiters();
-                Ok(format!(
-                    "cron resumed: {} next {}",
-                    resumed.id,
-                    render_optional_timestamp(resumed.next_run_at_ms)
-                ))
+                Ok(AutomationCommandResult {
+                    message: format!(
+                        "cron resumed: {} next {}",
+                        resumed.id,
+                        render_optional_timestamp(resumed.next_run_at_ms)
+                    ),
+                    effect: None,
+                })
             }
         }
     }
@@ -429,9 +462,7 @@ impl AutomationTool for AutomationManager {
         &self,
         request: AutomationRequest,
     ) -> Result<AutomationToolResult, String> {
-        self.handle_tool_request(request)
-            .await
-            .map(|message| AutomationToolResult { message })
+        self.handle_tool_request(request).await
     }
 }
 
@@ -456,6 +487,22 @@ fn target_label(target: &CronSessionTarget) -> &'static str {
     match target {
         CronSessionTarget::Main => "main",
         CronSessionTarget::Isolated => "isolated",
+    }
+}
+
+fn trusted_effect_for_added_job(job: &CronJob) -> TrustedToolEffect {
+    TrustedToolEffect::CronAdded {
+        job_id: job.id.clone(),
+        target: match job.target {
+            CronSessionTarget::Main => AutomationTarget::Main,
+            CronSessionTarget::Isolated => AutomationTarget::Isolated,
+        },
+        run_at_ms: job.next_run_at_ms.unwrap_or(job.created_at_ms),
+        prompt: job.prompt.clone(),
+        delivery_mode: match job.target {
+            CronSessionTarget::Main => AutomationDeliveryMode::MainSessionMessage,
+            CronSessionTarget::Isolated => AutomationDeliveryMode::IsolatedTurn,
+        },
     }
 }
 

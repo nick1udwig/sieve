@@ -15,5 +15,6 @@ pub(crate) use response_refs::{
 };
 pub(crate) use response_refs::{
     format_integrity, non_empty_output_ref_ids, planner_allowed_tools_for_turn,
-    response_has_explicit_answer_candidate, summarize_with_ref_id_counted,
+    response_has_explicit_answer_candidate, response_has_trusted_effect,
+    summarize_with_ref_id_counted,
 };

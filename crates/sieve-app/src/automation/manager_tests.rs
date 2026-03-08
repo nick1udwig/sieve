@@ -140,7 +140,7 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         })
         .await
         .expect("add request");
-    assert!(added.contains("cron added: cron-1"));
+    assert!(added.message.contains("cron added: cron-1"));
 
     let listed = manager
         .handle_tool_request(AutomationRequest {
@@ -152,7 +152,7 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         })
         .await
         .expect("list request");
-    assert!(listed.contains("cron-1 main every 15m"));
+    assert!(listed.message.contains("cron-1 main every 15m"));
 
     let paused = manager
         .handle_tool_request(AutomationRequest {
@@ -164,7 +164,7 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         })
         .await
         .expect("pause request");
-    assert_eq!(paused, "cron paused: cron-1");
+    assert_eq!(paused.message, "cron paused: cron-1");
 
     let resumed = manager
         .handle_tool_request(AutomationRequest {
@@ -176,7 +176,7 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         })
         .await
         .expect("resume request");
-    assert!(resumed.contains("cron resumed: cron-1 next"));
+    assert!(resumed.message.contains("cron resumed: cron-1 next"));
 
     let removed = manager
         .handle_tool_request(AutomationRequest {
@@ -188,6 +188,6 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         })
         .await
         .expect("remove request");
-    assert_eq!(removed, "cron removed: cron-1");
+    assert_eq!(removed.message, "cron removed: cron-1");
     let _ = fs::remove_dir_all(root);
 }

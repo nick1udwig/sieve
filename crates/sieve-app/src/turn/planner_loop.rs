@@ -3,8 +3,10 @@ use super::response_refs::{
     requires_output_visibility, response_evidence_fingerprint,
     response_has_visible_selected_output,
 };
+use crate::automation::{parse_heartbeat_planner_action, HeartbeatPlannerAction};
 use crate::compose::{compose_assistant_message, ComposeAssistantOutcome, ComposePlannerDecision};
 use crate::config::{persist_runtime_approval_allowances, AppConfig};
+use crate::ingress::TurnKind;
 use crate::logging::{
     append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
     FanoutRuntimeEventLog,
@@ -26,6 +28,26 @@ use sieve_types::{
     PlannerGuidanceSignal, RunId, RuntimeEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum GeneratedAssistantMessage {
+    Deliver(String),
+    SuppressHeartbeat,
+}
+
+fn finalize_heartbeat_message(thoughts: Option<&str>) -> GeneratedAssistantMessage {
+    match parse_heartbeat_planner_action(thoughts.unwrap_or_default()) {
+        Some(HeartbeatPlannerAction::Noop) | None => GeneratedAssistantMessage::SuppressHeartbeat,
+        Some(HeartbeatPlannerAction::Deliver { message }) => {
+            let trimmed = message.trim();
+            if trimmed.is_empty() {
+                GeneratedAssistantMessage::SuppressHeartbeat
+            } else {
+                GeneratedAssistantMessage::Deliver(trimmed.to_string())
+            }
+        }
+    }
+}
 
 pub(super) async fn emit_assistant_error_message(
     event_log: &FanoutRuntimeEventLog,
@@ -60,7 +82,8 @@ pub(super) async fn generate_assistant_message(
     run_id: &RunId,
     trusted_user_message: &str,
     response_modality: InteractionModality,
-) -> Result<String, Box<dyn std::error::Error>> {
+    turn_kind: &TurnKind,
+) -> Result<GeneratedAssistantMessage, Box<dyn std::error::Error>> {
     let mut aggregated_result = PlannerRunResult {
         thoughts: None,
         tool_results: Vec::new(),
@@ -278,6 +301,25 @@ pub(super) async fn generate_assistant_message(
             }
         }
 
+        if matches!(turn_kind, TurnKind::Heartbeat { .. }) {
+            let heartbeat_message =
+                finalize_heartbeat_message(aggregated_result.thoughts.as_deref());
+            append_turn_controller_event(
+                event_log,
+                run_id,
+                "heartbeat_finalize",
+                serde_json::json!({
+                    "planner_steps_taken": planner_steps_taken,
+                    "planner_step_limit": planner_step_limit,
+                    "planner_step_hard_limit": planner_step_hard_limit,
+                    "compose_followup_cycles": compose_followup_cycles,
+                    "delivered": matches!(heartbeat_message, GeneratedAssistantMessage::Deliver(_)),
+                }),
+            )
+            .await;
+            return Ok(heartbeat_message);
+        }
+
         let (response_input, render_refs) = build_response_turn_input(
             run_id,
             trusted_user_message,
@@ -408,7 +450,7 @@ pub(super) async fn generate_assistant_message(
                 }),
             )
             .await;
-            return Ok(draft_message);
+            return Ok(GeneratedAssistantMessage::Deliver(draft_message));
         }
         let remaining_summary_budget = cfg
             .max_summary_calls_per_turn
@@ -497,6 +539,6 @@ pub(super) async fn generate_assistant_message(
             }),
         )
         .await;
-        return Ok(composed.message);
+        return Ok(GeneratedAssistantMessage::Deliver(composed.message));
     }
 }

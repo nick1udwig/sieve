@@ -5,7 +5,7 @@ use sieve_llm::{
     SummaryModel, SummaryRequest,
 };
 use sieve_runtime::{PlannerRunResult, PlannerToolResult, RuntimeDisposition};
-use sieve_types::{Integrity, InteractionModality, RunId};
+use sieve_types::{Integrity, InteractionModality, RunId, TrustedToolEffect};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -32,8 +32,10 @@ pub(crate) fn build_response_turn_input(
 ) -> (ResponseTurnInput, BTreeMap<String, RenderRef>) {
     let mut render_refs = BTreeMap::new();
     let mut tool_outcomes = Vec::with_capacity(planner_result.tool_results.len());
+    let mut trusted_effects = Vec::new();
     for tool_result in &planner_result.tool_results {
         tool_outcomes.push(summarize_tool_result(tool_result, &mut render_refs));
+        trusted_effects.extend(trusted_effects_for_tool_result(tool_result));
     }
 
     (
@@ -43,6 +45,7 @@ pub(crate) fn build_response_turn_input(
             response_modality,
             planner_thoughts: planner_result.thoughts.clone(),
             tool_outcomes,
+            trusted_effects,
             extracted_evidence: Vec::new(),
         },
         render_refs,
@@ -131,6 +134,11 @@ pub(crate) fn response_evidence_fingerprint(input: &ResponseTurnInput) -> String
         parts
             .push(serde_json::to_string(&normalized_evidence).unwrap_or_else(|_| "[]".to_string()));
     }
+    if !input.trusted_effects.is_empty() {
+        parts.push(
+            serde_json::to_string(&input.trusted_effects).unwrap_or_else(|_| "[]".to_string()),
+        );
+    }
     parts.join("\n")
 }
 
@@ -150,6 +158,10 @@ pub(crate) fn response_has_explicit_answer_candidate(input: &ResponseTurnInput) 
             })
             .unwrap_or(false)
     })
+}
+
+pub(crate) fn response_has_trusted_effect(input: &ResponseTurnInput) -> bool {
+    !input.trusted_effects.is_empty()
 }
 
 pub(crate) async fn build_response_evidence_records(
@@ -314,6 +326,7 @@ fn summarize_tool_result(
         PlannerToolResult::Automation {
             request,
             message,
+            effect: _,
             failure_reason,
         } => {
             let action = match request.action {
@@ -478,6 +491,16 @@ fn summarize_tool_result(
                 ],
             }
         }
+    }
+}
+
+fn trusted_effects_for_tool_result(result: &PlannerToolResult) -> Vec<TrustedToolEffect> {
+    match result {
+        PlannerToolResult::Automation {
+            effect: Some(effect),
+            ..
+        } => vec![effect.clone()],
+        _ => Vec::new(),
     }
 }
 

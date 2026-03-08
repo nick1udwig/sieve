@@ -3,8 +3,8 @@ use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION}
 use sieve_types::{
     ApprovalRequestId, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
     EndorseStateTransition, PlannerBrowserSession, PlannerGuidanceFrame, PlannerToolCall,
-    PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport, UncertainMode,
-    UnknownMode, ValueRef,
+    PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport, TrustedToolEffect,
+    UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 
@@ -31,6 +31,7 @@ pub enum PlannerToolResult {
     Automation {
         request: sieve_types::AutomationRequest,
         message: Option<String>,
+        effect: Option<TrustedToolEffect>,
         failure_reason: Option<String>,
     },
     Bash {
@@ -89,11 +90,13 @@ impl RuntimeOrchestrator {
                         Ok(result) => tool_results.push(PlannerToolResult::Automation {
                             request: automation_request,
                             message: Some(result.message),
+                            effect: result.effect,
                             failure_reason: None,
                         }),
                         Err(err) => tool_results.push(PlannerToolResult::Automation {
                             request: automation_request,
                             message: None,
+                            effect: None,
                             failure_reason: Some(err),
                         }),
                     }

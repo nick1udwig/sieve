@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sieve_types::{
     InteractionModality, LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput,
-    PlannerTurnInput, PlannerTurnOutput, RunId,
+    PlannerTurnInput, PlannerTurnOutput, RunId, TrustedToolEffect,
 };
 use std::collections::BTreeSet;
 use thiserror::Error;
@@ -109,6 +109,7 @@ pub struct ResponseTurnInput {
     pub response_modality: InteractionModality,
     pub planner_thoughts: Option<String>,
     pub tool_outcomes: Vec<ResponseToolOutcome>,
+    pub trusted_effects: Vec<TrustedToolEffect>,
     pub extracted_evidence: Vec<ResponseEvidenceRecord>,
 }
 
