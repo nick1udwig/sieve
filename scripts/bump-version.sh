@@ -160,15 +160,22 @@ check_sync() {
     workspace_version="$(read_workspace_version)"
     require_semver "$workspace_version"
 
-    if ! rg -q '^version\.workspace = true$' "$tool_contracts_manifest"; then
+    if ! grep -Eq '^version\.workspace = true$' "$tool_contracts_manifest"; then
         echo "crates/sieve-tool-contracts/Cargo.toml must inherit workspace version" >&2
         exit 1
     fi
 
     local mismatches
     mismatches="$(
-        rg -l '^version = "[0-9]+\.[0-9]+\.[0-9]+"$' "$repo_root/crates" -g 'Cargo.toml' \
-            | grep -v '^'"$tool_contracts_manifest"'$' || true
+        find "$repo_root/crates" -name Cargo.toml -print \
+            | while IFS= read -r manifest; do
+                if [[ "$manifest" == "$tool_contracts_manifest" ]]; then
+                    continue
+                fi
+                if grep -Eq '^version = "[0-9]+\.[0-9]+\.[0-9]+"$' "$manifest"; then
+                    printf '%s\n' "$manifest"
+                fi
+            done
     )"
     if [[ -n "$mismatches" ]]; then
         echo "crate manifests must use version.workspace = true:" >&2
