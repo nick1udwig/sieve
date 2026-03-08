@@ -21,7 +21,6 @@ Full dependency, env, runtime, logging, Telegram, troubleshooting, and external 
 
 ## Running
 
-
 Send a one-off request with:
 
 ```bash
@@ -75,3 +74,8 @@ cargo test -p sieve-app e2e_fake_ -- --nocapture
 ```
 
 Commands and coverage notes: [docs/running.md](docs/running.md#testing).
+
+## Docker
+
+A multi-arch Docker image is built from [`Dockerfile`](Dockerfile) and published to Docker Hub as `nick1udwig/sieve`.
+Container usage, bundled CLI tools, and release automation live in [docs/running.md](docs/running.md#docker).

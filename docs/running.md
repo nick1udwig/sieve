@@ -37,8 +37,7 @@
      - used for: `st stt`, `st tts`
      - optional: yes
    - `codex` for Telegram image/photo OCR ingress
-     - repo: [`nick1udwig/codex`](https://github.com/nick1udwig/codex)
-     - upstream/base project: [`openai/codex`](https://github.com/openai/codex)
+     - repo: [`openai/codex`](https://github.com/openai/codex)
      - used for: `codex exec --sandbox read-only --ephemeral --image ...`
      - optional: yes
    - `sieve-lcm-cli` for LCM memory query/expand/ingest flows
@@ -73,6 +72,45 @@ cargo run -p sieve-app -- "Use bash to run exactly: pwd"
 Expected result:
 - current working directory printed by `pwd`
 - `run-1: ...` assistant reply from the response-writer phase
+
+### Docker
+
+The repo ships a multi-stage Debian image in [`Dockerfile`](../Dockerfile).
+The runtime image is `debian:bookworm-slim` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
+The Nick CLI tools are downloaded from their latest GitHub releases at build time instead of being built from source.
+Container defaults:
+- workdir: `/workspace`
+- `SIEVE_RUNTIME_CWD=/workspace`
+- `SIEVE_HOME=/data/.sieve`
+- `SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml`
+
+Build locally:
+
+```bash
+docker build -t sieve:local .
+```
+
+Run against the current checkout:
+
+```bash
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local "review workspace status"
+```
+
+Run long-lived mode:
+
+```bash
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local
+```
+
+If `bubblewrap` quarantine fails under Docker, allow unprivileged user namespaces on the host or add the extra container privileges your runtime requires.
+If a release asset name ever changes, override the matcher with `--build-arg BRAVE_SEARCH_ASSET_REGEX=...`, `ST_ASSET_REGEX=...`, or `SIEVE_LCM_ASSET_REGEX=...`.
+`CODEX_NPM_SPEC` still controls the installed Codex npm package spec.
+
+### Release Automation
+
+`.github/workflows/release.yml` runs on pushes to `master`.
+For non-release commits it bumps the shared workspace patch version, regenerates both lockfiles, commits the bump back to `master`, and then builds and pushes `nick1udwig/sieve:<version>` plus `nick1udwig/sieve:latest` for `linux/amd64` and `linux/arm64`.
+The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ### Modes
 
