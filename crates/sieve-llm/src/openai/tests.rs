@@ -29,7 +29,7 @@ fn unique_temp_path(name: &str) -> PathBuf {
 #[test]
 fn exchange_logger_writes_http_event_with_exact_payloads() {
     let path = unique_temp_path("exchange-http");
-    let logger = LlmExchangeLogger::with_path(Some(path.clone()));
+    let logger = LlmExchangeLogger::with_path(Some(path.clone()), "openai");
     let request_json = json!({
         "model": "gpt-4o-mini",
         "messages": [{"role":"user","content":"hi"}]
@@ -63,7 +63,7 @@ fn exchange_logger_writes_http_event_with_exact_payloads() {
 #[test]
 fn exchange_logger_writes_transport_error_event() {
     let path = unique_temp_path("exchange-transport");
-    let logger = LlmExchangeLogger::with_path(Some(path.clone()));
+    let logger = LlmExchangeLogger::with_path(Some(path.clone()), "openai");
     let request_json = json!({
         "model": "gpt-4o-mini",
         "messages": [{"role":"user","content":"hello"}]

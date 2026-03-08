@@ -1,53 +1,59 @@
-use super::exchange_logger::LlmExchangeLogger;
-use super::planner_retry::{backoff, is_transient_status, truncate_for_error};
+use super::requests::resolve_codex_url;
+use crate::auth::OpenAiCodexAuth;
+use crate::openai::LlmExchangeLogger;
+use crate::openai::{backoff, is_transient_status, truncate_for_error};
 use crate::LlmError;
 use reqwest::Client;
 use serde_json::Value;
 use std::time::Duration;
 
-const OPENAI_DEFAULT_API_BASE: &str = "https://api.openai.com";
 const HTTP_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_MAX_RETRIES: usize = 2;
 const DEFAULT_RETRY_BACKOFF_MS: u64 = 350;
 
 #[derive(Clone)]
-pub(super) struct OpenAiClient {
+pub(crate) struct OpenAiCodexClient {
     http: Client,
-    api_key: String,
-    api_base: String,
+    auth: OpenAiCodexAuth,
+    api_base: Option<String>,
     max_retries: usize,
     retry_backoff: Duration,
     exchange_logger: LlmExchangeLogger,
 }
 
-impl OpenAiClient {
-    pub(super) fn new(api_key: String, api_base: Option<String>) -> Result<Self, LlmError> {
+impl OpenAiCodexClient {
+    pub(crate) fn new(auth: OpenAiCodexAuth, api_base: Option<String>) -> Result<Self, LlmError> {
         let http = Client::builder()
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECONDS))
             .build()
             .map_err(|e| LlmError::Transport(format!("failed to build HTTP client: {e}")))?;
         Ok(Self {
             http,
-            api_key,
-            api_base: api_base.unwrap_or_else(|| OPENAI_DEFAULT_API_BASE.to_string()),
+            auth,
+            api_base,
             max_retries: DEFAULT_MAX_RETRIES,
             retry_backoff: Duration::from_millis(DEFAULT_RETRY_BACKOFF_MS),
-            exchange_logger: LlmExchangeLogger::from_env("openai"),
+            exchange_logger: LlmExchangeLogger::from_env("openai_codex"),
         })
     }
 
-    pub(super) async fn create_chat_completion(&self, payload: Value) -> Result<Value, LlmError> {
-        let endpoint = format!(
-            "{}/v1/chat/completions",
-            self.api_base.trim_end_matches('/')
-        );
+    pub(crate) async fn create_response(&self, payload: Value) -> Result<Value, LlmError> {
+        let endpoint = resolve_codex_url(self.api_base.as_deref());
         let mut attempt = 0usize;
+
         loop {
             let attempt_number = attempt + 1;
+            let (access_token, account_id) =
+                self.auth.access_token_and_account_id(&self.http).await?;
+
             let request = self
                 .http
                 .post(&endpoint)
-                .bearer_auth(&self.api_key)
+                .bearer_auth(&access_token)
+                .header("chatgpt-account-id", account_id)
+                .header("OpenAI-Beta", "responses=experimental")
+                .header("originator", "sieve")
+                .header("accept", "application/json")
                 .header("content-type", "application/json")
                 .json(&payload);
 
@@ -55,7 +61,9 @@ impl OpenAiClient {
                 Ok(resp) => {
                     let status = resp.status();
                     let body = resp.text().await.map_err(|e| {
-                        LlmError::Transport(format!("failed reading OpenAI response body: {e}"))
+                        LlmError::Transport(format!(
+                            "failed reading openai_codex response body: {e}"
+                        ))
                     })?;
                     self.exchange_logger.log_http(
                         &endpoint,
@@ -67,7 +75,7 @@ impl OpenAiClient {
 
                     if status.is_success() {
                         return serde_json::from_str::<Value>(&body).map_err(|e| {
-                            LlmError::Decode(format!("invalid OpenAI JSON response: {e}"))
+                            LlmError::Decode(format!("invalid openai_codex JSON response: {e}"))
                         });
                     }
 
@@ -100,7 +108,9 @@ impl OpenAiClient {
                             "request failed after retries: {err}"
                         )));
                     }
-                    return Err(LlmError::Transport(format!("OpenAI request failed: {err}")));
+                    return Err(LlmError::Transport(format!(
+                        "openai_codex request failed: {err}"
+                    )));
                 }
             }
         }

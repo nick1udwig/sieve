@@ -55,6 +55,7 @@ pub(crate) fn load_model_config_from_env(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn load_openai_api_key_from_env(
     prefix: &str,
     getter: &dyn Fn(&str) -> Option<String>,
@@ -73,13 +74,14 @@ pub(crate) fn load_openai_api_key_from_env(
 
 pub(crate) fn ensure_provider_openai(config: &LlmModelConfig) -> Result<(), LlmError> {
     match config.provider {
-        LlmProvider::OpenAi => Ok(()),
+        LlmProvider::OpenAi | LlmProvider::OpenAiCodex => Ok(()),
     }
 }
 
 fn parse_provider(raw: &str) -> Result<LlmProvider, &'static str> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "openai" | "open_ai" => Ok(LlmProvider::OpenAi),
+        "openai-codex" | "openai_codex" => Ok(LlmProvider::OpenAiCodex),
         _ => Err("unsupported provider"),
     }
 }

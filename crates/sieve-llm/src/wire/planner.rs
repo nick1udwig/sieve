@@ -163,6 +163,10 @@ fn runtime_event_kind(event: &RuntimeEvent) -> &'static str {
 pub(crate) fn extract_openai_planner_output_json(response: &Value) -> Result<Value, LlmError> {
     ensure_not_refusal(response)?;
 
+    if response.get("output").and_then(Value::as_array).is_some() {
+        return extract_responses_planner_output_json(response);
+    }
+
     let empty_tool_calls = Vec::new();
     let tool_calls = match response.pointer("/choices/0/message/tool_calls") {
         Some(Value::Array(tool_calls)) => tool_calls,
@@ -217,6 +221,86 @@ pub(crate) fn extract_openai_planner_output_json(response: &Value) -> Result<Val
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(ToString::to_string);
+    Ok(json!({
+        "thoughts": thoughts,
+        "tool_calls": normalized_tool_calls,
+    }))
+}
+
+fn extract_responses_planner_output_json(response: &Value) -> Result<Value, LlmError> {
+    let output = response
+        .get("output")
+        .and_then(Value::as_array)
+        .ok_or_else(|| LlmError::Decode("responses payload missing `output` array".to_string()))?;
+
+    let mut normalized_tool_calls = Vec::new();
+    let mut thoughts_parts = Vec::new();
+
+    for (idx, item) in output.iter().enumerate() {
+        match item.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "function_call" => {
+                let tool_name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| {
+                        LlmError::Decode(format!(
+                            "missing output[{idx}].name string for function_call"
+                        ))
+                    })?;
+
+                let arguments_raw =
+                    item.get("arguments")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            LlmError::Decode(format!(
+                                "missing output[{idx}].arguments string for function_call"
+                            ))
+                        })?;
+
+                let arguments_json =
+                    serde_json::from_str::<Value>(arguments_raw).map_err(|err| {
+                        LlmError::Decode(format!("invalid JSON in output[{idx}].arguments: {err}"))
+                    })?;
+                let arguments = arguments_json.as_object().cloned().ok_or_else(|| {
+                    LlmError::Decode(format!(
+                        "function_call arguments at output[{idx}] must decode to an object"
+                    ))
+                })?;
+
+                normalized_tool_calls.push(json!({
+                    "tool_name": tool_name,
+                    "args": Value::Object(arguments),
+                }));
+            }
+            "message" => {
+                let Some(content) = item.get("content").and_then(Value::as_array) else {
+                    continue;
+                };
+                for part in content {
+                    let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
+                    if (part_type == "output_text" || part_type == "text")
+                        && part.get("text").and_then(Value::as_str).is_some()
+                    {
+                        let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            thoughts_parts.push(text.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let thoughts = if thoughts_parts.is_empty() {
+        None
+    } else {
+        Some(thoughts_parts.join("\n"))
+    };
+
     Ok(json!({
         "thoughts": thoughts,
         "tool_calls": normalized_tool_calls,

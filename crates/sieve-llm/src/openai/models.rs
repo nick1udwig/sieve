@@ -1,9 +1,14 @@
 use super::client::OpenAiClient;
-use super::planner_retry::run_planner_with_one_regeneration;
-use super::requests::{build_guidance_request, build_response_request, build_summary_request};
-use crate::config::{
-    ensure_provider_openai, env_getter, load_model_config_from_env, load_openai_api_key_from_env,
+use super::planner_retry::{
+    run_planner_with_one_regeneration, run_planner_with_one_regeneration_with_builder,
 };
+use super::requests::{build_guidance_request, build_response_request, build_summary_request};
+use crate::auth::{load_provider_auth, ProviderAuth};
+use crate::codex::{
+    build_codex_guidance_request, build_codex_planner_request, build_codex_response_request,
+    build_codex_summary_request, OpenAiCodexClient,
+};
+use crate::config::{ensure_provider_openai, env_getter, load_model_config_from_env};
 use crate::wire::{
     decode_guidance_output, decode_response_output, extract_openai_message_content_json,
     serialize_planner_input, PLANNER_SYSTEM_PROMPT,
@@ -15,25 +20,33 @@ use crate::{
 use async_trait::async_trait;
 use serde_json::json;
 use sieve_types::{
-    LlmModelConfig, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerTurnInput,
+    LlmModelConfig, LlmProvider, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerTurnInput,
     PlannerTurnOutput,
 };
 
 pub struct OpenAiPlannerModel {
     config: LlmModelConfig,
-    client: OpenAiClient,
+    client: ProviderClient,
 }
 
 impl OpenAiPlannerModel {
     pub fn new(config: LlmModelConfig, api_key: String) -> Result<Self, LlmError> {
-        let client = build_client(&config, api_key, "planner OpenAI API key is empty")?;
+        let client = build_openai_client(&config, api_key, "planner OpenAI API key is empty")?;
+        Ok(Self { config, client })
+    }
+
+    pub(crate) fn new_with_auth(
+        config: LlmModelConfig,
+        auth: ProviderAuth,
+    ) -> Result<Self, LlmError> {
+        let client = build_client(&config, auth, "planner OpenAI API key is empty")?;
         Ok(Self { config, client })
     }
 
     pub fn from_env() -> Result<Self, LlmError> {
         let config = load_model_config_from_env("SIEVE_PLANNER", &env_getter)?;
-        let api_key = load_openai_api_key_from_env("SIEVE_PLANNER", &env_getter)?;
-        Self::new(config, api_key)
+        let auth = load_provider_auth(&["SIEVE_PLANNER"], config.provider, &env_getter)?;
+        Self::new_with_auth(config, auth)
     }
 }
 
@@ -50,33 +63,58 @@ impl PlannerModel for OpenAiPlannerModel {
             json!({"role":"user","content": planner_payload.to_string()}),
         ];
 
-        run_planner_with_one_regeneration(
-            self.config.model.as_str(),
-            messages,
-            &input.allowed_tools,
-            |request| self.client.create_chat_completion(request),
-        )
-        .await
+        match &self.client {
+            ProviderClient::OpenAi(client) => {
+                run_planner_with_one_regeneration(
+                    self.config.model.as_str(),
+                    messages,
+                    &input.allowed_tools,
+                    |request| client.create_chat_completion(request),
+                )
+                .await
+            }
+            ProviderClient::OpenAiCodex(client) => {
+                run_planner_with_one_regeneration_with_builder(
+                    self.config.model.as_str(),
+                    messages,
+                    &input.allowed_tools,
+                    build_codex_planner_request,
+                    |request| client.create_response(request),
+                )
+                .await
+            }
+        }
     }
 }
 
 pub struct OpenAiGuidanceModel {
     config: LlmModelConfig,
-    client: OpenAiClient,
+    client: ProviderClient,
 }
 
 impl OpenAiGuidanceModel {
     pub fn new(config: LlmModelConfig, api_key: String) -> Result<Self, LlmError> {
-        let client = build_client(&config, api_key, "guidance OpenAI API key is empty")?;
+        let client = build_openai_client(&config, api_key, "guidance OpenAI API key is empty")?;
+        Ok(Self { config, client })
+    }
+
+    pub(crate) fn new_with_auth(
+        config: LlmModelConfig,
+        auth: ProviderAuth,
+    ) -> Result<Self, LlmError> {
+        let client = build_client(&config, auth, "guidance OpenAI API key is empty")?;
         Ok(Self { config, client })
     }
 
     pub fn from_env() -> Result<Self, LlmError> {
         let config = load_model_config_from_env("SIEVE_GUIDANCE", &env_getter)
             .or_else(|_| load_model_config_from_env("SIEVE_PLANNER", &env_getter))?;
-        let api_key = load_openai_api_key_from_env("SIEVE_GUIDANCE", &env_getter)
-            .or_else(|_| load_openai_api_key_from_env("SIEVE_PLANNER", &env_getter))?;
-        Self::new(config, api_key)
+        let auth = load_provider_auth(
+            &["SIEVE_GUIDANCE", "SIEVE_PLANNER"],
+            config.provider,
+            &env_getter,
+        )?;
+        Self::new_with_auth(config, auth)
     }
 }
 
@@ -90,10 +128,18 @@ impl GuidanceModel for OpenAiGuidanceModel {
         &self,
         input: PlannerGuidanceInput,
     ) -> Result<PlannerGuidanceOutput, LlmError> {
-        let response = self
-            .client
-            .create_chat_completion(build_guidance_request(input, &self.config.model))
-            .await?;
+        let response = match &self.client {
+            ProviderClient::OpenAi(client) => {
+                client
+                    .create_chat_completion(build_guidance_request(input, &self.config.model))
+                    .await?
+            }
+            ProviderClient::OpenAiCodex(client) => {
+                client
+                    .create_response(build_codex_guidance_request(input, &self.config.model))
+                    .await?
+            }
+        };
         let content_json = extract_openai_message_content_json(&response)?;
         decode_guidance_output(content_json)
     }
@@ -101,21 +147,32 @@ impl GuidanceModel for OpenAiGuidanceModel {
 
 pub struct OpenAiResponseModel {
     config: LlmModelConfig,
-    client: OpenAiClient,
+    client: ProviderClient,
 }
 
 impl OpenAiResponseModel {
     pub fn new(config: LlmModelConfig, api_key: String) -> Result<Self, LlmError> {
-        let client = build_client(&config, api_key, "response OpenAI API key is empty")?;
+        let client = build_openai_client(&config, api_key, "response OpenAI API key is empty")?;
+        Ok(Self { config, client })
+    }
+
+    pub(crate) fn new_with_auth(
+        config: LlmModelConfig,
+        auth: ProviderAuth,
+    ) -> Result<Self, LlmError> {
+        let client = build_client(&config, auth, "response OpenAI API key is empty")?;
         Ok(Self { config, client })
     }
 
     pub fn from_env() -> Result<Self, LlmError> {
         let config = load_model_config_from_env("SIEVE_RESPONSE", &env_getter)
             .or_else(|_| load_model_config_from_env("SIEVE_PLANNER", &env_getter))?;
-        let api_key = load_openai_api_key_from_env("SIEVE_RESPONSE", &env_getter)
-            .or_else(|_| load_openai_api_key_from_env("SIEVE_PLANNER", &env_getter))?;
-        Self::new(config, api_key)
+        let auth = load_provider_auth(
+            &["SIEVE_RESPONSE", "SIEVE_PLANNER"],
+            config.provider,
+            &env_getter,
+        )?;
+        Self::new_with_auth(config, auth)
     }
 }
 
@@ -129,10 +186,18 @@ impl ResponseModel for OpenAiResponseModel {
         &self,
         input: ResponseTurnInput,
     ) -> Result<ResponseTurnOutput, LlmError> {
-        let response = self
-            .client
-            .create_chat_completion(build_response_request(&input, &self.config.model)?)
-            .await?;
+        let response = match &self.client {
+            ProviderClient::OpenAi(client) => {
+                client
+                    .create_chat_completion(build_response_request(&input, &self.config.model)?)
+                    .await?
+            }
+            ProviderClient::OpenAiCodex(client) => {
+                client
+                    .create_response(build_codex_response_request(&input, &self.config.model)?)
+                    .await?
+            }
+        };
         let content_json = extract_openai_message_content_json(&response)?;
         decode_response_output(content_json)
     }
@@ -140,21 +205,32 @@ impl ResponseModel for OpenAiResponseModel {
 
 pub struct OpenAiSummaryModel {
     config: LlmModelConfig,
-    client: OpenAiClient,
+    client: ProviderClient,
 }
 
 impl OpenAiSummaryModel {
     pub fn new(config: LlmModelConfig, api_key: String) -> Result<Self, LlmError> {
-        let client = build_client(&config, api_key, "summary OpenAI API key is empty")?;
+        let client = build_openai_client(&config, api_key, "summary OpenAI API key is empty")?;
+        Ok(Self { config, client })
+    }
+
+    pub(crate) fn new_with_auth(
+        config: LlmModelConfig,
+        auth: ProviderAuth,
+    ) -> Result<Self, LlmError> {
+        let client = build_client(&config, auth, "summary OpenAI API key is empty")?;
         Ok(Self { config, client })
     }
 
     pub fn from_env() -> Result<Self, LlmError> {
         let config = load_model_config_from_env("SIEVE_QUARANTINE", &env_getter)
             .or_else(|_| load_model_config_from_env("SIEVE_PLANNER", &env_getter))?;
-        let api_key = load_openai_api_key_from_env("SIEVE_QUARANTINE", &env_getter)
-            .or_else(|_| load_openai_api_key_from_env("SIEVE_PLANNER", &env_getter))?;
-        Self::new(config, api_key)
+        let auth = load_provider_auth(
+            &["SIEVE_QUARANTINE", "SIEVE_PLANNER"],
+            config.provider,
+            &env_getter,
+        )?;
+        Self::new_with_auth(config, auth)
     }
 }
 
@@ -165,10 +241,18 @@ impl SummaryModel for OpenAiSummaryModel {
     }
 
     async fn summarize_ref(&self, request: SummaryRequest) -> Result<String, LlmError> {
-        let response = self
-            .client
-            .create_chat_completion(build_summary_request(request, &self.config.model))
-            .await?;
+        let response = match &self.client {
+            ProviderClient::OpenAi(client) => {
+                client
+                    .create_chat_completion(build_summary_request(request, &self.config.model))
+                    .await?
+            }
+            ProviderClient::OpenAiCodex(client) => {
+                client
+                    .create_response(build_codex_summary_request(request, &self.config.model))
+                    .await?
+            }
+        };
         let content_json = extract_openai_message_content_json(&response)?;
         let summary = content_json
             .get("summary")
@@ -180,14 +264,49 @@ impl SummaryModel for OpenAiSummaryModel {
     }
 }
 
-fn build_client(
+enum ProviderClient {
+    OpenAi(OpenAiClient),
+    OpenAiCodex(OpenAiCodexClient),
+}
+
+fn build_openai_client(
     config: &LlmModelConfig,
     api_key: String,
     empty_api_key_message: &str,
-) -> Result<OpenAiClient, LlmError> {
+) -> Result<ProviderClient, LlmError> {
+    build_client(
+        config,
+        ProviderAuth::OpenAi { api_key },
+        empty_api_key_message,
+    )
+}
+
+fn build_client(
+    config: &LlmModelConfig,
+    auth: ProviderAuth,
+    empty_api_key_message: &str,
+) -> Result<ProviderClient, LlmError> {
     ensure_provider_openai(config)?;
-    if api_key.trim().is_empty() {
-        return Err(LlmError::Config(empty_api_key_message.to_string()));
+    match (config.provider, auth) {
+        (LlmProvider::OpenAi, ProviderAuth::OpenAi { api_key }) => {
+            if api_key.trim().is_empty() {
+                return Err(LlmError::Config(empty_api_key_message.to_string()));
+            }
+            Ok(ProviderClient::OpenAi(OpenAiClient::new(
+                api_key,
+                config.api_base.clone(),
+            )?))
+        }
+        (LlmProvider::OpenAiCodex, ProviderAuth::OpenAiCodex(auth)) => Ok(
+            ProviderClient::OpenAiCodex(OpenAiCodexClient::new(auth, config.api_base.clone())?),
+        ),
+        (LlmProvider::OpenAi, ProviderAuth::OpenAiCodex(_)) => Err(LlmError::Config(
+            "provider/auth mismatch: `openai` model cannot use openai_codex credentials"
+                .to_string(),
+        )),
+        (LlmProvider::OpenAiCodex, ProviderAuth::OpenAi { .. }) => Err(LlmError::Config(
+            "provider/auth mismatch: `openai_codex` model requires openai_codex credentials"
+                .to_string(),
+        )),
     }
-    OpenAiClient::new(api_key, config.api_base.clone())
 }

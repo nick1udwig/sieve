@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod agent_loop;
+mod auth_cli;
 mod compose;
 mod compose_gate;
 mod config;
@@ -17,6 +18,7 @@ mod turn;
 use agent_loop::run_agent_loop;
 #[cfg(test)]
 use async_trait::async_trait;
+use auth_cli::maybe_run_auth_command;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use compose_gate::{
@@ -153,7 +155,15 @@ fn planner_net_connect_scope(scope: &str) -> String {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_dotenv_if_present().map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-    let cli_prompt = env::args().skip(1).collect::<Vec<String>>().join(" ");
+    let cli_args = env::args().skip(1).collect::<Vec<String>>();
+    if maybe_run_auth_command(&cli_args)
+        .await
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?
+    {
+        return Ok(());
+    }
+
+    let cli_prompt = cli_args.join(" ");
     let single_command_mode = !cli_prompt.trim().is_empty();
 
     let mut cfg =

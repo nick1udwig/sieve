@@ -6,15 +6,27 @@ OpenAI-backed planner + guidance + response/summary model adapters for Sieve v3 
 
 Planner config env:
 - `SIEVE_PLANNER_MODEL` (required)
-- `SIEVE_PLANNER_PROVIDER` (optional; default `openai`)
+- `SIEVE_PLANNER_PROVIDER` (optional; `openai` or `openai_codex`; default `openai`)
 - `SIEVE_PLANNER_API_BASE` (optional)
 - `SIEVE_PLANNER_OPENAI_API_KEY` (optional; falls back to `OPENAI_API_KEY`)
 
 Guidance config env:
 - `SIEVE_GUIDANCE_MODEL` (optional; falls back to `SIEVE_PLANNER_MODEL`)
-- `SIEVE_GUIDANCE_PROVIDER` (optional; default `openai`)
+- `SIEVE_GUIDANCE_PROVIDER` (optional; `openai` or `openai_codex`; default `openai`)
 - `SIEVE_GUIDANCE_API_BASE` (optional)
 - `SIEVE_GUIDANCE_OPENAI_API_KEY` (optional; falls back to `SIEVE_PLANNER_OPENAI_API_KEY` then `OPENAI_API_KEY`)
+
+Response/quarantine config env:
+- `SIEVE_RESPONSE_PROVIDER` / `SIEVE_QUARANTINE_PROVIDER` (optional; `openai` or `openai_codex`)
+- `SIEVE_RESPONSE_API_BASE` / `SIEVE_QUARANTINE_API_BASE` (optional)
+- `SIEVE_RESPONSE_OPENAI_API_KEY` / `SIEVE_QUARANTINE_OPENAI_API_KEY` (OpenAI provider only)
+
+Codex subscription auth env:
+- `OPENAI_CODEX_ACCESS_TOKEN` + `OPENAI_CODEX_ACCOUNT_ID` for explicit token/account overrides
+- `SIEVE_OPENAI_CODEX_AUTH_JSON_PATH` to override the auth file path
+- default auth file path when unset: `$SIEVE_HOME/state/auth.json` (or `~/.sieve/state/auth.json`)
+- native login flow: `cargo run -p sieve-app -- auth login openai-codex`
+- `openai_codex` is intended for personal/subscription use, not production API workloads
 
 LLM exchange logging env:
 - `SIEVE_LLM_EXCHANGE_LOG_PATH` (optional JSONL file path)
