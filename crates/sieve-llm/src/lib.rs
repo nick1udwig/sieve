@@ -9,6 +9,9 @@ use sieve_types::{
 use std::collections::BTreeSet;
 use thiserror::Error;
 
+mod auth;
+mod codex;
+mod codex_auth;
 mod config;
 mod openai;
 mod wire;
@@ -16,6 +19,14 @@ mod wire;
 #[cfg(test)]
 mod tests;
 
+pub use codex_auth::{
+    create_openai_codex_authorization_flow, default_openai_codex_auth_json_path,
+    exchange_openai_codex_authorization_code, parse_openai_codex_authorization_input,
+    resolve_openai_codex_auth_json_path, resolve_openai_codex_auth_json_path_from_env,
+    write_openai_codex_auth_file, OpenAiCodexAuthorizationFlow, OpenAiCodexAuthorizationInput,
+    OpenAiCodexStoredAuth, OPENAI_CODEX_ACCESS_TOKEN_ENV, OPENAI_CODEX_ACCOUNT_ID_ENV,
+    OPENAI_CODEX_AUTH_PATH_ENV,
+};
 pub use config::LlmConfigs;
 pub use openai::{
     OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel,

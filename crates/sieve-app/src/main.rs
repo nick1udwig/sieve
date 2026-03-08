@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
 mod agent_loop;
+mod auth_cli;
 mod automation;
+mod cli;
 mod compose;
 mod compose_gate;
 mod config;
@@ -18,7 +20,12 @@ mod turn;
 use agent_loop::run_agent_loop;
 #[cfg(test)]
 use async_trait::async_trait;
+use auth_cli::run_auth_command;
 use automation::AutomationManager;
+use clap::Parser;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use cli::{parse_cli_args, AuthCommand, AuthProvider, CliCommand};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use compose_gate::{
@@ -108,7 +115,6 @@ pub(crate) use sieve_types::{
 #[allow(unused_imports)]
 pub(crate) use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::env;
 use std::fs;
 use std::io;
 #[cfg(test)]
@@ -158,8 +164,19 @@ fn planner_net_connect_scope(scope: &str) -> String {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_dotenv_if_present().map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-    let cli_prompt = env::args().skip(1).collect::<Vec<String>>().join(" ");
-    let single_command_mode = !cli_prompt.trim().is_empty();
+    let cli_command = cli::Cli::parse().into_command();
+    if let cli::CliCommand::Auth(command) = cli_command.clone() {
+        run_auth_command(command)
+            .await
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+        return Ok(());
+    }
+
+    let cli_prompt = match &cli_command {
+        cli::CliCommand::Run { prompt } => Some(prompt.clone()),
+        _ => None,
+    };
+    let single_command_mode = cli_prompt.is_some();
 
     let mut cfg =
         AppConfig::from_env().map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
@@ -248,7 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if single_command_mode {
         let cli_prompt = IngressPrompt::user(
             PromptSource::Stdin,
-            cli_prompt,
+            cli_prompt.expect("single-command prompt missing"),
             InteractionModality::Text,
             None,
         );

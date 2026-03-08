@@ -2,6 +2,7 @@ mod guidance;
 mod openai_envelope;
 mod planner;
 mod response;
+mod summary;
 
 pub(crate) use guidance::{decode_guidance_output, guidance_output_schema, GUIDANCE_SYSTEM_PROMPT};
 pub(crate) use openai_envelope::extract_openai_message_content_json;
@@ -18,6 +19,7 @@ pub(crate) use response::{
 use serde_json::Value;
 #[cfg(test)]
 use sieve_types::{PlannerGuidanceSignal, PlannerTurnInput};
+pub(crate) use summary::SUMMARY_SYSTEM_PROMPT;
 
 #[cfg(test)]
 mod tests;

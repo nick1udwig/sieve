@@ -32,7 +32,7 @@ impl OpenAiClient {
             api_base: api_base.unwrap_or_else(|| OPENAI_DEFAULT_API_BASE.to_string()),
             max_retries: DEFAULT_MAX_RETRIES,
             retry_backoff: Duration::from_millis(DEFAULT_RETRY_BACKOFF_MS),
-            exchange_logger: LlmExchangeLogger::from_env(),
+            exchange_logger: LlmExchangeLogger::from_env("openai"),
         })
     }
 

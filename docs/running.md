@@ -6,7 +6,8 @@
 
 1. Copy `.env.example` to `.env`.
 2. Set the minimum env needed for your mode:
-   - always: `OPENAI_API_KEY`
+   - always: either `OPENAI_API_KEY` for `openai` provider, or `SIEVE_*_PROVIDER=openai_codex` plus `cargo run -p sieve-app -- auth login openai-codex` (or `OPENAI_CODEX_ACCESS_TOKEN` + `OPENAI_CODEX_ACCOUNT_ID`)
+   - if `openai` is configured but no OpenAI API key is present, Sieve now auto-falls back to `openai_codex` when valid Codex auth is available
    - usually: `SIEVE_PLANNER_MODEL`
    - Telegram ingress: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 3. Add optional env as needed:
@@ -47,26 +48,26 @@
 5. Install system packages as needed:
    - `ffmpeg` recommended for audio conversion and delivery paths
 
-`.env.example` carries the fuller provider-level matrix (`SIEVE_*_PROVIDER`, `*_API_BASE`, scoped API keys, runtime defaults, and Telegram polling config). `sieve-app` auto-loads `.env` from the current working directory when present.
+`.env.example` carries the fuller provider-level matrix (`SIEVE_*_PROVIDER`, `*_API_BASE`, scoped API keys, Codex auth-file overrides, runtime defaults, and Telegram polling config). `sieve-app` auto-loads `.env` from the current working directory when present. Codex auth defaults to `$SIEVE_HOME/state/auth.json`; `cargo run -p sieve-app -- auth path` prints the resolved file path.
 
 ### Start The Integrated App
 
 Run one prompt end-to-end:
 
 ```bash
-cargo run -p sieve-app -- "review workspace status"
+cargo run -p sieve-app -- run --prompt "review workspace status"
 ```
 
 Start long-running mode (stdin + Telegram ingress, no initial prompt):
 
 ```bash
-cargo run -p sieve-app
+cargo run -p sieve-app -- run
 ```
 
 One-off smoke:
 
 ```bash
-cargo run -p sieve-app -- "Use bash to run exactly: pwd"
+cargo run -p sieve-app -- run --prompt "Use bash to run exactly: pwd"
 ```
 
 Expected result:
@@ -93,7 +94,7 @@ docker build -t sieve:local .
 Run against the current checkout:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local "review workspace status"
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local run --prompt "review workspace status"
 ```
 
 Run long-lived mode:
@@ -108,14 +109,15 @@ If a release asset name ever changes, override the matcher with `--build-arg BRA
 
 ### Release Automation
 
-`.github/workflows/release.yml` runs on pushes to `master`.
+`.github/workflows/release.yml` is currently manual-only via `workflow_dispatch`.
+The old push-to-`master` trigger is commented out because the workflow is too slow for every merge right now.
 For non-release commits it bumps the shared workspace patch version, regenerates both lockfiles, commits the bump back to `master`, and then builds and pushes `nick1udwig/sieve:<version>` plus `nick1udwig/sieve:latest` for `linux/amd64` and `linux/arm64`.
 The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ### Modes
 
-- Single command mode: pass a CLI prompt, for example `cargo run -p sieve-app -- "review workspace status"`.
-- Long-running agent mode: omit the CLI prompt. The app stays up, accepts prompts from stdin and Telegram chat, and executes turns concurrently up to `SIEVE_MAX_CONCURRENT_TURNS`.
+- Single command mode: use `run --prompt`, for example `cargo run -p sieve-app -- run --prompt "review workspace status"`.
+- Long-running agent mode: use `run` with no prompt. The app stays up, accepts prompts from stdin and Telegram chat, and executes turns concurrently up to `SIEVE_MAX_CONCURRENT_TURNS`.
 - Heartbeat and cron automation run only in long-running mode.
 
 ### Heartbeat And Cron
@@ -252,7 +254,7 @@ cargo run -p sieve-captrace -- mkdir --seed-case 'mkdir -p {{TMP_DIR}}/logs' --o
 Optional:
 
 - omit `--no-llm` to let the planner LLM propose additional cases
-- set `SIEVE_PLANNER_MODEL` and `OPENAI_API_KEY` (or `SIEVE_PLANNER_OPENAI_API_KEY`) for LLM mode
+- set `SIEVE_PLANNER_MODEL` and either `OPENAI_API_KEY` (or `SIEVE_PLANNER_OPENAI_API_KEY`) for `openai`, or `SIEVE_PLANNER_PROVIDER=openai_codex` plus Codex auth via `cargo run -p sieve-app -- auth login openai-codex` for subscription mode
 - app-server preference settings:
   - `SIEVE_CODEX_APP_SERVER_WS_URL` (default `ws://127.0.0.1:4500`)
   - `SIEVE_CODEX_MODEL` (default `gpt-5.2-codex`)
@@ -299,8 +301,10 @@ SIEVE_RUN_OPENAI_LIVE=1 OPENAI_API_KEY=... cargo test -p sieve-runtime --test e2
 Optional env overrides:
 
 - `SIEVE_PLANNER_MODEL` (default `gpt-4o-mini`)
+- `SIEVE_PLANNER_PROVIDER` (`openai` or `openai_codex`)
 - `SIEVE_PLANNER_API_BASE`
 - `SIEVE_PLANNER_OPENAI_API_KEY` (takes precedence over `OPENAI_API_KEY`)
+- `OPENAI_CODEX_ACCESS_TOKEN` + `OPENAI_CODEX_ACCOUNT_ID`, or `SIEVE_OPENAI_CODEX_AUTH_JSON_PATH`
 
 ### App E2E Harness Tests
 

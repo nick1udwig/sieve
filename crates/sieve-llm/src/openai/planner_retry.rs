@@ -12,18 +12,40 @@ use std::time::Duration;
 
 pub(super) async fn run_planner_with_one_regeneration<F, Fut>(
     model: &str,
-    mut messages: Vec<Value>,
+    messages: Vec<Value>,
     allowed_tools: &[String],
-    mut send_request: F,
+    send_request: F,
 ) -> Result<PlannerTurnOutput, LlmError>
 where
     F: FnMut(Value) -> Fut,
     Fut: Future<Output = Result<Value, LlmError>>,
 {
+    run_planner_with_one_regeneration_with_builder(
+        model,
+        messages,
+        allowed_tools,
+        planner_chat_completion_request,
+        send_request,
+    )
+    .await
+}
+
+pub(crate) async fn run_planner_with_one_regeneration_with_builder<F, Fut, B>(
+    model: &str,
+    mut messages: Vec<Value>,
+    allowed_tools: &[String],
+    build_request: B,
+    mut send_request: F,
+) -> Result<PlannerTurnOutput, LlmError>
+where
+    F: FnMut(Value) -> Fut,
+    Fut: Future<Output = Result<Value, LlmError>>,
+    B: Fn(&str, Vec<Value>, &[String]) -> Result<Value, LlmError>,
+{
     let mut regenerated = false;
 
     loop {
-        let request = planner_chat_completion_request(model, messages.clone(), allowed_tools)?;
+        let request = build_request(model, messages.clone(), allowed_tools)?;
         let response = send_request(request).await?;
         let output_json = extract_openai_planner_output_json(&response)?;
 
@@ -126,7 +148,7 @@ fn regeneration_exhausted_error(report: ToolContractValidationReport) -> LlmErro
     ))
 }
 
-pub(super) fn is_transient_status(status: StatusCode) -> bool {
+pub(crate) fn is_transient_status(status: StatusCode) -> bool {
     matches!(
         status,
         StatusCode::REQUEST_TIMEOUT
@@ -137,13 +159,13 @@ pub(super) fn is_transient_status(status: StatusCode) -> bool {
     ) || status.is_server_error()
 }
 
-pub(super) fn backoff(base: Duration, attempt: usize) -> Duration {
+pub(crate) fn backoff(base: Duration, attempt: usize) -> Duration {
     let shift = (attempt.saturating_sub(1)) as u32;
     let multiplier = 1u32.checked_shl(shift).unwrap_or(u32::MAX);
     base.saturating_mul(multiplier)
 }
 
-pub(super) fn truncate_for_error(input: &str) -> String {
+pub(crate) fn truncate_for_error(input: &str) -> String {
     const MAX: usize = 512;
     if input.len() <= MAX {
         input.to_string()
