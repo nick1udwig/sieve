@@ -375,6 +375,31 @@ pub(super) async fn generate_assistant_message(
                 stripped
             }
         };
+        let zero_tool_no_action_needed = aggregated_result.tool_results.is_empty()
+            && matches!(
+                planner_guidance
+                    .as_ref()
+                    .and_then(|guidance| guidance.signal().ok()),
+                Some(PlannerGuidanceSignal::FinalNoToolActionNeeded)
+            );
+        if zero_tool_no_action_needed {
+            append_turn_controller_event(
+                event_log,
+                run_id,
+                "turn_finalize",
+                serde_json::json!({
+                    "planner_steps_taken": planner_steps_taken,
+                    "planner_step_limit": planner_step_limit,
+                    "planner_step_hard_limit": planner_step_hard_limit,
+                    "compose_followup_cycles": compose_followup_cycles,
+                    "quality_gate_len": 0,
+                    "summary_calls_used": summary_calls_used,
+                    "summary_call_budget": cfg.max_summary_calls_per_turn,
+                }),
+            )
+            .await;
+            return Ok(draft_message);
+        }
         let remaining_summary_budget = cfg
             .max_summary_calls_per_turn
             .saturating_sub(summary_calls_used);

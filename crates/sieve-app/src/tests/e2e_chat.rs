@@ -62,6 +62,58 @@ async fn e2e_fake_greeting_uses_guided_zero_tool_turn_without_approval() {
 }
 
 #[tokio::test]
+async fn e2e_fake_zero_tool_final_no_tool_action_needed_skips_compose() {
+    let planner_output = PlannerTurnOutput {
+        thoughts: Some("chat only".to_string()),
+        tool_calls: Vec::new(),
+    };
+    let response_output = sieve_llm::ResponseTurnOutput {
+        message: "Handled directly by response writer.".to_string(),
+        referenced_ref_ids: BTreeSet::new(),
+        summarized_ref_ids: BTreeSet::new(),
+    };
+    let planner = Arc::new(QueuedPlannerModel::new(vec![Ok(planner_output)]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalNoToolActionNeeded),
+    )]));
+    let response: Arc<dyn ResponseModel> =
+        Arc::new(QueuedResponseModel::new(vec![Ok(response_output)]));
+    let summary_impl = Arc::new(QueuedSummaryModel::new(vec![Ok(
+        "compose should not run".to_string()
+    )]));
+    let summary: Arc<dyn SummaryModel> = summary_impl.clone();
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ],
+        E2E_POLICY_BASE,
+    );
+
+    harness
+        .run_text_turn("hi")
+        .await
+        .expect("zero-tool final turn should succeed");
+
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["Handled directly by response writer.".to_string()]
+    );
+    assert_eq!(
+        summary_impl.call_count(),
+        0,
+        "compose summary model should not run for zero-tool final_no_tool_action_needed turns"
+    );
+}
+
+#[tokio::test]
 async fn e2e_fake_lcm_does_not_auto_inject_trusted_memory_into_planner() {
     let _guard = env_test_lock()
         .lock()

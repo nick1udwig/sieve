@@ -37,7 +37,9 @@ pub(crate) use config::{
     parse_telegram_allowed_sender_user_ids, runtime_event_log_path, save_approval_allowances,
     DEFAULT_POLICY_PATH,
 };
-use ingress::{spawn_stdin_prompt_loop, spawn_telegram_loop, IngressPrompt, PromptSource, RuntimeBridge};
+use ingress::{
+    spawn_stdin_prompt_loop, spawn_telegram_loop, IngressPrompt, PromptSource, RuntimeBridge,
+};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use ingress::{TurnKind, TypingGuard};
