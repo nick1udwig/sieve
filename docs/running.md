@@ -35,8 +35,7 @@
      - used for: `st stt`, `st tts`
      - optional: yes
    - `codex` for Telegram image/photo OCR ingress
-     - repo: [`nick1udwig/codex`](https://github.com/nick1udwig/codex)
-     - upstream/base project: [`openai/codex`](https://github.com/openai/codex)
+     - repo: [`openai/codex`](https://github.com/openai/codex)
      - used for: `codex exec --sandbox read-only --ephemeral --image ...`
      - optional: yes
    - `sieve-lcm-cli` for LCM memory query/expand/ingest flows
