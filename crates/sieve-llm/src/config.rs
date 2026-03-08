@@ -1,6 +1,11 @@
+use crate::codex_auth::{
+    read_openai_codex_auth_file, resolve_openai_codex_auth_json_path,
+    OPENAI_CODEX_ACCESS_TOKEN_ENV, OPENAI_CODEX_ACCOUNT_ID_ENV, OPENAI_CODEX_AUTH_PATH_ENV,
+};
 use crate::LlmError;
 use sieve_types::{LlmModelConfig, LlmProvider};
 use std::env;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmConfigs {
@@ -48,6 +53,7 @@ pub(crate) fn load_model_config_from_env(
             Some(value.to_string())
         }
     });
+    let provider = maybe_upgrade_to_openai_codex(prefix, provider, api_base.as_deref(), getter)?;
     Ok(LlmModelConfig {
         provider,
         model,
@@ -84,6 +90,60 @@ fn parse_provider(raw: &str) -> Result<LlmProvider, &'static str> {
         "openai-codex" | "openai_codex" => Ok(LlmProvider::OpenAiCodex),
         _ => Err("unsupported provider"),
     }
+}
+
+fn maybe_upgrade_to_openai_codex(
+    prefix: &str,
+    provider: LlmProvider,
+    api_base: Option<&str>,
+    getter: &dyn Fn(&str) -> Option<String>,
+) -> Result<LlmProvider, LlmError> {
+    if provider != LlmProvider::OpenAi {
+        return Ok(provider);
+    }
+    if api_base.is_some() || openai_api_key_present(prefix, getter) {
+        return Ok(provider);
+    }
+    if openai_codex_auth_available(prefix, getter)? {
+        return Ok(LlmProvider::OpenAiCodex);
+    }
+    Ok(provider)
+}
+
+fn openai_api_key_present(prefix: &str, getter: &dyn Fn(&str) -> Option<String>) -> bool {
+    first_non_empty(getter(&format!("{prefix}_OPENAI_API_KEY")))
+        .or_else(|| first_non_empty(getter("OPENAI_API_KEY")))
+        .is_some()
+}
+
+fn openai_codex_auth_available(
+    prefix: &str,
+    getter: &dyn Fn(&str) -> Option<String>,
+) -> Result<bool, LlmError> {
+    let scoped_access = first_non_empty(getter(&format!("{prefix}_OPENAI_CODEX_ACCESS_TOKEN")));
+    let global_access = first_non_empty(getter(OPENAI_CODEX_ACCESS_TOKEN_ENV));
+    if scoped_access.is_some() || global_access.is_some() {
+        return Ok(
+            first_non_empty(getter(&format!("{prefix}_OPENAI_CODEX_ACCOUNT_ID")))
+                .or_else(|| first_non_empty(getter(OPENAI_CODEX_ACCOUNT_ID_ENV)))
+                .is_some(),
+        );
+    }
+
+    let auth_json_path = first_non_empty(getter(&format!("{prefix}_OPENAI_CODEX_AUTH_JSON_PATH")))
+        .or_else(|| first_non_empty(getter(OPENAI_CODEX_AUTH_PATH_ENV)))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| resolve_openai_codex_auth_json_path(getter));
+    match read_openai_codex_auth_file(&auth_json_path) {
+        Ok(_) => Ok(true),
+        Err(LlmError::Config(_)) => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+fn first_non_empty(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) fn env_getter(key: &str) -> Option<String> {

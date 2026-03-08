@@ -24,13 +24,13 @@ Full dependency, env, runtime, logging, Telegram, troubleshooting, and external 
 Send a one-off request with:
 
 ```bash
-cargo run -p sieve-app -- "review workspace status"
+cargo run -p sieve-app -- run --prompt "review workspace status"
 ```
 
 Start long-running mode with:
 
 ```bash
-cargo run --release -p sieve-app
+cargo run --release -p sieve-app -- run
 ```
 
 Long-running mode also accepts automation commands on stdin or Telegram.

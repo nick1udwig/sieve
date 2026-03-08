@@ -7,6 +7,7 @@ OpenAI-backed planner + guidance + response/summary model adapters for Sieve v3 
 Planner config env:
 - `SIEVE_PLANNER_MODEL` (required)
 - `SIEVE_PLANNER_PROVIDER` (optional; `openai` or `openai_codex`; default `openai`)
+- if provider is `openai` but no OpenAI API key is present, the loader auto-falls back to `openai_codex` when valid Codex auth exists
 - `SIEVE_PLANNER_API_BASE` (optional)
 - `SIEVE_PLANNER_OPENAI_API_KEY` (optional; falls back to `OPENAI_API_KEY`)
 

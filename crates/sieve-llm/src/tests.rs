@@ -60,6 +60,87 @@ fn load_model_config_from_env_parses_openai_codex_provider() {
 }
 
 #[test]
+fn load_model_config_from_env_falls_back_to_openai_codex_when_openai_key_missing() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "sieve-codex-config-fallback-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("mkdir");
+    let auth_path = temp_dir.join("auth.json");
+    std::fs::write(
+        &auth_path,
+        r#"{
+  "openai-codex": {
+    "type": "oauth",
+    "access": "auth-token",
+    "refresh": "refresh-token",
+    "expires": 4102444800000,
+    "accountId": "acc-auth"
+  }
+}"#,
+    )
+    .expect("write auth");
+
+    let mut env_map = BTreeMap::new();
+    env_map.insert("SIEVE_PLANNER_MODEL".to_string(), "gpt-5.4".to_string());
+    env_map.insert("SIEVE_PLANNER_PROVIDER".to_string(), "openai".to_string());
+    env_map.insert(
+        "SIEVE_OPENAI_CODEX_AUTH_JSON_PATH".to_string(),
+        auth_path.display().to_string(),
+    );
+
+    let cfg = load_model_config_from_env("SIEVE_PLANNER", &map_getter(&env_map)).unwrap();
+    assert_eq!(cfg.provider, LlmProvider::OpenAiCodex);
+
+    let _ = std::fs::remove_file(auth_path);
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn load_model_config_from_env_prefers_openai_when_api_key_present() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "sieve-codex-config-openai-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("mkdir");
+    let auth_path = temp_dir.join("auth.json");
+    std::fs::write(
+        &auth_path,
+        r#"{
+  "openai-codex": {
+    "type": "oauth",
+    "access": "auth-token",
+    "refresh": "refresh-token",
+    "expires": 4102444800000,
+    "accountId": "acc-auth"
+  }
+}"#,
+    )
+    .expect("write auth");
+
+    let mut env_map = BTreeMap::new();
+    env_map.insert("SIEVE_PLANNER_MODEL".to_string(), "gpt-5.4".to_string());
+    env_map.insert("SIEVE_PLANNER_PROVIDER".to_string(), "openai".to_string());
+    env_map.insert("OPENAI_API_KEY".to_string(), "openai-key".to_string());
+    env_map.insert(
+        "SIEVE_OPENAI_CODEX_AUTH_JSON_PATH".to_string(),
+        auth_path.display().to_string(),
+    );
+
+    let cfg = load_model_config_from_env("SIEVE_PLANNER", &map_getter(&env_map)).unwrap();
+    assert_eq!(cfg.provider, LlmProvider::OpenAi);
+
+    let _ = std::fs::remove_file(auth_path);
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[test]
 fn load_model_config_from_env_rejects_unsupported_provider() {
     let mut env_map = BTreeMap::new();
     env_map.insert("SIEVE_PLANNER_MODEL".to_string(), "gpt-4o-mini".to_string());

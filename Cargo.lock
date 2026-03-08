@@ -3201,6 +3201,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "clap",
  "croner",
  "dotenvy",
  "reqwest 0.12.28",

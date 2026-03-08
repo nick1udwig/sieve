@@ -1,4 +1,4 @@
-// For the integrated runtime + Telegram app entrypoint, run `cargo run -p sieve-app -- "<prompt>"`.
+// For the integrated runtime + Telegram app entrypoint, run `cargo run -p sieve-app -- run --prompt "<prompt>"`.
 use sieve_llm::{GuidanceModel, OpenAiGuidanceModel};
 use sieve_types::{LlmModelConfig, LlmProvider, PlannerGuidanceInput, RunId};
 use std::env;
