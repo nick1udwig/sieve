@@ -89,12 +89,14 @@ Expected result:
 - `main` cron queues a trusted system event into the durable main session, then heartbeat decides what to surface.
 - `isolated` cron runs a separate synthetic turn under logical session key `cron:<job_id>` and does not share main-session conversation state.
 - One-shot `at` jobs disable themselves after firing.
+- One-shot relative `after` jobs resolve to a single future run time, then disable themselves after firing.
 - Repeating `every` and `cron` jobs reschedule automatically.
 
 Long-running mode command surface:
 
 - `/heartbeat now`
 - `/cron list`
+- `/cron add main after 1m -- remind me to say hi`
 - `/cron add main every 15m -- remind me to check deploys`
 - `/cron add main at 2026-03-06T09:00:00Z -- remind me about standup`
 - `/cron add isolated cron 0 9 * * 1-5 -- send build summary`

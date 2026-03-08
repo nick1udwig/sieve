@@ -14,6 +14,8 @@ pub struct PlannerRunRequest {
     pub cwd: String,
     pub user_message: String,
     pub allowed_tools: Vec<String>,
+    pub current_time_utc: Option<String>,
+    pub current_timezone: Option<String>,
     pub allowed_net_connect_scopes: Vec<String>,
     pub browser_sessions: Vec<PlannerBrowserSession>,
     pub previous_events: Vec<RuntimeEvent>,
@@ -28,7 +30,8 @@ pub struct PlannerRunRequest {
 pub enum PlannerToolResult {
     Automation {
         request: sieve_types::AutomationRequest,
-        message: String,
+        message: Option<String>,
+        failure_reason: Option<String>,
     },
     Bash {
         command: String,
@@ -62,6 +65,8 @@ impl RuntimeOrchestrator {
                 run_id: request.run_id.clone(),
                 user_message: request.user_message.clone(),
                 allowed_tools: request.allowed_tools.clone(),
+                current_time_utc: request.current_time_utc.clone(),
+                current_timezone: request.current_timezone.clone(),
                 allowed_net_connect_scopes: request.allowed_net_connect_scopes.clone(),
                 browser_sessions: request.browser_sessions.clone(),
                 previous_events: request.previous_events.clone(),
@@ -80,14 +85,18 @@ impl RuntimeOrchestrator {
                             "automation tool is not configured for this runtime".to_string(),
                         )
                     })?;
-                    let result = automation
-                        .handle_request(automation_request.clone())
-                        .await
-                        .map_err(RuntimeError::Automation)?;
-                    tool_results.push(PlannerToolResult::Automation {
-                        request: automation_request,
-                        message: result.message,
-                    });
+                    match automation.handle_request(automation_request.clone()).await {
+                        Ok(result) => tool_results.push(PlannerToolResult::Automation {
+                            request: automation_request,
+                            message: Some(result.message),
+                            failure_reason: None,
+                        }),
+                        Err(err) => tool_results.push(PlannerToolResult::Automation {
+                            request: automation_request,
+                            message: None,
+                            failure_reason: Some(err),
+                        }),
+                    }
                 }
                 TypedCall::Bash(args) => {
                     let disposition = self

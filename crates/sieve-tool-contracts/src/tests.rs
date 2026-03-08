@@ -1,8 +1,8 @@
 use super::*;
 use serde_json::{json, Value};
 use sieve_types::{
-    AutomationAction, AutomationRequest, AutomationScheduleKind, AutomationTarget,
-    DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ToolContractErrorCode, ValueRef,
+    AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, DeclassifyRequest,
+    EndorseRequest, Integrity, SinkKey, ToolContractErrorCode, ValueRef,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -123,8 +123,10 @@ fn validate_automation_cron_add_success() {
         &json!({
             "action": "cron_add",
             "target": "main",
-            "schedule_kind": "at",
-            "schedule": "2026-03-08T12:34:56Z",
+            "schedule": {
+                "kind": "at",
+                "timestamp": "2026-03-08T12:34:56Z"
+            },
             "prompt": "remind me to say hi"
         }),
     )
@@ -134,8 +136,9 @@ fn validate_automation_cron_add_success() {
         TypedCall::Automation(AutomationRequest {
             action: AutomationAction::CronAdd,
             target: Some(AutomationTarget::Main),
-            schedule_kind: Some(AutomationScheduleKind::At),
-            schedule: Some("2026-03-08T12:34:56Z".to_string()),
+            schedule: Some(AutomationSchedule::At {
+                timestamp: "2026-03-08T12:34:56Z".to_string(),
+            }),
             prompt: Some("remind me to say hi".to_string()),
             job_id: None,
         })
@@ -148,14 +151,45 @@ fn validate_automation_cron_add_requires_target() {
         "automation",
         &json!({
             "action": "cron_add",
-            "schedule_kind": "every",
-            "schedule": "15m",
+            "schedule": {
+                "kind": "after",
+                "delay": "15m"
+            },
             "prompt": "remind me to check deploys"
         }),
     )
     .expect_err("missing target should fail");
     assert_eq!(err.code, ToolContractErrorCode::MissingRequiredField);
     assert_eq!(err.argument_path, "/target");
+}
+
+#[test]
+fn validate_automation_cron_add_after_success() {
+    let call = validate(
+        "automation",
+        &json!({
+            "action": "cron_add",
+            "target": "main",
+            "schedule": {
+                "kind": "after",
+                "delay": "1m"
+            },
+            "prompt": "say hi"
+        }),
+    )
+    .expect("valid automation cron_add after");
+    assert_eq!(
+        call,
+        TypedCall::Automation(AutomationRequest {
+            action: AutomationAction::CronAdd,
+            target: Some(AutomationTarget::Main),
+            schedule: Some(AutomationSchedule::After {
+                delay: "1m".to_string(),
+            }),
+            prompt: Some("say hi".to_string()),
+            job_id: None,
+        })
+    );
 }
 
 #[test]

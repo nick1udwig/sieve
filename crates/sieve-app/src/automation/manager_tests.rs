@@ -5,7 +5,7 @@ use crate::lcm_integration::LcmIntegrationConfig;
 use crate::logging::now_ms;
 use sieve_runtime::Clock;
 use sieve_types::{
-    AutomationAction, AutomationRequest, AutomationScheduleKind, AutomationTarget, UncertainMode,
+    AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, UncertainMode,
     UnknownMode,
 };
 use std::collections::BTreeSet;
@@ -132,8 +132,9 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         .handle_tool_request(AutomationRequest {
             action: AutomationAction::CronAdd,
             target: Some(AutomationTarget::Main),
-            schedule_kind: Some(AutomationScheduleKind::Every),
-            schedule: Some("15m".to_string()),
+            schedule: Some(AutomationSchedule::Every {
+                interval: "15m".to_string(),
+            }),
             prompt: Some("remind me to check build".to_string()),
             job_id: None,
         })
@@ -145,7 +146,6 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         .handle_tool_request(AutomationRequest {
             action: AutomationAction::CronList,
             target: None,
-            schedule_kind: None,
             schedule: None,
             prompt: None,
             job_id: None,
@@ -158,7 +158,6 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         .handle_tool_request(AutomationRequest {
             action: AutomationAction::CronPause,
             target: None,
-            schedule_kind: None,
             schedule: None,
             prompt: None,
             job_id: Some("cron-1".to_string()),
@@ -171,7 +170,6 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         .handle_tool_request(AutomationRequest {
             action: AutomationAction::CronResume,
             target: None,
-            schedule_kind: None,
             schedule: None,
             prompt: None,
             job_id: Some("cron-1".to_string()),
@@ -184,7 +182,6 @@ async fn handle_tool_request_supports_cron_lifecycle_actions() {
         .handle_tool_request(AutomationRequest {
             action: AutomationAction::CronRemove,
             target: None,
-            schedule_kind: None,
             schedule: None,
             prompt: None,
             job_id: Some("cron-1".to_string()),

@@ -256,10 +256,12 @@ async fn e2e_fake_natural_language_reminder_can_use_automation_tool() {
                 args: BTreeMap::from([
                     ("action".to_string(), serde_json::json!("cron_add")),
                     ("target".to_string(), serde_json::json!("main")),
-                    ("schedule_kind".to_string(), serde_json::json!("at")),
                     (
                         "schedule".to_string(),
-                        serde_json::json!("2026-12-01T09:00:00Z"),
+                        serde_json::json!({
+                            "kind": "at",
+                            "timestamp": "2026-12-01T09:00:00Z"
+                        }),
                     ),
                     ("prompt".to_string(), serde_json::json!("say hi")),
                 ]),
@@ -308,6 +310,80 @@ async fn e2e_fake_natural_language_reminder_can_use_automation_tool() {
     assert_eq!(
         store["cron_jobs"]["cron-1"]["schedule"]["at_ms"],
         serde_json::json!(1_796_115_600_000_u64)
+    );
+}
+
+#[tokio::test]
+async fn e2e_fake_relative_reminder_uses_after_schedule_and_succeeds() {
+    let planner: Arc<dyn PlannerModel> =
+        Arc::new(QueuedPlannerModel::new(vec![Ok(PlannerTurnOutput {
+            thoughts: Some("schedule reminder".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "automation".to_string(),
+                args: BTreeMap::from([
+                    ("action".to_string(), serde_json::json!("cron_add")),
+                    ("target".to_string(), serde_json::json!("main")),
+                    (
+                        "schedule".to_string(),
+                        serde_json::json!({
+                            "kind": "after",
+                            "delay": "1m"
+                        }),
+                    ),
+                    ("prompt".to_string(), serde_json::json!("say hi")),
+                ]),
+            }],
+        })]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![Ok(
+        guidance_output(PlannerGuidanceSignal::FinalAnswerReady),
+    )]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+        sieve_llm::ResponseTurnOutput {
+            message: "Scheduled it.".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        },
+    )]));
+    let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+    let harness = AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner,
+            guidance,
+            response,
+            summary,
+        },
+        vec!["automation".to_string()],
+        E2E_POLICY_BASE,
+    );
+
+    let before_ms = crate::logging::now_ms();
+    harness
+        .run_text_turn("in one minute send me a message saying hi")
+        .await
+        .expect("relative reminder turn should succeed");
+    let after_ms = crate::logging::now_ms();
+
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["Scheduled it.".to_string()]
+    );
+
+    let store: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&harness.cfg.automation_store_path)
+            .expect("automation store should exist"),
+    )
+    .expect("parse automation store");
+    let at_ms = store["cron_jobs"]["cron-1"]["schedule"]["at_ms"]
+        .as_u64()
+        .expect("at_ms should be u64");
+    assert_eq!(store["cron_jobs"]["cron-1"]["schedule"]["kind"], "at");
+    assert!(
+        at_ms >= before_ms.saturating_add(60_000),
+        "scheduled time should be at least one minute out"
+    );
+    assert!(
+        at_ms <= after_ms.saturating_add(65_000),
+        "scheduled time should stay close to one minute out"
     );
 }
 

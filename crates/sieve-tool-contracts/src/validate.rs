@@ -4,8 +4,8 @@ use crate::{
 };
 use serde_json::{Map, Value};
 use sieve_types::{
-    AutomationAction, AutomationRequest, AutomationScheduleKind, AutomationTarget,
-    DeclassifyRequest, EndorseRequest, Integrity, SinkKey, ValueRef,
+    AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, DeclassifyRequest,
+    EndorseRequest, Integrity, SinkKey, ValueRef,
 };
 use url::Url;
 
@@ -52,20 +52,12 @@ fn parse_automation(
         tool_call_index,
         tool_name,
         obj,
-        &[
-            "action",
-            "target",
-            "schedule_kind",
-            "schedule",
-            "prompt",
-            "job_id",
-        ],
+        &["action", "target", "schedule", "prompt", "job_id"],
     )?;
     let args = AutomationArgs {
         action: required_string(tool_call_index, tool_name, obj, "action")?,
         target: optional_string(tool_call_index, tool_name, obj, "target")?,
-        schedule_kind: optional_string(tool_call_index, tool_name, obj, "schedule_kind")?,
-        schedule: optional_string(tool_call_index, tool_name, obj, "schedule")?,
+        schedule: obj.get("schedule").cloned(),
         prompt: optional_string(tool_call_index, tool_name, obj, "prompt")?,
         job_id: optional_string(tool_call_index, tool_name, obj, "job_id")?,
     };
@@ -110,24 +102,8 @@ fn parse_automation(
         None => None,
     };
 
-    let schedule_kind = match args.schedule_kind {
-        Some(kind) => Some(match kind.as_str() {
-            "every" => AutomationScheduleKind::Every,
-            "at" => AutomationScheduleKind::At,
-            "cron" => AutomationScheduleKind::Cron,
-            _ => {
-                return Err(make_error(
-                    ToolContractErrorCode::InvalidEnumVariant,
-                    tool_call_index,
-                    tool_name,
-                    "/schedule_kind",
-                    Some("every|at|cron".to_string()),
-                    Some(kind),
-                    "schedule_kind is not a supported variant".to_string(),
-                    Some("use `every`, `at`, or `cron`"),
-                ))
-            }
-        }),
+    let schedule = match args.schedule {
+        Some(raw) => Some(parse_automation_schedule(tool_call_index, tool_name, &raw)?),
         None => None,
     };
 
@@ -144,15 +120,8 @@ fn parse_automation(
             require_present(
                 tool_call_index,
                 tool_name,
-                "/schedule_kind",
-                schedule_kind.as_ref().map(|_| "ok"),
-                "cron_add requires schedule_kind",
-            )?;
-            require_present(
-                tool_call_index,
-                tool_name,
                 "/schedule",
-                args.schedule.as_deref(),
+                schedule.as_ref().map(|_| "ok"),
                 "cron_add requires schedule",
             )?;
             require_present(
@@ -179,11 +148,63 @@ fn parse_automation(
     Ok(AutomationRequest {
         action,
         target,
-        schedule_kind,
-        schedule: args.schedule,
+        schedule,
         prompt: args.prompt,
         job_id: args.job_id,
     })
+}
+
+fn parse_automation_schedule(
+    tool_call_index: usize,
+    tool_name: &str,
+    value: &Value,
+) -> Result<AutomationSchedule, ContractError> {
+    let obj = match value {
+        Value::Object(obj) => obj,
+        other => {
+            return Err(make_error(
+                ToolContractErrorCode::InvalidType,
+                tool_call_index,
+                tool_name,
+                "/schedule",
+                Some("object".to_string()),
+                Some(json_type(other).to_string()),
+                "schedule must be an object".to_string(),
+                Some("use a typed schedule object"),
+            ))
+        }
+    };
+    reject_unknown_fields(
+        tool_call_index,
+        tool_name,
+        obj,
+        &["kind", "delay", "timestamp", "interval", "expr"],
+    )?;
+    let kind = required_string(tool_call_index, tool_name, obj, "kind")?;
+    match kind.as_str() {
+        "after" => Ok(AutomationSchedule::After {
+            delay: required_string(tool_call_index, tool_name, obj, "delay")?,
+        }),
+        "at" => Ok(AutomationSchedule::At {
+            timestamp: required_string(tool_call_index, tool_name, obj, "timestamp")?,
+        }),
+        "every" => Ok(AutomationSchedule::Every {
+            interval: required_string(tool_call_index, tool_name, obj, "interval")?,
+        }),
+        "cron" => Ok(AutomationSchedule::Cron {
+            expr: required_string(tool_call_index, tool_name, obj, "expr")?,
+        }),
+        _ => Err(make_error(
+            ToolContractErrorCode::InvalidEnumVariant,
+            tool_call_index,
+            tool_name,
+            "/schedule/kind",
+            Some("after|at|every|cron".to_string()),
+            Some(kind),
+            "schedule kind is not a supported variant".to_string(),
+            Some("use `after`, `at`, `every`, or `cron`"),
+        )),
+    }
 }
 
 fn parse_bash(

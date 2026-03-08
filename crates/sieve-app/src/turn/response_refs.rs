@@ -311,23 +311,29 @@ fn summarize_tool_result(
     render_refs: &mut BTreeMap<String, RenderRef>,
 ) -> ResponseToolOutcome {
     match result {
-        PlannerToolResult::Automation { request, message } => ResponseToolOutcome {
-            tool_name: "automation".to_string(),
-            outcome: format!(
-                "automation {}: {}",
-                match request.action {
-                    sieve_types::AutomationAction::CronList => "listed cron jobs",
-                    sieve_types::AutomationAction::CronAdd => "scheduled cron job",
-                    sieve_types::AutomationAction::CronRemove => "removed cron job",
-                    sieve_types::AutomationAction::CronPause => "paused cron job",
-                    sieve_types::AutomationAction::CronResume => "resumed cron job",
+        PlannerToolResult::Automation {
+            request,
+            message,
+            failure_reason,
+        } => {
+            let action = match request.action {
+                sieve_types::AutomationAction::CronList => "listed cron jobs",
+                sieve_types::AutomationAction::CronAdd => "scheduled cron job",
+                sieve_types::AutomationAction::CronRemove => "removed cron job",
+                sieve_types::AutomationAction::CronPause => "paused cron job",
+                sieve_types::AutomationAction::CronResume => "resumed cron job",
+            };
+            ResponseToolOutcome {
+                tool_name: "automation".to_string(),
+                outcome: match message {
+                    Some(message) => format!("automation {action}: {message}"),
+                    None => format!("automation {action} failed"),
                 },
-                message
-            ),
-            attempted_command: None,
-            failure_reason: None,
-            refs: Vec::new(),
-        },
+                attempted_command: None,
+                failure_reason: failure_reason.clone(),
+                refs: Vec::new(),
+            }
+        }
         PlannerToolResult::Bash {
             disposition,
             command,

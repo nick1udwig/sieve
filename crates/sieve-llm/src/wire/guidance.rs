@@ -13,6 +13,7 @@ Rules:
 - Use `114` when the right browser page/session appears open but only page-level or title-only output was observed, so the next step should inspect the current page instead of reopening search.
 - Use `115` when the observed page is an access interstitial or block page (captcha, Google sorry page, login, consent, paywall) rather than the target content.
 - Use `116` when the task still looks satisfiable but the attempted command/path should be reformulated instead of retried verbatim.
+- For typed tool failures caused by invalid argument shape/format (for example bad timestamp or unsupported schedule encoding), prefer `116` when the task is still satisfiable, or `104` when a required field/value is still missing.
 - `guidance.code` must be one of:
   - 100 continue_need_evidence
   - 101 continue_fetch_primary_source

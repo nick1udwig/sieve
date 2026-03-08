@@ -24,21 +24,74 @@
       ]
     },
     "schedule": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "schedule_kind": {
-      "enum": [
-        "every",
-        "at",
-        "cron",
-        null
-      ],
-      "type": [
-        "string",
-        "null"
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "delay": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "after"
+            }
+          },
+          "required": [
+            "kind",
+            "delay"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "at"
+            },
+            "timestamp": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "timestamp"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "interval": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "every"
+            }
+          },
+          "required": [
+            "kind",
+            "interval"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expr": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "cron"
+            }
+          },
+          "required": [
+            "kind",
+            "expr"
+          ],
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "target": {

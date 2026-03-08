@@ -33,8 +33,7 @@ pub struct BashArgs {
 pub struct AutomationArgs {
     pub action: String,
     pub target: Option<String>,
-    pub schedule_kind: Option<String>,
-    pub schedule: Option<String>,
+    pub schedule: Option<serde_json::Value>,
     pub prompt: Option<String>,
     pub job_id: Option<String>,
 }

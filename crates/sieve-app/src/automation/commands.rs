@@ -1,5 +1,5 @@
 use super::{parse_at_timestamp_ms, parse_duration_ms, CronJobSchedule, CronSessionTarget};
-use sieve_types::{AutomationAction, AutomationRequest, AutomationScheduleKind, AutomationTarget};
+use sieve_types::{AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AutomationCommand {
@@ -66,7 +66,7 @@ pub(crate) fn parse_automation_command(
     };
     let Some((lhs, prompt)) = rest.split_once(" -- ") else {
         return Err(
-            "cron add syntax: /cron add <main|isolated> <every|at|cron> <schedule> -- <prompt>"
+            "cron add syntax: /cron add <main|isolated> <after|every|at|cron> <schedule> -- <prompt>"
                 .to_string(),
         );
     };
@@ -82,7 +82,7 @@ pub(crate) fn parse_automation_command(
         .collect::<Vec<_>>();
     if parts.len() < 3 {
         return Err(
-            "cron add syntax: /cron add <main|isolated> <every|at|cron> <schedule> -- <prompt>"
+            "cron add syntax: /cron add <main|isolated> <after|every|at|cron> <schedule> -- <prompt>"
                 .to_string(),
         );
     }
@@ -97,6 +97,15 @@ pub(crate) fn parse_automation_command(
         }
     };
     let schedule = match parts[1] {
+        "after" => {
+            if parts.len() != 3 {
+                return Err("`after` schedule expects exactly one duration argument".to_string());
+            }
+            let delay_ms = parse_duration_ms(parts[2])?;
+            CronJobSchedule::At {
+                at_ms: now_ms.saturating_add(delay_ms),
+            }
+        }
         "every" => {
             if parts.len() != 3 {
                 return Err("`every` schedule expects exactly one duration argument".to_string());
@@ -125,7 +134,7 @@ pub(crate) fn parse_automation_command(
         }
         other => {
             return Err(format!(
-                "unsupported schedule kind `{other}`; expected `every`, `at`, or `cron`"
+                "unsupported schedule kind `{other}`; expected `after`, `every`, `at`, or `cron`"
             ))
         }
     };
@@ -149,21 +158,21 @@ pub(crate) fn automation_command_from_request(
                 Some(AutomationTarget::Isolated) => CronSessionTarget::Isolated,
                 None => return Err("cron_add requires target".to_string()),
             };
-            let schedule_kind = request
-                .schedule_kind
-                .ok_or_else(|| "cron_add requires schedule_kind".to_string())?;
-            let schedule_raw = request
+            let schedule = match request
                 .schedule
-                .ok_or_else(|| "cron_add requires schedule".to_string())?;
-            let schedule = match schedule_kind {
-                AutomationScheduleKind::Every => CronJobSchedule::Every {
-                    every_ms: parse_duration_ms(&schedule_raw)?,
+                .ok_or_else(|| "cron_add requires schedule".to_string())?
+            {
+                AutomationSchedule::After { delay } => CronJobSchedule::At {
+                    at_ms: now_ms.saturating_add(parse_duration_ms(&delay)?),
+                },
+                AutomationSchedule::At { timestamp } => CronJobSchedule::At {
+                    at_ms: parse_at_timestamp_ms(&timestamp)?,
+                },
+                AutomationSchedule::Every { interval } => CronJobSchedule::Every {
+                    every_ms: parse_duration_ms(&interval)?,
                     anchor_ms: now_ms,
                 },
-                AutomationScheduleKind::At => CronJobSchedule::At {
-                    at_ms: parse_at_timestamp_ms(&schedule_raw)?,
-                },
-                AutomationScheduleKind::Cron => CronJobSchedule::Cron { expr: schedule_raw },
+                AutomationSchedule::Cron { expr } => CronJobSchedule::Cron { expr },
             };
             let prompt = request
                 .prompt
@@ -229,6 +238,22 @@ mod tests {
                     anchor_ms: 5_000,
                 },
                 prompt: "remind me to check deploys".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_cron_add_after() {
+        let command =
+            parse_automation_command("/cron add main after 1m -- remind me to say hi", 5_000)
+                .expect("parse")
+                .expect("command");
+        assert_eq!(
+            command,
+            AutomationCommand::CronAdd {
+                target: CronSessionTarget::Main,
+                schedule: CronJobSchedule::At { at_ms: 65_000 },
+                prompt: "remind me to say hi".to_string(),
             }
         );
     }

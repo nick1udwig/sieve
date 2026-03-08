@@ -152,6 +152,8 @@ async fn l_disallowed_planner_tool_is_rejected_at_runtime_boundary() {
             cwd: "/tmp".to_string(),
             user_message: "run echo".to_string(),
             allowed_tools: vec!["endorse".to_string()],
+            current_time_utc: None,
+            current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),
             browser_sessions: Vec::new(),
             previous_events: Vec::new(),

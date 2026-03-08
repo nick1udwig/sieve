@@ -6,7 +6,7 @@ use sieve_policy::TomlPolicyEngine;
 use sieve_shell::{BasicShellAnalyzer, ShellAnalysis};
 use sieve_tool_contracts::TOOL_CONTRACTS_VERSION;
 use sieve_types::{
-    Action, ApprovalResolvedEvent, AutomationAction, AutomationRequest, AutomationScheduleKind,
+    Action, ApprovalResolvedEvent, AutomationAction, AutomationRequest, AutomationSchedule,
     AutomationTarget, Capability, CommandKnowledge, CommandSummary, Integrity, LlmModelConfig,
     LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision, Resource,
     SinkCheck, SinkKey, Source, ValueLabel, ValueRef,

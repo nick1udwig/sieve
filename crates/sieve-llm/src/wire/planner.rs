@@ -15,6 +15,13 @@ Rules:
 - If `bash` available, use only commands listed in BASH_COMMAND_CATALOG.
 - If `automation` available, use it for reminder/scheduling requests and for listing, pausing, resuming, or removing cron jobs instead of answering with slash-command instructions.
 - For reminder/scheduling requests, prefer `automation` `cron_add` with `target=\"main\"` unless the user explicitly asks for an isolated/background-only cron job.
+- For `automation` `cron_add`, use typed `schedule` objects only:
+  - one-shot relative: `{"kind":"after","delay":"1m"}`
+  - one-shot absolute: `{"kind":"at","timestamp":"2026-03-08T12:00:00Z"}`
+  - recurring interval: `{"kind":"every","interval":"15m"}`
+  - cron expression: `{"kind":"cron","expr":"0 9 * * 1-5"}`
+- Never put natural-language time phrases inside `schedule.kind="at"`; `at.timestamp` must be absolute RFC3339 or unix-ms text.
+- `CURRENT_TIME_UTC` and `CURRENT_TIMEZONE` are trusted context for relative/ambiguous time requests.
 - Prefer cataloged commands that directly match the user task.
 - Requests needs prior conversation memory? Use cataloged memory commands (e.g. `sieve-lcm-cli query --lane both --query \"...\" --json`) instead of guessing.
 - If user explicitly names a site/domain/app, that site is the target origin.
@@ -75,6 +82,8 @@ pub(crate) fn serialize_planner_input(input: &PlannerTurnInput) -> Result<Value,
     Ok(json!({
         "run_id": input.run_id.0,
         "trusted_user_message": input.user_message,
+        "CURRENT_TIME_UTC": input.current_time_utc,
+        "CURRENT_TIMEZONE": input.current_timezone,
         "ALLOWED_NET_CONNECT_SCOPES": input.allowed_net_connect_scopes,
         "BROWSER_SESSIONS": input.browser_sessions,
         "BASH_COMMAND_CATALOG": bash_command_catalog,

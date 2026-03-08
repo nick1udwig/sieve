@@ -91,7 +91,7 @@ fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmE
 fn tool_description(tool_name: &str) -> &'static str {
     match tool_name {
         "automation" => {
-            "Manage heartbeat/cron automation. Use for reminders, scheduling, listing, pausing, resuming, or removing cron jobs."
+            "Manage heartbeat/cron automation. Use for reminders, scheduling, listing, pausing, resuming, or removing cron jobs. For cron_add, pass schedule as an object: {kind:\"after\",delay:\"1m\"}, {kind:\"at\",timestamp:\"2026-03-08T12:00:00Z\"}, {kind:\"every\",interval:\"15m\"}, or {kind:\"cron\",expr:\"0 9 * * 1-5\"}."
         }
         "bash" => "Run a cataloged shell command through runtime policy gates.",
         "endorse" => "Raise integrity of a labeled value_ref after explicit approval.",

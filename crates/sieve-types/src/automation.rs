@@ -38,20 +38,22 @@ impl AutomationTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AutomationScheduleKind {
-    Every,
-    At,
-    Cron,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AutomationSchedule {
+    After { delay: String },
+    At { timestamp: String },
+    Every { interval: String },
+    Cron { expr: String },
 }
 
-impl AutomationScheduleKind {
-    pub const fn as_str(self) -> &'static str {
+impl AutomationSchedule {
+    pub const fn kind_str(&self) -> &'static str {
         match self {
-            Self::Every => "every",
-            Self::At => "at",
-            Self::Cron => "cron",
+            Self::After { .. } => "after",
+            Self::At { .. } => "at",
+            Self::Every { .. } => "every",
+            Self::Cron { .. } => "cron",
         }
     }
 }
@@ -60,8 +62,7 @@ impl AutomationScheduleKind {
 pub struct AutomationRequest {
     pub action: AutomationAction,
     pub target: Option<AutomationTarget>,
-    pub schedule_kind: Option<AutomationScheduleKind>,
-    pub schedule: Option<String>,
+    pub schedule: Option<AutomationSchedule>,
     pub prompt: Option<String>,
     pub job_id: Option<String>,
 }

@@ -118,11 +118,47 @@ fn automation_args_schema() -> Value {
                 "type": ["string", "null"],
                 "enum": ["main", "isolated", null]
             },
-            "schedule_kind": {
-                "type": ["string", "null"],
-                "enum": ["every", "at", "cron", null]
+            "schedule": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "kind": {"const": "after"},
+                            "delay": {"type": "string"}
+                        },
+                        "required": ["kind", "delay"]
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "kind": {"const": "at"},
+                            "timestamp": {"type": "string"}
+                        },
+                        "required": ["kind", "timestamp"]
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "kind": {"const": "every"},
+                            "interval": {"type": "string"}
+                        },
+                        "required": ["kind", "interval"]
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "kind": {"const": "cron"},
+                            "expr": {"type": "string"}
+                        },
+                        "required": ["kind", "expr"]
+                    },
+                    {"type": "null"}
+                ]
             },
-            "schedule": {"type": ["string", "null"]},
             "prompt": {"type": ["string", "null"]},
             "job_id": {"type": ["string", "null"]}
         },

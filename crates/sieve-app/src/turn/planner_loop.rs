@@ -16,6 +16,7 @@ use crate::planner_progress::{
 };
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
+use chrono::{SecondsFormat, TimeZone, Utc};
 use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
 use sieve_runtime::{
     EventLogError, PlannerRunRequest, PlannerRunResult, RuntimeEventLog, RuntimeOrchestrator,
@@ -98,12 +99,18 @@ pub(super) async fn generate_assistant_message(
                 runtime.has_automation_tool(),
             );
             let browser_sessions = runtime.planner_browser_sessions()?;
+            let current_time_utc = Utc
+                .timestamp_millis_opt(now_ms() as i64)
+                .single()
+                .map(|value| value.to_rfc3339_opts(SecondsFormat::Secs, true));
             let step_result = match runtime
                 .orchestrate_planner_turn(PlannerRunRequest {
                     run_id: run_id.clone(),
                     cwd: cfg.runtime_cwd.clone(),
                     user_message: planner_turn_user_message,
                     allowed_tools: allowed_tools_for_turn,
+                    current_time_utc,
+                    current_timezone: Some("UTC".to_string()),
                     allowed_net_connect_scopes: cfg.allowed_net_connect_scopes.clone(),
                     browser_sessions,
                     previous_events: event_log.snapshot(),
