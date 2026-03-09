@@ -246,7 +246,10 @@ fn codex_exec_args_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "instruction": {"type": "string"},
+            "command": {
+                "type": "array",
+                "items": {"type": "string"}
+            },
             "sandbox": {
                 "type": "string",
                 "enum": ["read_only", "workspace_write"]
@@ -256,12 +259,9 @@ fn codex_exec_args_schema() -> Value {
                 "type": "array",
                 "items": {"type": "string"}
             },
-            "local_images": {
-                "type": "array",
-                "items": {"type": "string"}
-            }
+            "timeout_ms": {"type": ["integer", "null"], "minimum": 0}
         },
-        "required": ["instruction", "sandbox"]
+        "required": ["command", "sandbox"]
     })
 }
 

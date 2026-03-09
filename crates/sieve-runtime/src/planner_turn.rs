@@ -41,7 +41,7 @@ pub enum PlannerToolResult {
     },
     CodexExec {
         request: sieve_types::CodexExecRequest,
-        result: Option<sieve_types::CodexTurnResult>,
+        result: Option<sieve_types::CodexExecResult>,
         failure_reason: Option<String>,
     },
     CodexSession {

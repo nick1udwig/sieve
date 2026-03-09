@@ -18,13 +18,12 @@ impl CodexSandboxMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexExecRequest {
-    pub instruction: String,
+    pub command: Vec<String>,
     pub sandbox: CodexSandboxMode,
     pub cwd: Option<String>,
     #[serde(default)]
     pub writable_roots: Vec<String>,
-    #[serde(default)]
-    pub local_images: Vec<String>,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +65,13 @@ pub struct CodexTurnResult {
     pub user_visible: Option<String>,
     pub turn_id: Option<String>,
     pub thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexExecResult {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

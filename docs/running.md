@@ -39,7 +39,7 @@
      - optional: yes
    - `codex` for Codex app-server OCR and delegated coding sessions
      - repo: [`openai/codex`](https://github.com/openai/codex)
-     - used for: `codex app-server` behind `codex_exec` and `codex_session`
+     - used for: `codex app-server` behind `codex_exec`, `codex_session`, and transient OCR turns
      - optional: yes
    - `sieve-lcm-cli` for LCM memory query/expand/ingest flows
      - repo: [`nick1udwig/sieve-lcm`](https://github.com/nick1udwig/sieve-lcm)
@@ -52,6 +52,7 @@
 `sieve-app` auto-loads `.env` from the current working directory when present.
 Codex auth defaults to `$SIEVE_HOME/state/auth.json`.
 Codex session metadata persists in `$SIEVE_HOME/state/codex.db`.
+See [Codex App Server](./codex-app-server.md) for tool semantics, persistence, approvals, and open follow-ups.
 `cargo run -p sieve-app -- auth path` prints the resolved auth file path.
 
 ### Start The Integrated App
@@ -104,7 +105,7 @@ docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/
 Run long-lived mode:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local run
 ```
 
 If `bubblewrap` quarantine fails under Docker, allow unprivileged user namespaces on the host or add the extra container privileges your runtime requires.
@@ -200,7 +201,7 @@ Telegram voice notes:
 
 Telegram images:
 
-- photo/image input is converted to text through the Codex app-server `codex_exec` path with a read-only, no-network sandbox and a local image input
+- photo/image input is converted to text through a transient Codex app-server turn with a read-only, no-network sandbox and a local image input
 - this ingress OCR path is treated as trusted user-input provenance
 - OCR done later inside planner `bash` tool flows remains untrusted tool output by default
 - when OCR extraction fails, the app replies with a text error message

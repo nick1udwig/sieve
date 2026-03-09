@@ -3,11 +3,12 @@ use super::{
     session_name_from_instruction, summarize_instruction, CodexSessionStore, StoredCodexSession,
 };
 use async_trait::async_trait;
-use sieve_runtime::{CodexTool, CodexToolResult, RuntimeEventLog};
+use sieve_runtime::{CodexExecToolResult, CodexSessionToolResult, CodexTool, RuntimeEventLog};
 use sieve_types::{
     ApprovalAction, ApprovalPromptKind, ApprovalRequestId, ApprovalRequestedEvent,
-    ApprovalResolvedEvent, CodexExecRequest, CodexSandboxMode, CodexSessionRequest,
-    CodexTurnResult, CodexTurnStatus, CommandSegment, PlannerCodexSession, RunId, RuntimeEvent,
+    ApprovalResolvedEvent, CodexExecRequest, CodexExecResult, CodexSandboxMode,
+    CodexSessionRequest, CodexTurnResult, CodexTurnStatus, CommandSegment, PlannerCodexSession,
+    RunId, RuntimeEvent,
 };
 use std::collections::HashMap;
 use std::env;
@@ -88,11 +89,48 @@ impl CodexManager {
         })
     }
 
-    async fn exec_internal(&self, request: CodexExecRequest) -> Result<CodexToolResult, String> {
+    async fn exec_internal(
+        &self,
+        request: CodexExecRequest,
+    ) -> Result<CodexExecToolResult, String> {
+        let mut client = AppServerClient::spawn(&AppServerClientConfig {
+            program: self.config.program.clone(),
+        })
+        .await?;
+        client.initialize().await?;
+        let timeout_ms = request
+            .timeout_ms
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| "codex exec timeout_ms exceeds i64 range".to_string())?;
+        let response = client
+            .request(
+                "command/exec",
+                serde_json::json!({
+                    "command": request.command,
+                    "cwd": request.cwd,
+                    "timeoutMs": timeout_ms,
+                    "sandboxPolicy": sandbox_policy_json(
+                        request.sandbox,
+                        request.cwd.as_deref(),
+                        &request.writable_roots
+                    ),
+                }),
+            )
+            .await?;
+        Ok(CodexExecToolResult {
+            result: decode_command_exec_result(&response)?,
+        })
+    }
+
+    async fn task_internal(
+        &self,
+        request: CodexSessionRequest,
+    ) -> Result<CodexSessionToolResult, String> {
         let existing_names = self.store.existing_session_names()?;
         let session_name = session_name_from_instruction(&request.instruction, &existing_names);
         let run_ctx = SessionRunContext {
-            run_id: RunId(format!("codex-exec-{}", Uuid::new_v4())),
+            run_id: RunId(format!("codex-task-{}", Uuid::new_v4())),
             session_id: None,
             session_name,
             thread_id: None,
@@ -111,7 +149,7 @@ impl CodexManager {
     async fn session_internal(
         &self,
         request: CodexSessionRequest,
-    ) -> Result<CodexToolResult, String> {
+    ) -> Result<CodexSessionToolResult, String> {
         let now = now_ms();
         let (
             session_id,
@@ -200,7 +238,10 @@ impl CodexManager {
         Ok(())
     }
 
-    async fn run_codex_turn(&self, run_ctx: SessionRunContext) -> Result<CodexToolResult, String> {
+    async fn run_codex_turn(
+        &self,
+        run_ctx: SessionRunContext,
+    ) -> Result<CodexSessionToolResult, String> {
         let mut client = AppServerClient::spawn(&AppServerClientConfig {
             program: self.config.program.clone(),
         })
@@ -324,7 +365,7 @@ impl CodexManager {
             )?;
         }
 
-        Ok(CodexToolResult { result: parsed })
+        Ok(CodexSessionToolResult { result: parsed })
     }
 
     async fn wait_for_turn_completion(
@@ -574,11 +615,21 @@ impl CodexManager {
 
 #[async_trait]
 impl CodexTool for CodexManager {
-    async fn exec(&self, request: CodexExecRequest) -> Result<CodexToolResult, String> {
+    async fn exec(&self, request: CodexExecRequest) -> Result<CodexExecToolResult, String> {
         self.exec_internal(request).await
     }
 
-    async fn run_session(&self, request: CodexSessionRequest) -> Result<CodexToolResult, String> {
+    async fn run_task(
+        &self,
+        request: CodexSessionRequest,
+    ) -> Result<CodexSessionToolResult, String> {
+        self.task_internal(request).await
+    }
+
+    async fn run_session(
+        &self,
+        request: CodexSessionRequest,
+    ) -> Result<CodexSessionToolResult, String> {
         self.session_internal(request).await
     }
 
@@ -660,6 +711,32 @@ fn structured_turn_output_schema() -> serde_json::Value {
             "user_visible": {"type": ["string", "null"]}
         },
         "required": ["status", "summary", "user_visible"]
+    })
+}
+
+fn decode_command_exec_result(response: &serde_json::Value) -> Result<CodexExecResult, String> {
+    let exit_code = response
+        .get("exitCode")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| "codex command/exec missing exitCode".to_string())
+        .and_then(|value| {
+            i32::try_from(value)
+                .map_err(|_| "codex command/exec exitCode exceeds i32 range".to_string())
+        })?;
+    let stdout = response
+        .get("stdout")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "codex command/exec missing stdout".to_string())?
+        .to_string();
+    let stderr = response
+        .get("stderr")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "codex command/exec missing stderr".to_string())?
+        .to_string();
+    Ok(CodexExecResult {
+        exit_code,
+        stdout,
+        stderr,
     })
 }
 
@@ -851,6 +928,19 @@ mod tests {
     }
 
     #[test]
+    fn decode_command_exec_result_uses_raw_stdout_and_stderr() {
+        let result = decode_command_exec_result(&serde_json::json!({
+            "exitCode": 7,
+            "stdout": "ok",
+            "stderr": "warn",
+        }))
+        .expect("command exec result");
+        assert_eq!(result.exit_code, 7);
+        assert_eq!(result.stdout, "ok");
+        assert_eq!(result.stderr, "warn");
+    }
+
+    #[test]
     fn handle_item_notification_extracts_file_change_preview() {
         let mut state = TurnStreamState::default();
         handle_item_notification(
@@ -877,7 +967,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn codex_manager_exec_passes_local_image_input() {
+    async fn codex_manager_exec_uses_command_exec_with_requested_sandbox() {
+        let root = unique_test_root("codex-command-exec");
+        let script = write_mock_server(
+            &root,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({"id": msg["id"], "result": {"ok": True}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "command/exec":
+        params = msg["params"]
+        assert params["command"] == ["git", "status"]
+        assert params["cwd"] == "/tmp/repo"
+        assert params["timeoutMs"] == 5000
+        assert params["sandboxPolicy"]["type"] == "workspaceWrite"
+        assert params["sandboxPolicy"]["networkAccess"] is False
+        assert "/tmp/repo" in params["sandboxPolicy"]["writableRoots"]
+        print(json.dumps({"id": msg["id"], "result": {"exitCode": 0, "stdout": "clean", "stderr": ""}}), flush=True)
+"#,
+        );
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = test_manager(&root, &script, approval_bus, event_log);
+
+        let result = manager
+            .exec(CodexExecRequest {
+                command: vec!["git".to_string(), "status".to_string()],
+                sandbox: CodexSandboxMode::WorkspaceWrite,
+                cwd: Some("/tmp/repo".to_string()),
+                writable_roots: vec!["/tmp/repo".to_string()],
+                timeout_ms: Some(5000),
+            })
+            .await
+            .expect("codex exec");
+
+        assert_eq!(result.result.exit_code, 0);
+        assert_eq!(result.result.stdout, "clean");
+        assert_eq!(result.result.stderr, "");
+    }
+
+    #[tokio::test]
+    async fn codex_manager_task_passes_local_image_input() {
         let root = unique_test_root("codex-exec");
         let script = write_mock_server(
             &root,
@@ -910,7 +1045,8 @@ for line in sys.stdin:
         let manager = test_manager(&root, &script, approval_bus, event_log);
 
         let result = manager
-            .exec(CodexExecRequest {
+            .run_task(CodexSessionRequest {
+                session_id: None,
                 instruction: "read the screenshot".to_string(),
                 sandbox: CodexSandboxMode::ReadOnly,
                 cwd: None,
@@ -918,7 +1054,7 @@ for line in sys.stdin:
                 local_images: vec![root.join("image-input.png").to_string_lossy().to_string()],
             })
             .await
-            .expect("codex exec");
+            .expect("codex task");
 
         assert_eq!(result.result.status, CodexTurnStatus::Completed);
         assert_eq!(result.result.user_visible.as_deref(), Some("ocr text"));

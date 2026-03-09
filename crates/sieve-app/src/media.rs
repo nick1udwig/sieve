@@ -1,6 +1,6 @@
 use crate::config::AppConfig;
 use sieve_runtime::CodexTool;
-use sieve_types::{CodexExecRequest, CodexSandboxMode, RunId};
+use sieve_types::{CodexSandboxMode, CodexSessionRequest, RunId};
 use std::path::{Path, PathBuf};
 use tokio::process::Command as TokioCommand;
 
@@ -17,8 +17,9 @@ fn command_error_from_output(context: &str, output: &std::process::Output) -> St
     }
 }
 
-pub(crate) fn codex_image_ocr_request(input_path: &Path) -> CodexExecRequest {
-    CodexExecRequest {
+pub(crate) fn codex_image_ocr_task_request(input_path: &Path) -> CodexSessionRequest {
+    CodexSessionRequest {
+        session_id: None,
         instruction: CODEX_IMAGE_OCR_PROMPT.to_string(),
         sandbox: CodexSandboxMode::ReadOnly,
         cwd: None,
@@ -143,7 +144,9 @@ pub(crate) async fn extract_image_prompt(
     let input_path = media_dir.join(format!("image-input.{ext}"));
     download_telegram_file(bot_token, &file_path, &input_path).await?;
 
-    let result = codex.exec(codex_image_ocr_request(&input_path)).await?;
+    let result = codex
+        .run_task(codex_image_ocr_task_request(&input_path))
+        .await?;
     let extracted = result
         .result
         .user_visible

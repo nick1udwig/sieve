@@ -35,8 +35,9 @@ fn st_audio_tts_args_force_opus_format() {
 }
 
 #[test]
-fn codex_image_ocr_request_uses_read_only_local_image_prompt() {
-    let request = app_media::codex_image_ocr_request(Path::new("/tmp/photo.png"));
+fn codex_image_ocr_task_request_uses_read_only_local_image_prompt() {
+    let request = app_media::codex_image_ocr_task_request(Path::new("/tmp/photo.png"));
+    assert_eq!(request.session_id, None);
     assert_eq!(request.instruction, app_media::CODEX_IMAGE_OCR_PROMPT);
     assert_eq!(request.sandbox, sieve_types::CodexSandboxMode::ReadOnly);
     assert_eq!(request.local_images, vec!["/tmp/photo.png".to_string()]);

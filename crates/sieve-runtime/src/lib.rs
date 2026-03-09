@@ -32,10 +32,10 @@ pub(crate) use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use sieve_types::{
-    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CodexExecRequest, CodexSandboxMode,
-    CodexSessionRequest, CodexTurnResult, CodexTurnStatus, CommandSegment, DeclassifyRequest,
-    EndorseRequest, PlannerCodexSession, PolicyDecisionKind, PrecheckInput, QuarantineReport,
-    QuarantineRunRequest, RunId, RuntimeEvent, UncertainMode, UnknownMode,
+    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, CodexExecRequest, CodexExecResult,
+    CodexSandboxMode, CodexSessionRequest, CodexTurnResult, CodexTurnStatus, CommandSegment,
+    DeclassifyRequest, EndorseRequest, PlannerCodexSession, PolicyDecisionKind, PrecheckInput,
+    QuarantineReport, QuarantineRunRequest, RunId, RuntimeEvent, UncertainMode, UnknownMode,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -46,7 +46,7 @@ pub(crate) use std::sync::Arc;
 
 pub use approval_bus::{ApprovalBus, ApprovalBusError, InProcessApprovalBus};
 pub use automation::{AutomationTool, AutomationToolResult};
-pub use codex::{CodexTool, CodexToolResult};
+pub use codex::{CodexExecToolResult, CodexSessionToolResult, CodexTool};
 pub use event_log::{EventLogError, JsonlRuntimeEventLog, RuntimeEventLog};
 pub use mainline::{
     BashMainlineRunner, MainlineArtifact, MainlineArtifactKind, MainlineRunError,

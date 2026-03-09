@@ -413,23 +413,23 @@ fn summarize_tool_result(
             },
         },
         PlannerToolResult::CodexExec {
-            request: _,
+            request,
             result,
             failure_reason,
         } => {
             let outcome = match result {
                 Some(result) => format!(
-                    "codex exec {} [{}]: {}",
-                    result.status.as_str(),
-                    result.session_name,
-                    result.summary
+                    "codex exec exit {} (stdout {}B, stderr {}B)",
+                    result.exit_code,
+                    result.stdout.len(),
+                    result.stderr.len()
                 ),
                 None => "codex exec failed".to_string(),
             };
             ResponseToolOutcome {
                 tool_name: "codex_exec".to_string(),
                 outcome,
-                attempted_command: None,
+                attempted_command: Some(request.command.join(" ")),
                 failure_reason: failure_reason.clone(),
                 refs: Vec::new(),
             }

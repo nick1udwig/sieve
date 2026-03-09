@@ -248,27 +248,21 @@ fn parse_codex_exec(
         tool_call_index,
         tool_name,
         obj,
-        &[
-            "instruction",
-            "sandbox",
-            "cwd",
-            "writable_roots",
-            "local_images",
-        ],
+        &["command", "sandbox", "cwd", "writable_roots", "timeout_ms"],
     )?;
     let args = CodexExecArgs {
-        instruction: required_string(tool_call_index, tool_name, obj, "instruction")?,
+        command: required_string_array(tool_call_index, tool_name, obj, "command")?,
         sandbox: required_string(tool_call_index, tool_name, obj, "sandbox")?,
         cwd: optional_string(tool_call_index, tool_name, obj, "cwd")?,
         writable_roots: optional_string_array(tool_call_index, tool_name, obj, "writable_roots")?,
-        local_images: optional_string_array(tool_call_index, tool_name, obj, "local_images")?,
+        timeout_ms: optional_u64(tool_call_index, tool_name, obj, "timeout_ms")?,
     };
     Ok(CodexExecRequest {
-        instruction: non_empty_instruction(tool_call_index, tool_name, &args.instruction)?,
+        command: non_empty_command(tool_call_index, tool_name, &args.command)?,
         sandbox: parse_codex_sandbox(tool_call_index, tool_name, &args.sandbox, "/sandbox")?,
         cwd: args.cwd,
         writable_roots: args.writable_roots,
-        local_images: args.local_images,
+        timeout_ms: args.timeout_ms,
     })
 }
 
@@ -328,6 +322,26 @@ fn non_empty_instruction(
         ));
     }
     Ok(trimmed.to_string())
+}
+
+fn non_empty_command(
+    tool_call_index: usize,
+    tool_name: &str,
+    command: &[String],
+) -> Result<Vec<String>, ContractError> {
+    if command.is_empty() {
+        return Err(make_error(
+            ToolContractErrorCode::InvalidValue,
+            tool_call_index,
+            tool_name,
+            "/command",
+            Some("non-empty array".to_string()),
+            Some("empty array".to_string()),
+            "command must include at least one argv entry".to_string(),
+            Some("pass command as argv array, for example [\"git\",\"status\"]"),
+        ));
+    }
+    Ok(command.to_vec())
 }
 
 fn parse_codex_sandbox(
@@ -656,6 +670,54 @@ fn optional_string_array(
         out.push(trimmed.to_string());
     }
     Ok(out)
+}
+
+fn required_string_array(
+    tool_call_index: usize,
+    tool_name: &str,
+    obj: &Map<String, Value>,
+    field_name: &str,
+) -> Result<Vec<String>, ContractError> {
+    if !obj.contains_key(field_name) {
+        return Err(make_error(
+            ToolContractErrorCode::MissingRequiredField,
+            tool_call_index,
+            tool_name,
+            &format!("/{field_name}"),
+            Some("array".to_string()),
+            None,
+            format!("missing required field `{field_name}`"),
+            None,
+        ));
+    }
+    optional_string_array(tool_call_index, tool_name, obj, field_name)
+}
+
+fn optional_u64(
+    tool_call_index: usize,
+    tool_name: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<Option<u64>, ContractError> {
+    let Some(value) = object.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let number = value.as_u64().ok_or_else(|| {
+        make_error(
+            ToolContractErrorCode::InvalidType,
+            tool_call_index,
+            tool_name,
+            &format!("/{field}"),
+            Some("integer|null".to_string()),
+            Some(json_type(value).to_string()),
+            format!("field `{field}` must be integer or null"),
+            None,
+        )
+    })?;
+    Ok(Some(number))
 }
 
 fn json_type(value: &Value) -> &'static str {

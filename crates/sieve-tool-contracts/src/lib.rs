@@ -33,13 +33,12 @@ pub struct BashArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodexExecArgs {
-    pub instruction: String,
+    pub command: Vec<String>,
     pub sandbox: String,
     pub cwd: Option<String>,
     #[serde(default)]
     pub writable_roots: Vec<String>,
-    #[serde(default)]
-    pub local_images: Vec<String>,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

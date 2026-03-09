@@ -38,21 +38,22 @@ fn validate_codex_exec_success() {
     let call = validate(
         "codex_exec",
         &json!({
-            "instruction": "review failing tests and fix them",
+            "command": ["git", "status"],
             "sandbox": "workspace_write",
             "cwd": "/tmp/repo",
-            "writable_roots": ["/tmp/repo", "/tmp/shared"]
+            "writable_roots": ["/tmp/repo", "/tmp/shared"],
+            "timeout_ms": 10000
         }),
     )
     .expect("valid codex_exec");
     assert_eq!(
         call,
         TypedCall::CodexExec(CodexExecRequest {
-            instruction: "review failing tests and fix them".to_string(),
+            command: vec!["git".to_string(), "status".to_string()],
             sandbox: CodexSandboxMode::WorkspaceWrite,
             cwd: Some("/tmp/repo".to_string()),
             writable_roots: vec!["/tmp/repo".to_string(), "/tmp/shared".to_string()],
-            local_images: Vec::new(),
+            timeout_ms: Some(10000),
         })
     );
 }
@@ -82,17 +83,17 @@ fn validate_codex_session_resume_success() {
 }
 
 #[test]
-fn validate_codex_exec_rejects_empty_instruction() {
+fn validate_codex_exec_rejects_empty_command() {
     let err = validate(
         "codex_exec",
         &json!({
-            "instruction": "   ",
+            "command": [],
             "sandbox": "read_only"
         }),
     )
-    .expect_err("empty instruction should fail");
+    .expect_err("empty command should fail");
     assert_eq!(err.code, ToolContractErrorCode::InvalidValue);
-    assert_eq!(err.argument_path, "/instruction");
+    assert_eq!(err.argument_path, "/command");
 }
 
 #[test]

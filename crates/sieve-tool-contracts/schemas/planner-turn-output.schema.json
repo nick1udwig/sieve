@@ -167,20 +167,17 @@
               "args": {
                 "additionalProperties": false,
                 "properties": {
+                  "command": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "cwd": {
                     "type": [
                       "string",
                       "null"
                     ]
-                  },
-                  "instruction": {
-                    "type": "string"
-                  },
-                  "local_images": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
                   },
                   "sandbox": {
                     "enum": [
@@ -188,6 +185,13 @@
                       "workspace_write"
                     ],
                     "type": "string"
+                  },
+                  "timeout_ms": {
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
                   },
                   "writable_roots": {
                     "items": {
@@ -197,7 +201,7 @@
                   }
                 },
                 "required": [
-                  "instruction",
+                  "command",
                   "sandbox"
                 ],
                 "type": "object"
