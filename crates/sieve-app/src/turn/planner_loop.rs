@@ -120,8 +120,10 @@ pub(super) async fn generate_assistant_message(
                 &cfg.allowed_tools,
                 has_known_value_refs,
                 runtime.has_automation_tool(),
+                runtime.has_codex_tool(),
             );
             let browser_sessions = runtime.planner_browser_sessions()?;
+            let codex_sessions = runtime.planner_codex_sessions().await?;
             let current_time_utc = Utc
                 .timestamp_millis_opt(now_ms() as i64)
                 .single()
@@ -136,6 +138,7 @@ pub(super) async fn generate_assistant_message(
                     current_timezone: Some("UTC".to_string()),
                     allowed_net_connect_scopes: cfg.allowed_net_connect_scopes.clone(),
                     browser_sessions,
+                    codex_sessions,
                     previous_events: event_log.snapshot(),
                     guidance: planner_guidance.clone(),
                     control_value_refs: BTreeSet::new(),

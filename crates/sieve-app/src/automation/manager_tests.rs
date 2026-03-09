@@ -45,6 +45,7 @@ fn test_cfg(root: &Path) -> AppConfig {
         policy_path: PathBuf::from(DEFAULT_POLICY_PATH),
         event_log_path: root.join("logs/runtime-events.jsonl"),
         automation_store_path: root.join("state/automation.json"),
+        codex_store_path: root.join("state/codex.db"),
         runtime_cwd: root.to_string_lossy().to_string(),
         heartbeat_interval_ms: None,
         heartbeat_prompt_override: Some("Review pending reminders".to_string()),

@@ -1,4 +1,4 @@
-use crate::{PlannerGuidanceFrame, RunId, RuntimeEvent};
+use crate::{PlannerCodexSession, PlannerGuidanceFrame, RunId, RuntimeEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -40,6 +40,8 @@ pub struct PlannerTurnInput {
     pub allowed_net_connect_scopes: Vec<String>,
     #[serde(default)]
     pub browser_sessions: Vec<PlannerBrowserSession>,
+    #[serde(default)]
+    pub codex_sessions: Vec<PlannerCodexSession>,
     pub previous_events: Vec<RuntimeEvent>,
     #[serde(default)]
     pub guidance: Option<PlannerGuidanceFrame>,

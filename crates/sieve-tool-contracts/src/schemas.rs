@@ -1,4 +1,6 @@
-use crate::{TOOL_AUTOMATION, TOOL_BASH, TOOL_DECLASSIFY, TOOL_ENDORSE};
+use crate::{
+    TOOL_AUTOMATION, TOOL_BASH, TOOL_CODEX_EXEC, TOOL_CODEX_SESSION, TOOL_DECLASSIFY, TOOL_ENDORSE,
+};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -6,6 +8,8 @@ pub fn tool_args_schema(tool_name: &str) -> Option<Value> {
     match tool_name {
         TOOL_AUTOMATION => Some(automation_args_schema()),
         TOOL_BASH => Some(bash_args_schema()),
+        TOOL_CODEX_EXEC => Some(codex_exec_args_schema()),
+        TOOL_CODEX_SESSION => Some(codex_session_args_schema()),
         TOOL_ENDORSE => Some(endorse_args_schema()),
         TOOL_DECLASSIFY => Some(declassify_args_schema()),
         _ => None,
@@ -16,6 +20,8 @@ pub fn all_tool_args_schemas() -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
     out.insert(TOOL_AUTOMATION.to_string(), automation_args_schema());
     out.insert(TOOL_BASH.to_string(), bash_args_schema());
+    out.insert(TOOL_CODEX_EXEC.to_string(), codex_exec_args_schema());
+    out.insert(TOOL_CODEX_SESSION.to_string(), codex_session_args_schema());
     out.insert(TOOL_DECLASSIFY.to_string(), declassify_args_schema());
     out.insert(TOOL_ENDORSE.to_string(), endorse_args_schema());
     out
@@ -39,6 +45,24 @@ pub fn planner_tool_call_schema() -> Value {
                 "properties": {
                     "tool_name": {"const": TOOL_BASH},
                     "args": bash_args_schema()
+                },
+                "required": ["tool_name", "args"]
+            },
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "tool_name": {"const": TOOL_CODEX_EXEC},
+                    "args": codex_exec_args_schema()
+                },
+                "required": ["tool_name", "args"]
+            },
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "tool_name": {"const": TOOL_CODEX_SESSION},
+                    "args": codex_session_args_schema()
                 },
                 "required": ["tool_name", "args"]
             },
@@ -89,6 +113,14 @@ pub fn emitted_schema_documents() -> BTreeMap<String, Value> {
     out.insert(
         "declassify-args.schema.json".to_string(),
         declassify_args_schema(),
+    );
+    out.insert(
+        "codex-exec-args.schema.json".to_string(),
+        codex_exec_args_schema(),
+    );
+    out.insert(
+        "codex-session-args.schema.json".to_string(),
+        codex_session_args_schema(),
     );
     out.insert(
         "endorse-args.schema.json".to_string(),
@@ -206,5 +238,54 @@ fn declassify_args_schema() -> Value {
             "reason": {"type": ["string", "null"]}
         },
         "required": ["value_ref", "sink"]
+    })
+}
+
+fn codex_exec_args_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "instruction": {"type": "string"},
+            "sandbox": {
+                "type": "string",
+                "enum": ["read_only", "workspace_write"]
+            },
+            "cwd": {"type": ["string", "null"]},
+            "writable_roots": {
+                "type": "array",
+                "items": {"type": "string"}
+            },
+            "local_images": {
+                "type": "array",
+                "items": {"type": "string"}
+            }
+        },
+        "required": ["instruction", "sandbox"]
+    })
+}
+
+fn codex_session_args_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "session_id": {"type": ["string", "null"]},
+            "instruction": {"type": "string"},
+            "sandbox": {
+                "type": "string",
+                "enum": ["read_only", "workspace_write"]
+            },
+            "cwd": {"type": ["string", "null"]},
+            "writable_roots": {
+                "type": "array",
+                "items": {"type": "string"}
+            },
+            "local_images": {
+                "type": "array",
+                "items": {"type": "string"}
+            }
+        },
+        "required": ["instruction", "sandbox"]
     })
 }

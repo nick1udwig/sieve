@@ -35,23 +35,10 @@ fn st_audio_tts_args_force_opus_format() {
 }
 
 #[test]
-fn codex_image_ocr_args_include_read_only_ephemeral_image_prompt() {
-    let args = app_media::codex_image_ocr_args(Path::new("/tmp/photo.png"));
-    let rendered = args
-        .into_iter()
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<String>>();
-    assert_eq!(
-        rendered,
-        vec![
-            "exec".to_string(),
-            "--sandbox".to_string(),
-            "read-only".to_string(),
-            "--ephemeral".to_string(),
-            "--image".to_string(),
-            "/tmp/photo.png".to_string(),
-            "--".to_string(),
-            app_media::CODEX_IMAGE_OCR_PROMPT.to_string(),
-        ]
-    );
+fn codex_image_ocr_request_uses_read_only_local_image_prompt() {
+    let request = app_media::codex_image_ocr_request(Path::new("/tmp/photo.png"));
+    assert_eq!(request.instruction, app_media::CODEX_IMAGE_OCR_PROMPT);
+    assert_eq!(request.sandbox, sieve_types::CodexSandboxMode::ReadOnly);
+    assert_eq!(request.local_images, vec!["/tmp/photo.png".to_string()]);
+    assert!(request.writable_roots.is_empty());
 }

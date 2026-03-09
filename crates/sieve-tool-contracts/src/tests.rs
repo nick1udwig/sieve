@@ -1,8 +1,9 @@
 use super::*;
 use serde_json::{json, Value};
 use sieve_types::{
-    AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, DeclassifyRequest,
-    EndorseRequest, Integrity, SinkKey, ToolContractErrorCode, ValueRef,
+    AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, CodexExecRequest,
+    CodexSandboxMode, CodexSessionRequest, DeclassifyRequest, EndorseRequest, Integrity, SinkKey,
+    ToolContractErrorCode, ValueRef,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -30,6 +31,68 @@ fn validate_bash_rejects_unknown_field() {
     let err = validate("bash", &json!({ "cmd": "ls", "cwd": "/tmp" })).expect_err("unknown field");
     assert_eq!(err.code, ToolContractErrorCode::UnknownField);
     assert_eq!(err.argument_path, "/cwd");
+}
+
+#[test]
+fn validate_codex_exec_success() {
+    let call = validate(
+        "codex_exec",
+        &json!({
+            "instruction": "review failing tests and fix them",
+            "sandbox": "workspace_write",
+            "cwd": "/tmp/repo",
+            "writable_roots": ["/tmp/repo", "/tmp/shared"]
+        }),
+    )
+    .expect("valid codex_exec");
+    assert_eq!(
+        call,
+        TypedCall::CodexExec(CodexExecRequest {
+            instruction: "review failing tests and fix them".to_string(),
+            sandbox: CodexSandboxMode::WorkspaceWrite,
+            cwd: Some("/tmp/repo".to_string()),
+            writable_roots: vec!["/tmp/repo".to_string(), "/tmp/shared".to_string()],
+            local_images: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn validate_codex_session_resume_success() {
+    let call = validate(
+        "codex_session",
+        &json!({
+            "session_id": "fix-auth-flow",
+            "instruction": "continue from the current repo state",
+            "sandbox": "read_only"
+        }),
+    )
+    .expect("valid codex_session");
+    assert_eq!(
+        call,
+        TypedCall::CodexSession(CodexSessionRequest {
+            session_id: Some("fix-auth-flow".to_string()),
+            instruction: "continue from the current repo state".to_string(),
+            sandbox: CodexSandboxMode::ReadOnly,
+            cwd: None,
+            writable_roots: Vec::new(),
+            local_images: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn validate_codex_exec_rejects_empty_instruction() {
+    let err = validate(
+        "codex_exec",
+        &json!({
+            "instruction": "   ",
+            "sandbox": "read_only"
+        }),
+    )
+    .expect_err("empty instruction should fail");
+    assert_eq!(err.code, ToolContractErrorCode::InvalidValue);
+    assert_eq!(err.argument_path, "/instruction");
 }
 
 #[test]
@@ -210,6 +273,8 @@ fn emitted_schema_documents_have_expected_keys() {
         vec![
             "automation-args.schema.json".to_string(),
             "bash-args.schema.json".to_string(),
+            "codex-exec-args.schema.json".to_string(),
+            "codex-session-args.schema.json".to_string(),
             "declassify-args.schema.json".to_string(),
             "endorse-args.schema.json".to_string(),
             "planner-tool-call.schema.json".to_string(),
@@ -223,6 +288,8 @@ fn planner_tool_call_schema_mentions_supported_tools() {
     let schema = planner_tool_call_schema().to_string();
     assert!(schema.contains("\"automation\""));
     assert!(schema.contains("\"bash\""));
+    assert!(schema.contains("\"codex_exec\""));
+    assert!(schema.contains("\"codex_session\""));
     assert!(schema.contains("\"endorse\""));
     assert!(schema.contains("\"declassify\""));
 }

@@ -6,6 +6,7 @@ fn planner_prompt_mentions_markdown_new_fetch_strategy() {
     assert!(PLANNER_SYSTEM_PROMPT.contains("markdown.new"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("discovery/search output"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("BROWSER_SESSIONS"));
+    assert!(PLANNER_SYSTEM_PROMPT.contains("CODEX_SESSIONS"));
 }
 
 #[test]
@@ -28,6 +29,7 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
         current_timezone: Some("UTC".to_string()),
         allowed_net_connect_scopes: vec!["https://api.open-meteo.com".to_string()],
         browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: None,
     })
@@ -77,6 +79,7 @@ fn serialize_planner_input_omits_bash_command_catalog_when_bash_disallowed() {
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: None,
     })
@@ -103,6 +106,7 @@ fn serialize_planner_input_includes_browser_sessions() {
             current_origin: "https://www.youtube.com".to_string(),
             current_url: "https://www.youtube.com/results?search_query=jordan+peterson".to_string(),
         }],
+        codex_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: None,
     })
@@ -126,6 +130,7 @@ fn serialize_planner_input_includes_guidance_contract_for_fetch_signal() {
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: Some(sieve_types::PlannerGuidanceFrame {
             code: PlannerGuidanceSignal::ContinueNeedPrimaryContentFetch.code(),
@@ -166,6 +171,7 @@ fn serialize_planner_input_includes_action_change_contract_for_denied_tool_signa
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: Some(sieve_types::PlannerGuidanceFrame {
             code: PlannerGuidanceSignal::ContinueToolDeniedTryAlternativeAllowedTool.code(),
@@ -194,6 +200,7 @@ fn serialize_planner_input_includes_fetch_contract_for_higher_quality_signal() {
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: Some(sieve_types::PlannerGuidanceFrame {
             code: PlannerGuidanceSignal::ContinueNeedHigherQualitySource.code(),
@@ -238,6 +245,7 @@ fn serialize_planner_input_includes_browser_inspection_contract() {
             current_origin: "https://www.youtube.com".to_string(),
             current_url: "https://www.youtube.com/results?search_query=jordan+peterson".to_string(),
         }],
+        codex_sessions: Vec::new(),
         previous_events: Vec::new(),
         guidance: Some(sieve_types::PlannerGuidanceFrame {
             code: PlannerGuidanceSignal::ContinueNeedCurrentPageInspection.code(),
@@ -259,5 +267,38 @@ fn serialize_planner_input_includes_browser_inspection_contract() {
             .pointer("/guidance_contract/required_action_class")
             .and_then(Value::as_str),
         Some("extract")
+    );
+}
+
+#[test]
+fn serialize_planner_input_includes_codex_sessions() {
+    let payload = serialize_planner_input(&PlannerTurnInput {
+        run_id: RunId("run-1".to_string()),
+        user_message: "continue the implementation".to_string(),
+        allowed_tools: vec!["codex_session".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
+        allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
+        codex_sessions: vec![sieve_types::PlannerCodexSession {
+            session_id: "fix-auth-flow".to_string(),
+            session_name: "fix-auth-flow".to_string(),
+            cwd: "/tmp/repo".to_string(),
+            sandbox: sieve_types::CodexSandboxMode::WorkspaceWrite,
+            updated_at_utc: "2026-03-09T12:00:00Z".to_string(),
+            status: "completed".to_string(),
+            task_summary: "fix auth flow tests".to_string(),
+            last_result_summary: Some("implemented parser changes".to_string()),
+        }],
+        previous_events: Vec::new(),
+        guidance: None,
+    })
+    .expect("serialize planner input");
+
+    assert_eq!(
+        payload
+            .pointer("/CODEX_SESSIONS/0/session_id")
+            .and_then(Value::as_str),
+        Some("fix-auth-flow")
     );
 }

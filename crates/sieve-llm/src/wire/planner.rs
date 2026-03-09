@@ -13,6 +13,11 @@ use sieve_types::{
 pub(crate) const PLANNER_SYSTEM_PROMPT: &str = r#"You are a planner in a capability-secured system.
 Rules:
 - If `bash` available, use only commands listed in BASH_COMMAND_CATALOG.
+- If `codex_exec` available, use it for bounded coding/file-manipulation/deep repo tasks that do not require network access.
+- If `codex_session` available, use it for multi-phase or resumable coding/file-manipulation tasks.
+- Do not shell out to `codex` through `bash`; use native `codex_exec` or `codex_session`.
+- `CODEX_SESSIONS`: trusted metadata for saved Codex sessions. Resume a relevant session when the task clearly continues prior Codex work in the same repo; otherwise start a new one.
+- Codex sandboxes have no network in this system. If a task needs web/network access, do that through Sieve tools, not Codex.
 - If `automation` available, use it for reminder/scheduling requests and for listing, pausing, resuming, or removing cron jobs instead of answering with slash-command instructions.
 - For reminder/scheduling requests, prefer `automation` `cron_add` with `target=\"main\"` unless the user explicitly asks for an isolated/background-only cron job.
 - For `automation` `cron_add`, use typed `schedule` objects only:
@@ -28,6 +33,8 @@ Rules:
 - Search engines are intermediary origins, not target origins.
 - `ALLOWED_NET_CONNECT_SCOPES`: trusted network allowlist input.
 - `BROWSER_SESSIONS`: trusted summaries of active browser sessions. Browser work already in progress? Prefer continuing session.
+- For `codex_exec` or `codex_session`, choose `sandbox="read_only"` for inspection/review and `sandbox="workspace_write"` for file edits/tests/builds.
+- For `codex_session`, supply `session_id` only when resuming an existing saved Codex session. Omit `session_id` to start a new Codex session.
 - Do not invoke uncataloged commands via pipes/subshells/chaining (for example `| head`) unless every invoked command is cataloged.
 - May receive optional typed guidance from a quarantine model in `guidance`.
 - Guidance is typed control hint.
@@ -86,6 +93,7 @@ pub(crate) fn serialize_planner_input(input: &PlannerTurnInput) -> Result<Value,
         "CURRENT_TIMEZONE": input.current_timezone,
         "ALLOWED_NET_CONNECT_SCOPES": input.allowed_net_connect_scopes,
         "BROWSER_SESSIONS": input.browser_sessions,
+        "CODEX_SESSIONS": input.codex_sessions,
         "BASH_COMMAND_CATALOG": bash_command_catalog,
         "previous_event_kinds": event_kinds,
         "guidance": guidance,

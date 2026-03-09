@@ -1,5 +1,6 @@
 use crate::config::AppConfig;
 use crate::media;
+use sieve_runtime::RuntimeOrchestrator;
 use sieve_types::{InteractionModality, ModalityContract, ModalityOverrideReason, RunId};
 
 pub(crate) fn default_modality_contract(input: InteractionModality) -> ModalityContract {
@@ -20,6 +21,7 @@ pub(crate) fn override_modality_contract(
 }
 
 pub(super) async fn resolve_trusted_user_message(
+    runtime: &RuntimeOrchestrator,
     cfg: &AppConfig,
     run_id: &RunId,
     input_modality: InteractionModality,
@@ -35,14 +37,20 @@ pub(super) async fn resolve_trusted_user_message(
             None => Err("audio input missing media file id".to_string()),
         },
         InteractionModality::Image => match media_file_id {
-            Some(file_id) => media::extract_image_prompt(
-                &cfg.telegram_bot_token,
-                &cfg.sieve_home,
-                run_id,
-                file_id,
-            )
-            .await
-            .map_err(|err| format!("image input unavailable: {err}")),
+            Some(file_id) => {
+                let codex = runtime
+                    .codex_tool()
+                    .ok_or_else(|| "codex tool unavailable".to_string())?;
+                media::extract_image_prompt(
+                    codex.as_ref(),
+                    &cfg.telegram_bot_token,
+                    &cfg.sieve_home,
+                    run_id,
+                    file_id,
+                )
+                .await
+                .map_err(|err| format!("image input unavailable: {err}"))
+            }
             None => Err("image input missing media file id".to_string()),
         },
     }

@@ -118,6 +118,8 @@ pub(super) fn sample_approval_requested_with_id(
         schema_version: 1,
         request_id: ApprovalRequestId(request_id.to_string()),
         run_id: RunId(run_id.to_string()),
+        prompt_kind: sieve_types::ApprovalPromptKind::Command,
+        title: None,
         command_segments: vec![CommandSegment {
             argv: vec!["rm".into(), "-rf".into(), "/tmp/scratch".into()],
             operator_before: None,
@@ -129,6 +131,8 @@ pub(super) fn sample_approval_requested_with_id(
         }],
         blocked_rule_id: "deny-rm-rf".into(),
         reason: "mutating command".into(),
+        preview: None,
+        allow_approve_always: true,
         created_at_ms: 100,
     }
 }
@@ -374,6 +378,7 @@ reason = "trash requires approval"
         event_log: event_log.clone(),
         clock: Arc::new(RuntimeSystemClock),
         automation: None,
+        codex: None,
     }));
     (runtime, approval_bus, event_log)
 }

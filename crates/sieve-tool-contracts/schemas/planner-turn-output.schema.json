@@ -167,6 +167,114 @@
               "args": {
                 "additionalProperties": false,
                 "properties": {
+                  "cwd": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "instruction": {
+                    "type": "string"
+                  },
+                  "local_images": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "sandbox": {
+                    "enum": [
+                      "read_only",
+                      "workspace_write"
+                    ],
+                    "type": "string"
+                  },
+                  "writable_roots": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "instruction",
+                  "sandbox"
+                ],
+                "type": "object"
+              },
+              "tool_name": {
+                "const": "codex_exec"
+              }
+            },
+            "required": [
+              "tool_name",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "cwd": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "instruction": {
+                    "type": "string"
+                  },
+                  "local_images": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "sandbox": {
+                    "enum": [
+                      "read_only",
+                      "workspace_write"
+                    ],
+                    "type": "string"
+                  },
+                  "session_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "writable_roots": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "instruction",
+                  "sandbox"
+                ],
+                "type": "object"
+              },
+              "tool_name": {
+                "const": "codex_session"
+              }
+            },
+            "required": [
+              "tool_name",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
                   "reason": {
                     "type": [
                       "string",

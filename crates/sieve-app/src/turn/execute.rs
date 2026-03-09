@@ -44,6 +44,7 @@ pub(crate) async fn run_turn(
         );
     }
     let trusted_user_message = match resolve_trusted_user_message(
+        runtime,
         cfg,
         &run_id,
         prompt.modality,

@@ -123,6 +123,7 @@ impl AppE2eHarness {
             policy_path: PathBuf::from(DEFAULT_POLICY_PATH),
             event_log_path: event_log_path.clone(),
             automation_store_path: root.join("state/automation.json"),
+            codex_store_path: root.join("state/codex.db"),
             runtime_cwd: root.to_string_lossy().to_string(),
             heartbeat_interval_ms: None,
             heartbeat_prompt_override: None,
@@ -189,6 +190,7 @@ impl AppE2eHarness {
             automation: automation
                 .clone()
                 .map(|manager| -> Arc<dyn sieve_runtime::AutomationTool> { manager }),
+            codex: None,
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),
             clock: Arc::new(RuntimeClock),

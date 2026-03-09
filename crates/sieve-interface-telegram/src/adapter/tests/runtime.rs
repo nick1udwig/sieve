@@ -134,6 +134,7 @@ async fn tool_contract_failure_stays_internal_not_chat_visible() {
             current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),
             browser_sessions: Vec::new(),
+            codex_sessions: Vec::new(),
             previous_events: Vec::new(),
             guidance: None,
             control_value_refs: BTreeSet::new(),

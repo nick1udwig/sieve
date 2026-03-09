@@ -10,7 +10,6 @@ mod gws;
 
 #[path = "brave-search.rs"]
 mod brave_search;
-mod codex;
 mod curl;
 mod st;
 

@@ -4,16 +4,39 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalPromptKind {
+    Command,
+    FileChange,
+}
+
+const fn default_approval_prompt_kind() -> ApprovalPromptKind {
+    ApprovalPromptKind::Command
+}
+
+const fn default_allow_approve_always() -> bool {
+    true
+}
+
 /// Event emitted when runtime asks user for command approval.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalRequestedEvent {
     pub schema_version: u16,
     pub request_id: ApprovalRequestId,
     pub run_id: RunId,
+    #[serde(default = "default_approval_prompt_kind")]
+    pub prompt_kind: ApprovalPromptKind,
+    #[serde(default)]
+    pub title: Option<String>,
     pub command_segments: Vec<CommandSegment>,
     pub inferred_capabilities: Vec<Capability>,
     pub blocked_rule_id: String,
     pub reason: String,
+    #[serde(default)]
+    pub preview: Option<String>,
+    #[serde(default = "default_allow_approve_always")]
+    pub allow_approve_always: bool,
     pub created_at_ms: UnixMillis,
 }
 

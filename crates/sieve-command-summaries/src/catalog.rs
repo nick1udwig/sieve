@@ -56,10 +56,6 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
         description: "",
     },
     PlannerCommandDescriptor {
-        command: "codex",
-        description: "Run Codex non-interactively `codex exec`. Read-only: `codex exec --sandbox read-only --ephemeral \"...\"` (stdout only; optional `--search` and `--image PATH`). Workspace-write: `codex exec --sandbox workspace-write -C <repo> [--add-dir <dir>] \"...\"`. `codex app-server` unsupported.",
-    },
-    PlannerCommandDescriptor {
         command: "gws",
         description: "Google Workspace CLI. Supported here: `gws schema <service.resource.method>` and API calls like `gws drive files list --params '{\"pageSize\":10}'` or `gws sheets spreadsheets values append --params '{...}' --json '{...}'`. Use `--dry-run` to inspect request shape locally with no network/file effects. Read-ish methods require Google API net connect; mutating methods or `--json`/`--upload` require Google API net write. `--upload PATH` also reads a local file and `--output PATH` writes a local file. Service `+helpers` and top-level `gws auth|workflow|modelarmor|mcp` are intentionally unsupported.",
     },

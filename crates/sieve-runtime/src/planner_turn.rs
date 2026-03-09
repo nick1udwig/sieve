@@ -2,9 +2,9 @@ use super::{RuntimeDisposition, RuntimeError, RuntimeOrchestrator, ShellRunReque
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
     ApprovalRequestId, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
-    EndorseStateTransition, PlannerBrowserSession, PlannerGuidanceFrame, PlannerToolCall,
-    PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport, TrustedToolEffect,
-    UncertainMode, UnknownMode, ValueRef,
+    EndorseStateTransition, PlannerBrowserSession, PlannerCodexSession, PlannerGuidanceFrame,
+    PlannerToolCall, PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport,
+    TrustedToolEffect, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 
@@ -18,6 +18,7 @@ pub struct PlannerRunRequest {
     pub current_timezone: Option<String>,
     pub allowed_net_connect_scopes: Vec<String>,
     pub browser_sessions: Vec<PlannerBrowserSession>,
+    pub codex_sessions: Vec<PlannerCodexSession>,
     pub previous_events: Vec<RuntimeEvent>,
     pub guidance: Option<PlannerGuidanceFrame>,
     pub control_value_refs: BTreeSet<ValueRef>,
@@ -37,6 +38,16 @@ pub enum PlannerToolResult {
     Bash {
         command: String,
         disposition: RuntimeDisposition,
+    },
+    CodexExec {
+        request: sieve_types::CodexExecRequest,
+        result: Option<sieve_types::CodexTurnResult>,
+        failure_reason: Option<String>,
+    },
+    CodexSession {
+        request: sieve_types::CodexSessionRequest,
+        result: Option<sieve_types::CodexTurnResult>,
+        failure_reason: Option<String>,
     },
     Endorse {
         request: EndorseRequest,
@@ -70,6 +81,7 @@ impl RuntimeOrchestrator {
                 current_timezone: request.current_timezone.clone(),
                 allowed_net_connect_scopes: request.allowed_net_connect_scopes.clone(),
                 browser_sessions: request.browser_sessions.clone(),
+                codex_sessions: request.codex_sessions.clone(),
                 previous_events: request.previous_events.clone(),
                 guidance: request.guidance.clone(),
             })
@@ -117,6 +129,44 @@ impl RuntimeOrchestrator {
                         command: args.cmd,
                         disposition,
                     });
+                }
+                TypedCall::CodexExec(codex_request) => {
+                    let codex = self.codex.as_ref().ok_or_else(|| {
+                        RuntimeError::Automation(
+                            "codex tool is not configured for this runtime".to_string(),
+                        )
+                    })?;
+                    match codex.exec(codex_request.clone()).await {
+                        Ok(result) => tool_results.push(PlannerToolResult::CodexExec {
+                            request: codex_request,
+                            result: Some(result.result),
+                            failure_reason: None,
+                        }),
+                        Err(err) => tool_results.push(PlannerToolResult::CodexExec {
+                            request: codex_request,
+                            result: None,
+                            failure_reason: Some(err),
+                        }),
+                    }
+                }
+                TypedCall::CodexSession(codex_request) => {
+                    let codex = self.codex.as_ref().ok_or_else(|| {
+                        RuntimeError::Automation(
+                            "codex tool is not configured for this runtime".to_string(),
+                        )
+                    })?;
+                    match codex.run_session(codex_request.clone()).await {
+                        Ok(result) => tool_results.push(PlannerToolResult::CodexSession {
+                            request: codex_request,
+                            result: Some(result.result),
+                            failure_reason: None,
+                        }),
+                        Err(err) => tool_results.push(PlannerToolResult::CodexSession {
+                            request: codex_request,
+                            result: None,
+                            failure_reason: Some(err),
+                        }),
+                    }
                 }
                 TypedCall::Endorse(endorse_request) => {
                     let transition = self

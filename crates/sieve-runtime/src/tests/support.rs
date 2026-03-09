@@ -287,6 +287,73 @@ impl AutomationTool for FailingAutomation {
     }
 }
 
+pub(crate) struct CapturingCodex {
+    exec_result: Result<CodexToolResult, String>,
+    session_result: Result<CodexToolResult, String>,
+    exec_requests: StdMutex<Vec<CodexExecRequest>>,
+    session_requests: StdMutex<Vec<CodexSessionRequest>>,
+    planner_sessions: StdMutex<Vec<PlannerCodexSession>>,
+}
+
+impl CapturingCodex {
+    pub(crate) fn new(
+        exec_result: Result<CodexToolResult, String>,
+        session_result: Result<CodexToolResult, String>,
+    ) -> Self {
+        Self {
+            exec_result,
+            session_result,
+            exec_requests: StdMutex::new(Vec::new()),
+            session_requests: StdMutex::new(Vec::new()),
+            planner_sessions: StdMutex::new(Vec::new()),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn exec_requests(&self) -> Vec<CodexExecRequest> {
+        self.exec_requests.lock().expect("codex exec lock").clone()
+    }
+
+    pub(crate) fn session_requests(&self) -> Vec<CodexSessionRequest> {
+        self.session_requests
+            .lock()
+            .expect("codex session lock")
+            .clone()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_planner_sessions(&self, sessions: Vec<PlannerCodexSession>) {
+        *self.planner_sessions.lock().expect("codex planner lock") = sessions;
+    }
+}
+
+#[async_trait]
+impl CodexTool for CapturingCodex {
+    async fn exec(&self, request: CodexExecRequest) -> Result<CodexToolResult, String> {
+        self.exec_requests
+            .lock()
+            .map_err(|_| "codex exec lock poisoned".to_string())?
+            .push(request);
+        self.exec_result.clone()
+    }
+
+    async fn run_session(&self, request: CodexSessionRequest) -> Result<CodexToolResult, String> {
+        self.session_requests
+            .lock()
+            .map_err(|_| "codex session lock poisoned".to_string())?
+            .push(request);
+        self.session_result.clone()
+    }
+
+    async fn planner_sessions(&self) -> Result<Vec<PlannerCodexSession>, String> {
+        Ok(self
+            .planner_sessions
+            .lock()
+            .map_err(|_| "codex planner lock poisoned".to_string())?
+            .clone())
+    }
+}
+
 pub(crate) struct DeterministicClock {
     now: AtomicU64,
 }

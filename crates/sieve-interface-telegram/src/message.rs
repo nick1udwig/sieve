@@ -61,18 +61,38 @@ pub(crate) fn parse_reaction_action(emoji: &[String]) -> Option<TelegramApproval
 }
 
 pub(crate) fn format_approval_requested(event: &ApprovalRequestedEvent) -> String {
+    let header = event
+        .title
+        .as_ref()
+        .map(|value| format!("[{value}]\n"))
+        .unwrap_or_default();
     let segments = event
         .command_segments
         .iter()
         .map(|segment| segment.argv.join(" "))
         .collect::<Vec<_>>()
         .join(" ; ");
-
-    format!(
-        "approval needed to run:\n`{}`\nbecause {}\n\napprove once: reply yes/y or react 👍\napprove always: reply always/a or react ❤️\nreject: reply no/n or react 👎",
-        segments,
-        event.reason,
-    )
+    let preview = event
+        .preview
+        .as_ref()
+        .map(|value| format!("\npreview:\n```diff\n{value}\n```"))
+        .unwrap_or_default();
+    let decision_help = if event.allow_approve_always {
+        "approve once: reply yes/y or react 👍\napprove always: reply always/a or react ❤️\nreject: reply no/n or react 👎"
+    } else {
+        "approve once: reply yes/y or react 👍\nreject: reply no/n or react 👎"
+    };
+    if segments.is_empty() {
+        format!(
+            "{header}approval needed:\n{}\n{preview}\n\n{decision_help}",
+            event.reason,
+        )
+    } else {
+        format!(
+            "{header}approval needed to run:\n`{}`\nbecause {}\n{preview}\n\n{decision_help}",
+            segments, event.reason,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +175,8 @@ mod tests {
             schema_version: 1,
             request_id: ApprovalRequestId("approval-1".to_string()),
             run_id: RunId("run-1".to_string()),
+            prompt_kind: sieve_types::ApprovalPromptKind::Command,
+            title: None,
             command_segments: vec![CommandSegment {
                 argv: vec![
                     "rm".to_string(),
@@ -170,6 +192,8 @@ mod tests {
             }],
             blocked_rule_id: "deny-rm-rf".to_string(),
             reason: "rm -rf requires explicit approval".to_string(),
+            preview: None,
+            allow_approve_always: true,
             created_at_ms: 1,
         });
 
@@ -181,5 +205,28 @@ mod tests {
         assert!(message.contains("reject: reply no/n or react 👎"));
         assert!(!message.contains("request_id:"));
         assert!(!message.contains("blocked_rule_id:"));
+    }
+
+    #[test]
+    fn format_approval_requested_supports_file_change_preview() {
+        let message = format_approval_requested(&ApprovalRequestedEvent {
+            schema_version: 1,
+            request_id: ApprovalRequestId("approval-2".to_string()),
+            run_id: RunId("run-2".to_string()),
+            prompt_kind: sieve_types::ApprovalPromptKind::FileChange,
+            title: Some("fix-auth-flow".to_string()),
+            command_segments: Vec::new(),
+            inferred_capabilities: Vec::new(),
+            blocked_rule_id: "codex_file_change_approval".to_string(),
+            reason: "Codex requested approval to apply file changes".to_string(),
+            preview: Some("@@ -1 +1 @@\n-old\n+new".to_string()),
+            allow_approve_always: true,
+            created_at_ms: 2,
+        });
+
+        assert!(message.contains("[fix-auth-flow]"));
+        assert!(message.contains("approval needed:"));
+        assert!(message.contains("```diff"));
+        assert!(message.contains("+new"));
     }
 }

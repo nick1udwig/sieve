@@ -2,6 +2,7 @@ use crate::approval_allowance::ApprovalAllowanceKey;
 use crate::approval_bus::{ApprovalBus, ApprovalBusError};
 use crate::automation::AutomationTool;
 use crate::browser_sessions::BrowserSessionState;
+use crate::codex::CodexTool;
 use crate::event_log::{EventLogError, RuntimeEventLog};
 use crate::mainline::{MainlineRunError, MainlineRunner};
 use crate::value_state::{RuntimeValueState, ValueStateError};
@@ -11,9 +12,9 @@ use sieve_policy::PolicyEngine;
 use sieve_quarantine::{QuarantineRunError, QuarantineRunner};
 use sieve_shell::{ShellAnalysisError, ShellAnalyzer};
 use sieve_types::{
-    ApprovalAction, ApprovalRequestId, ApprovalRequestedEvent, Capability, CommandSegment,
-    PlannerBrowserSession, RunId, RuntimeEvent, RuntimePolicyContext, ToolContractValidationReport,
-    ValueLabel, ValueRef,
+    ApprovalAction, ApprovalPromptKind, ApprovalRequestId, ApprovalRequestedEvent, Capability,
+    CommandSegment, PlannerBrowserSession, PlannerCodexSession, RunId, RuntimeEvent,
+    RuntimePolicyContext, ToolContractValidationReport, ValueLabel, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -74,6 +75,7 @@ pub struct RuntimeOrchestrator {
     pub(crate) mainline: Arc<dyn MainlineRunner>,
     pub(crate) planner: Arc<dyn PlannerModel>,
     pub(crate) automation: Option<Arc<dyn AutomationTool>>,
+    pub(crate) codex: Option<Arc<dyn CodexTool>>,
     pub(crate) approval_bus: Arc<dyn ApprovalBus>,
     pub(crate) event_log: Arc<dyn RuntimeEventLog>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -91,6 +93,7 @@ pub struct RuntimeDeps {
     pub mainline: Arc<dyn MainlineRunner>,
     pub planner: Arc<dyn PlannerModel>,
     pub automation: Option<Arc<dyn AutomationTool>>,
+    pub codex: Option<Arc<dyn CodexTool>>,
     pub approval_bus: Arc<dyn ApprovalBus>,
     pub event_log: Arc<dyn RuntimeEventLog>,
     pub clock: Arc<dyn Clock>,
@@ -108,6 +111,7 @@ impl RuntimeOrchestrator {
             mainline: deps.mainline,
             planner: deps.planner,
             automation: deps.automation,
+            codex: deps.codex,
             approval_bus: deps.approval_bus,
             event_log: deps.event_log,
             clock: deps.clock,
@@ -201,6 +205,24 @@ impl RuntimeOrchestrator {
         self.automation.is_some()
     }
 
+    pub fn has_codex_tool(&self) -> bool {
+        self.codex.is_some()
+    }
+
+    pub fn codex_tool(&self) -> Option<Arc<dyn CodexTool>> {
+        self.codex.clone()
+    }
+
+    pub async fn planner_codex_sessions(&self) -> Result<Vec<PlannerCodexSession>, RuntimeError> {
+        match &self.codex {
+            Some(codex) => codex
+                .planner_sessions()
+                .await
+                .map_err(RuntimeError::Automation),
+            None => Ok(Vec::new()),
+        }
+    }
+
     pub fn runtime_policy_context_for_control(
         &self,
         control_value_refs: BTreeSet<ValueRef>,
@@ -226,10 +248,14 @@ impl RuntimeOrchestrator {
             schema_version: 1,
             request_id: request_id.clone(),
             run_id,
+            prompt_kind: ApprovalPromptKind::Command,
+            title: None,
             command_segments,
             inferred_capabilities,
             blocked_rule_id,
             reason,
+            preview: None,
+            allow_approve_always: true,
             created_at_ms: self.clock.now_ms(),
         };
         self.append_event(RuntimeEvent::ApprovalRequested(approval_requested.clone()))

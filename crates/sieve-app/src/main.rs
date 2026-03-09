@@ -4,6 +4,7 @@ mod agent_loop;
 mod auth_cli;
 mod automation;
 mod cli;
+mod codex;
 mod compose;
 mod compose_gate;
 mod config;
@@ -26,6 +27,7 @@ use clap::Parser;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use cli::{parse_cli_args, AuthCommand, AuthProvider, CliCommand};
+use codex::CodexManager;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use compose_gate::{
@@ -225,6 +227,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?)),
         None => None,
     };
+    let codex = Arc::new(CodexManager::new(
+        cfg.codex_store_path.clone(),
+        approval_bus.clone(),
+        event_log.clone(),
+    )?);
     let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
         shell: Arc::new(BasicShellAnalyzer),
         summaries: Arc::new(DefaultCommandSummarizer),
@@ -235,6 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         automation: automation
             .clone()
             .map(|manager| -> Arc<dyn AutomationTool> { manager }),
+        codex: Some(codex),
         approval_bus,
         event_log: event_log.clone(),
         clock: Arc::new(RuntimeClock),

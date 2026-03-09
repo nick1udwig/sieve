@@ -50,6 +50,7 @@ impl CaseGenerator for PlannerCaseGenerator {
                 current_timezone: None,
                 allowed_net_connect_scopes: Vec::new(),
                 browser_sessions: Vec::new(),
+                codex_sessions: Vec::new(),
                 previous_events: Vec::new(),
                 guidance: None,
             })

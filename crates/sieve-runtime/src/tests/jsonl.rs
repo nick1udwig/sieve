@@ -10,6 +10,8 @@ async fn jsonl_event_log_appends_in_order() {
         schema_version: 1,
         request_id: ApprovalRequestId("approval-1".to_string()),
         run_id: RunId("run-1".to_string()),
+        prompt_kind: sieve_types::ApprovalPromptKind::Command,
+        title: None,
         command_segments: vec![CommandSegment {
             argv: vec!["rm".to_string(), "-rf".to_string(), "tmp".to_string()],
             operator_before: None,
@@ -17,6 +19,8 @@ async fn jsonl_event_log_appends_in_order() {
         inferred_capabilities: Vec::new(),
         blocked_rule_id: "rule-1".to_string(),
         reason: "needs approval".to_string(),
+        preview: None,
+        allow_approve_always: true,
         created_at_ms: 1000,
     }))
     .await
