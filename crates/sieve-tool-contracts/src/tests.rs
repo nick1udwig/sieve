@@ -83,6 +83,31 @@ fn validate_codex_session_resume_success() {
 }
 
 #[test]
+fn validate_codex_session_blank_session_id_starts_new_session() {
+    let call = validate(
+        "codex_session",
+        &json!({
+            "session_id": "   ",
+            "instruction": "continue from the current repo state",
+            "sandbox": "read_only",
+            "cwd": "   "
+        }),
+    )
+    .expect("valid codex_session");
+    assert_eq!(
+        call,
+        TypedCall::CodexSession(CodexSessionRequest {
+            session_id: None,
+            instruction: "continue from the current repo state".to_string(),
+            sandbox: CodexSandboxMode::ReadOnly,
+            cwd: None,
+            writable_roots: Vec::new(),
+            local_images: Vec::new(),
+        })
+    );
+}
+
+#[test]
 fn validate_codex_exec_rejects_empty_command() {
     let err = validate(
         "codex_exec",

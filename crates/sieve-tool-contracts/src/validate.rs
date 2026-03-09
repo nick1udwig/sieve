@@ -253,7 +253,7 @@ fn parse_codex_exec(
     let args = CodexExecArgs {
         command: required_string_array(tool_call_index, tool_name, obj, "command")?,
         sandbox: required_string(tool_call_index, tool_name, obj, "sandbox")?,
-        cwd: optional_string(tool_call_index, tool_name, obj, "cwd")?,
+        cwd: optional_trimmed_string(tool_call_index, tool_name, obj, "cwd")?,
         writable_roots: optional_string_array(tool_call_index, tool_name, obj, "writable_roots")?,
         timeout_ms: optional_u64(tool_call_index, tool_name, obj, "timeout_ms")?,
     };
@@ -286,10 +286,10 @@ fn parse_codex_session(
         ],
     )?;
     let args = CodexSessionArgs {
-        session_id: optional_string(tool_call_index, tool_name, obj, "session_id")?,
+        session_id: optional_trimmed_string(tool_call_index, tool_name, obj, "session_id")?,
         instruction: required_string(tool_call_index, tool_name, obj, "instruction")?,
         sandbox: required_string(tool_call_index, tool_name, obj, "sandbox")?,
-        cwd: optional_string(tool_call_index, tool_name, obj, "cwd")?,
+        cwd: optional_trimmed_string(tool_call_index, tool_name, obj, "cwd")?,
         writable_roots: optional_string_array(tool_call_index, tool_name, obj, "writable_roots")?,
         local_images: optional_string_array(tool_call_index, tool_name, obj, "local_images")?,
     };
@@ -614,6 +614,17 @@ fn optional_string(
     })?;
 
     Ok(Some(value.to_string()))
+}
+
+fn optional_trimmed_string(
+    tool_call_index: usize,
+    tool_name: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<Option<String>, ContractError> {
+    Ok(optional_string(tool_call_index, tool_name, object, field)?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
 }
 
 fn optional_string_array(

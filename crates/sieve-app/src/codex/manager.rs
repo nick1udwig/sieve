@@ -150,6 +150,12 @@ impl CodexManager {
         &self,
         request: CodexSessionRequest,
     ) -> Result<CodexSessionToolResult, String> {
+        let resume_session_id = request
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         let now = now_ms();
         let (
             session_id,
@@ -159,7 +165,7 @@ impl CodexManager {
             created_at_ms,
             default_cwd,
             default_sandbox,
-        ) = if let Some(session_id) = request.session_id.clone() {
+        ) = if let Some(session_id) = resume_session_id {
             let stored = self
                 .store
                 .session(&session_id)?
@@ -265,7 +271,7 @@ impl CodexManager {
                     serde_json::json!({
                         "cwd": run_ctx.cwd,
                         "model": self.config.model,
-                        "approvalPolicy": "onRequest",
+                        "approvalPolicy": "on-request",
                         "ephemeral": !run_ctx.persist_session,
                     }),
                 )
@@ -313,7 +319,7 @@ impl CodexManager {
                     "threadId": thread_id,
                     "input": build_turn_input(&run_ctx.instruction, &run_ctx.local_images),
                     "cwd": run_ctx.cwd,
-                    "approvalPolicy": "onRequest",
+                    "approvalPolicy": "on-request",
                     "sandboxPolicy": sandbox_policy_json(run_ctx.sandbox, run_ctx.cwd.as_deref(), &run_ctx.writable_roots),
                     "model": self.config.model,
                     "outputSchema": structured_turn_output_schema(),
@@ -1058,6 +1064,51 @@ for line in sys.stdin:
 
         assert_eq!(result.result.status, CodexTurnStatus::Completed);
         assert_eq!(result.result.user_visible.as_deref(), Some("ocr text"));
+    }
+
+    #[tokio::test]
+    async fn codex_manager_session_uses_kebab_case_approval_policy() {
+        let root = unique_test_root("codex-approval-policy");
+        let script = write_mock_server(
+            &root,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({"id": msg["id"], "result": {"ok": True}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "thread/start":
+        assert msg["params"]["approvalPolicy"] == "on-request"
+        print(json.dumps({"id": msg["id"], "result": {"thread": {"id": "thr_policy"}}}), flush=True)
+    elif method == "thread/name/set":
+        print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+    elif method == "turn/start":
+        assert msg["params"]["approvalPolicy"] == "on-request"
+        print(json.dumps({"id": msg["id"], "result": {"turn": {"id": "turn_policy"}}}), flush=True)
+        print(json.dumps({"method": "item/completed", "params": {"item": {"type": "agentMessage", "id": "msg_policy", "text": "{\"status\":\"completed\",\"summary\":\"policy ok\",\"user_visible\":\"policy ok\"}"}}}), flush=True)
+        print(json.dumps({"method": "turn/completed", "params": {"turn": {"id": "turn_policy", "threadId": "thr_policy", "status": "completed"}}}), flush=True)
+"#,
+        );
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = test_manager(&root, &script, approval_bus, event_log);
+
+        let result = manager
+            .run_session(CodexSessionRequest {
+                session_id: None,
+                instruction: "inspect the repo".to_string(),
+                sandbox: CodexSandboxMode::ReadOnly,
+                cwd: Some("/tmp/repo".to_string()),
+                writable_roots: Vec::new(),
+                local_images: Vec::new(),
+            })
+            .await
+            .expect("codex session");
+
+        assert_eq!(result.result.user_visible.as_deref(), Some("policy ok"));
     }
 
     #[tokio::test]
