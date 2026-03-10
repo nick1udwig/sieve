@@ -98,9 +98,15 @@ impl AppServerClient {
             "params": params,
         }))
         .await?;
+        let mut deferred = VecDeque::new();
         loop {
-            let message = self.next_message().await?;
+            let message = if let Some(message) = self.pending.pop_front() {
+                message
+            } else {
+                self.read_transport_message().await?
+            };
             if matches_response_id(&message, id) {
+                self.pending.extend(deferred);
                 if let Some(result) = message.get("result") {
                     return Ok(result.clone());
                 }
@@ -116,7 +122,7 @@ impl AppServerClient {
                     self.stderr_suffix()
                 ));
             }
-            self.pending.push_back(message);
+            deferred.push_back(message);
         }
     }
 
@@ -140,6 +146,10 @@ impl AppServerClient {
         if let Some(message) = self.pending.pop_front() {
             return Ok(message);
         }
+        self.read_transport_message().await
+    }
+
+    async fn read_transport_message(&mut self) -> Result<Value, String> {
         loop {
             let Some(line) = self
                 .stdout

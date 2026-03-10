@@ -699,7 +699,7 @@ fn build_turn_input(instruction: &str, local_images: &[String]) -> Vec<serde_jso
     let mut input = vec![serde_json::json!({
         "type": "text",
         "text": format!(
-            "{}\n\nReturn structured output only. Use `status=completed` when this turn finished the requested work, `needs_followup` when Sieve should continue the same Codex session with more instructions, and `failed` when blocked or not completed. `summary` concise factual summary. `user_visible` short user-facing text or null.",
+            "{}\n\nWork in one bounded increment, not an endless first pass. After one coherent milestone or a few minutes of work, stop and return structured output. Use `status=completed` when this turn finished the requested work, `needs_followup` when Sieve should continue the same Codex session with more instructions, and `failed` when blocked or not completed. If the task is large, prefer `needs_followup` after making concrete progress instead of trying to finish everything in one turn. `summary` concise factual summary. `user_visible` short user-facing text or null.",
             instruction.trim()
         ),
     })];
@@ -795,10 +795,7 @@ fn sandbox_policy_json(
     match sandbox {
         CodexSandboxMode::ReadOnly => serde_json::json!({
             "type": "readOnly",
-            "readOnlyAccess": "fullAccess",
             "networkAccess": false,
-            "excludeTmpdirEnvVar": false,
-            "excludeSlashTmp": false,
         }),
         CodexSandboxMode::WorkspaceWrite => {
             let mut roots = Vec::new();
@@ -815,7 +812,6 @@ fn sandbox_policy_json(
             serde_json::json!({
                 "type": "workspaceWrite",
                 "writableRoots": roots,
-                "readOnlyAccess": "fullAccess",
                 "networkAccess": false,
                 "excludeTmpdirEnvVar": false,
                 "excludeSlashTmp": false,
@@ -1013,6 +1009,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use sieve_runtime::{InProcessApprovalBus, RuntimeEventLog};
+    use std::collections::HashSet;
     use std::env;
     use std::fs;
     use std::io::Write;
@@ -1037,6 +1034,24 @@ mod tests {
             .and_then(serde_json::Value::as_array)
             .expect("roots array");
         assert_eq!(roots.len(), 2);
+        assert!(value.get("readOnlyAccess").is_none());
+    }
+
+    #[test]
+    fn sandbox_policy_read_only_matches_app_server_shape() {
+        let value = sandbox_policy_json(CodexSandboxMode::ReadOnly, Some("/repo"), &[]);
+        assert_eq!(
+            value.get("type").and_then(serde_json::Value::as_str),
+            Some("readOnly")
+        );
+        assert_eq!(
+            value
+                .get("networkAccess")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert!(value.get("access").is_none());
+        assert!(value.get("readOnlyAccess").is_none());
     }
 
     #[test]
@@ -1137,6 +1152,17 @@ for line in sys.stdin:
         assert_eq!(result.result.exit_code, 0);
         assert_eq!(result.result.stdout, "clean");
         assert_eq!(result.result.stderr, "");
+    }
+
+    #[test]
+    fn build_turn_input_includes_bounded_increment_instruction() {
+        let input = build_turn_input("build the app", &[]);
+        let text = input[0]
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .expect("turn input text");
+        assert!(text.contains("bounded increment"));
+        assert!(text.contains("prefer `needs_followup`"));
     }
 
     #[tokio::test]
@@ -1291,6 +1317,54 @@ for line in sys.stdin:
     }
 
     #[tokio::test]
+    async fn codex_manager_session_handles_pending_notifications_between_requests() {
+        let root = unique_test_root("codex-pending-notifications");
+        let script = write_mock_server(
+            &root,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({"id": msg["id"], "result": {"ok": True}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "thread/start":
+        print(json.dumps({"id": msg["id"], "result": {"thread": {"id": "thr_pending"}}}), flush=True)
+        print(json.dumps({"method": "thread/started", "params": {"thread": {"id": "thr_pending"}}}), flush=True)
+        print(json.dumps({"method": "codex/event/mcp_startup_complete", "params": {"id": "", "msg": {"type": "mcp_startup_complete"}}}), flush=True)
+    elif method == "thread/name/set":
+        print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+    elif method == "turn/start":
+        print(json.dumps({"id": msg["id"], "result": {"turn": {"id": "turn_pending"}}}), flush=True)
+        print(json.dumps({"method": "item/completed", "params": {"item": {"type": "agentMessage", "id": "msg_pending", "text": "{\"status\":\"completed\",\"summary\":\"pending notifications handled\",\"user_visible\":\"pending ok\"}"}}}), flush=True)
+        print(json.dumps({"method": "turn/completed", "params": {"turn": {"id": "turn_pending", "threadId": "thr_pending", "status": "completed"}}}), flush=True)
+"#,
+        );
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = test_manager(&root, &script, approval_bus, event_log);
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            manager.run_session(CodexSessionRequest {
+                session_id: None,
+                instruction: "start the project".to_string(),
+                sandbox: CodexSandboxMode::WorkspaceWrite,
+                cwd: Some("/tmp/repo".to_string()),
+                writable_roots: vec!["/tmp/repo".to_string()],
+                local_images: Vec::new(),
+            }),
+        )
+        .await
+        .expect("manager should not spin forever")
+        .expect("codex session");
+
+        assert_eq!(result.result.user_visible.as_deref(), Some("pending ok"));
+    }
+
+    #[tokio::test]
     async fn codex_manager_session_times_out_hung_startup_request() {
         let root = unique_test_root("codex-startup-timeout");
         let script = write_mock_server(
@@ -1342,6 +1416,84 @@ for line in sys.stdin:
 
         assert!(err.contains("thread/name/set timed out after 100ms"));
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn codex_manager_live_session_smoke_real_prompt() {
+        if env::var("SIEVE_RUN_CODEX_LIVE").ok().as_deref() != Some("1") {
+            return;
+        }
+
+        let root = unique_test_root("codex-live-modex");
+        let repo = root.join("modex");
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = Arc::new(CodexManager {
+            config: CodexManagerConfig {
+                program: env::var("SIEVE_CODEX_APP_SERVER_BIN")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "codex".to_string()),
+                model: env::var("SIEVE_CODEX_MODEL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| Some("gpt-5.4".to_string())),
+                turn_timeout_ms: 10 * 60 * 1000,
+                request_timeout_ms: 30 * 1000,
+            },
+            store: CodexSessionStore::new(root.join("state/codex.db")).expect("create codex store"),
+            approval_bus: approval_bus.clone(),
+            event_log,
+        });
+
+        let prompt = format!(
+            "create a new project in {}\n\nit is going to be a mobile codex interface. the codex app-server runs on a vps and then this is a webapp that talks to the app-server\n\nit exposes a chat interface just like codex cli or the chatgpt mobile app. but in addition to have a \"list\" of chats, it also has \"browser tabs\" of chats (similar to any browser os when you open the tabs view) that can be \"closed\" (they can always be accessed in the sidebar). when a chat is \"opened\" its opened like a new tab. tabs indicate when they are running or not running with a little icon\n\nstart a codex session to start building it",
+            repo.display()
+        );
+        let manager_task = {
+            let manager = manager.clone();
+            let repo_string = repo.to_string_lossy().to_string();
+            tokio::spawn(async move {
+                manager
+                    .run_session(CodexSessionRequest {
+                        session_id: None,
+                        instruction: prompt,
+                        sandbox: CodexSandboxMode::WorkspaceWrite,
+                        cwd: Some(repo_string.clone()),
+                        writable_roots: vec![repo_string],
+                        local_images: Vec::new(),
+                    })
+                    .await
+            })
+        };
+
+        let approvals_task = tokio::spawn(auto_approve_codex_requests(approval_bus.clone()));
+
+        let result = tokio::time::timeout(Duration::from_secs(12 * 60), manager_task)
+            .await
+            .expect("live codex session timed out")
+            .expect("join live codex session")
+            .expect("live codex session result");
+
+        approvals_task.abort();
+
+        assert!(
+            result.result.session_id.is_some(),
+            "expected persistent codex session id"
+        );
+        assert!(
+            result.result.thread_id.is_some(),
+            "expected codex thread id from live run"
+        );
+        assert!(
+            !result.result.summary.trim().is_empty(),
+            "expected non-empty summary from live run"
+        );
+        assert!(
+            repo.exists(),
+            "expected live codex run to create repo directory at {}",
+            repo.display()
+        );
     }
 
     #[tokio::test]
@@ -1571,6 +1723,31 @@ for line in sys.stdin:
             sleep(Duration::from_millis(10)).await;
         }
         panic!("approval was not published");
+    }
+
+    async fn auto_approve_codex_requests(bus: Arc<InProcessApprovalBus>) {
+        let mut resolved = HashSet::new();
+        loop {
+            if let Ok(events) = bus.published_events() {
+                for event in events {
+                    if !resolved.insert(event.request_id.clone()) {
+                        continue;
+                    }
+                    let action = match event.prompt_kind {
+                        ApprovalPromptKind::Command => ApprovalAction::ApproveOnce,
+                        ApprovalPromptKind::FileChange => ApprovalAction::ApproveAlways,
+                    };
+                    let _ = bus.resolve(ApprovalResolvedEvent {
+                        schema_version: 1,
+                        request_id: event.request_id.clone(),
+                        run_id: event.run_id.clone(),
+                        action,
+                        created_at_ms: now_ms(),
+                    });
+                }
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
     }
 
     fn write_mock_server(root: &PathBuf, body: &str) -> PathBuf {
