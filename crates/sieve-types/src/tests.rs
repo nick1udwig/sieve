@@ -37,6 +37,7 @@ fn approval_requested_event_json_round_trip() {
         blocked_rule_id: "rule.command.rm_rf".into(),
         reason: "deny_with_approval".into(),
         preview: None,
+        reply_to_session_id: Some("codex-session-1".into()),
         allow_approve_always: true,
         created_at_ms: 1_717_171_717_000,
     };
@@ -81,6 +82,7 @@ fn approval_requested_event_matches_schema() {
         blocked_rule_id: "rule.command.rm_rf".into(),
         reason: "requires approval".into(),
         preview: None,
+        reply_to_session_id: Some("codex-session-1".into()),
         allow_approve_always: true,
         created_at_ms: 1_717_171_800_000,
     };
@@ -133,11 +135,32 @@ fn assistant_message_event_json_round_trip() {
         schema_version: 1,
         run_id: RunId("run_4".into()),
         message: "all done".to_string(),
+        reply_to_session_id: Some("codex-session-1".to_string()),
         created_at_ms: 1_717_171_720_000,
     };
 
     let encoded = serde_json::to_string(&event).expect("serialize");
     let decoded: AssistantMessageEvent = serde_json::from_str(&encoded).expect("deserialize");
+    assert_eq!(decoded, event);
+}
+
+#[test]
+fn codex_session_status_event_json_round_trip() {
+    let event = CodexSessionStatusEvent {
+        schema_version: 1,
+        run_id: RunId("run_codex".into()),
+        session_id: "codex-session-1".to_string(),
+        session_name: "you-are-starting".to_string(),
+        cwd: Some("/root/git/modex".to_string()),
+        status: CodexSessionLifecycleStatus::Running,
+        started_at_ms: 1_717_171_721_000,
+        updated_at_ms: 1_717_171_722_000,
+        last_step: "starting bounded increment".to_string(),
+        summary: None,
+    };
+
+    let encoded = serde_json::to_string(&event).expect("serialize");
+    let decoded: CodexSessionStatusEvent = serde_json::from_str(&encoded).expect("deserialize");
     assert_eq!(decoded, event);
 }
 

@@ -20,6 +20,7 @@ fn approval_requested_event_schema_shape_stable() {
         blocked_rule_id: "rule-1".to_string(),
         reason: "requires approval".to_string(),
         preview: None,
+        reply_to_session_id: None,
         allow_approve_always: true,
         created_at_ms: 1000,
     };
@@ -36,12 +37,13 @@ fn approval_requested_event_schema_shape_stable() {
         "blocked_rule_id",
         "reason",
         "preview",
+        "reply_to_session_id",
         "allow_approve_always",
         "created_at_ms",
     ] {
         assert!(obj.contains_key(key), "missing key: {key}");
     }
-    assert_eq!(obj.len(), 12);
+    assert_eq!(obj.len(), 13);
     assert_eq!(obj.get("schema_version"), Some(&Value::from(1)));
     assert_eq!(obj.get("request_id"), Some(&Value::from("approval-1")));
     assert_eq!(obj.get("run_id"), Some(&Value::from("run-1")));

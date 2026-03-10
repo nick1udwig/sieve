@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 use sieve_runtime::{EventLogError, JsonlRuntimeEventLog, RuntimeEventLog};
 use sieve_types::{
-    ApprovalRequestedEvent, ApprovalResolvedEvent, AssistantMessageEvent, PolicyEvaluatedEvent,
-    QuarantineCompletedEvent, RunId, RuntimeEvent,
+    ApprovalRequestedEvent, ApprovalResolvedEvent, AssistantMessageEvent, CodexSessionStatusEvent,
+    PolicyEvaluatedEvent, QuarantineCompletedEvent, RunId, RuntimeEvent,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -222,6 +222,7 @@ impl FanoutRuntimeEventLog {
                 inferred_capabilities,
                 blocked_rule_id,
                 reason,
+                reply_to_session_id,
                 created_at_ms,
                 ..
             }) => self.turn_scoped_record(
@@ -236,6 +237,7 @@ impl FanoutRuntimeEventLog {
                     "inferred_capabilities": inferred_capabilities,
                     "blocked_rule_id": blocked_rule_id,
                     "reason": reason,
+                    "reply_to_session_id": reply_to_session_id,
                 }),
             ),
             RuntimeEvent::ApprovalResolved(ApprovalResolvedEvent {
@@ -289,9 +291,38 @@ impl FanoutRuntimeEventLog {
                     "report": report,
                 }),
             ),
+            RuntimeEvent::CodexSessionStatus(CodexSessionStatusEvent {
+                run_id,
+                session_id,
+                session_name,
+                cwd,
+                status,
+                started_at_ms,
+                updated_at_ms,
+                last_step,
+                summary,
+                ..
+            }) => self.turn_scoped_record(
+                "codex_session_status",
+                "codex",
+                "info",
+                run_id,
+                *updated_at_ms,
+                serde_json::json!({
+                    "session_id": session_id,
+                    "session_name": session_name,
+                    "cwd": cwd,
+                    "status": status,
+                    "started_at_ms": started_at_ms,
+                    "updated_at_ms": updated_at_ms,
+                    "last_step": last_step,
+                    "summary": summary,
+                }),
+            ),
             RuntimeEvent::AssistantMessage(AssistantMessageEvent {
                 run_id,
                 message,
+                reply_to_session_id,
                 created_at_ms,
                 ..
             }) => self.turn_scoped_record(
@@ -302,6 +333,7 @@ impl FanoutRuntimeEventLog {
                 *created_at_ms,
                 serde_json::json!({
                     "message": message,
+                    "reply_to_session_id": reply_to_session_id,
                 }),
             ),
         }

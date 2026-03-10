@@ -93,7 +93,7 @@ async fn runtime_approval_roundtrip_works_with_telegram_adapter() {
     let sent_messages = poller.sent_messages();
     assert!(sent_messages
         .iter()
-        .any(|(_, text)| text.contains("approval needed")));
+        .any(|(_, text, _)| text.contains("approval needed")));
     assert!(adapter
         .bridge
         .runtime_events()

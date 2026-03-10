@@ -1,16 +1,24 @@
 use crate::{
     message::{
-        format_approval_requested, parse_command, parse_reaction_action, parse_short_action,
-        TelegramApprovalAction,
+        format_approval_requested, format_codex_status_card, parse_command, parse_reaction_action,
+        parse_short_action, TelegramApprovalAction,
     },
     Clock, TelegramAdapterConfig, TelegramAdapterError, TelegramEventBridge, TelegramLongPoll,
     TelegramPrompt, TelegramUpdate, TELEGRAM_IMAGE_PROMPT_PREFIX, TELEGRAM_VOICE_PROMPT_PREFIX,
 };
 use sieve_types::{
-    ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, InteractionModality,
-    RuntimeEvent,
+    ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, CodexSessionLifecycleStatus,
+    CodexSessionStatusEvent, InteractionModality, RuntimeEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Clone)]
+struct CodexStatusCard {
+    message_id: i64,
+    event: CodexSessionStatusEvent,
+    last_rendered_text: String,
+    last_refresh_ms: u64,
+}
 
 pub struct TelegramAdapter<B, P, C>
 where
@@ -25,6 +33,7 @@ where
     next_update_offset: Option<i64>,
     pending_approvals: BTreeMap<String, ApprovalRequestedEvent>,
     pending_approval_message_ids: BTreeMap<i64, String>,
+    codex_status_cards: BTreeMap<String, CodexStatusCard>,
     active_typing_runs: BTreeSet<String>,
     last_typing_sent_ms: Option<u64>,
 }
@@ -44,12 +53,14 @@ where
             next_update_offset: None,
             pending_approvals: BTreeMap::new(),
             pending_approval_message_ids: BTreeMap::new(),
+            codex_status_cards: BTreeMap::new(),
             active_typing_runs: BTreeSet::new(),
             last_typing_sent_ms: None,
         }
     }
 
     const TYPING_REFRESH_MS: u64 = 4_000;
+    const STATUS_CARD_REFRESH_MS: u64 = 60_000;
 
     pub fn start_typing(&mut self, run_id: impl Into<String>) -> Result<(), TelegramAdapterError> {
         self.active_typing_runs.insert(run_id.into());
@@ -69,11 +80,19 @@ where
         self.bridge.publish_runtime_event(&event);
 
         match event {
+            RuntimeEvent::CodexSessionStatus(event) => {
+                self.upsert_codex_status_card(event)?;
+            }
             RuntimeEvent::ApprovalRequested(event) => {
                 let key = event.request_id.0.clone();
                 let text = format_approval_requested(&event);
                 self.pending_approvals.insert(key.clone(), event);
-                if let Some(message_id) = self.send_to_chat(&text)? {
+                let reply_to_message_id = self.reply_to_status_message_id(
+                    self.pending_approvals
+                        .get(&key)
+                        .and_then(|value| value.reply_to_session_id.as_deref()),
+                );
+                if let Some(message_id) = self.send_to_chat(&text, reply_to_message_id)? {
                     self.pending_approval_message_ids.insert(message_id, key);
                 }
             }
@@ -81,7 +100,9 @@ where
             RuntimeEvent::QuarantineCompleted(_) => {}
             RuntimeEvent::AssistantMessage(event) => {
                 self.stop_typing(&event.run_id.0);
-                self.send_to_chat(&event.message)?;
+                let reply_to_message_id =
+                    self.reply_to_status_message_id(event.reply_to_session_id.as_deref());
+                self.send_to_chat(&event.message, reply_to_message_id)?;
             }
             RuntimeEvent::ApprovalResolved(event) => {
                 self.pending_approvals.remove(&event.request_id.0);
@@ -95,6 +116,7 @@ where
 
     pub fn poll_once(&mut self) -> Result<(), TelegramAdapterError> {
         self.refresh_typing()?;
+        self.refresh_codex_status_cards()?;
         let timeout_secs = if self.active_typing_runs.is_empty() {
             self.config.poll_timeout_secs
         } else {
@@ -181,6 +203,7 @@ where
                 } else {
                     self.send_to_chat(
                         "approval target unclear; reply to an approval request message or use /approve_once <request_id>, /always <request_id>, or /deny <request_id>",
+                        None,
                     )?;
                 }
                 return Ok(());
@@ -270,10 +293,111 @@ where
         Ok(())
     }
 
-    fn send_to_chat(&mut self, text: &str) -> Result<Option<i64>, TelegramAdapterError> {
+    fn send_to_chat(
+        &mut self,
+        text: &str,
+        reply_to_message_id: Option<i64>,
+    ) -> Result<Option<i64>, TelegramAdapterError> {
         self.poll
-            .send_message(self.config.chat_id, text)
+            .send_message(self.config.chat_id, text, reply_to_message_id)
             .map_err(TelegramAdapterError::Transport)
+    }
+
+    fn edit_chat_message(
+        &mut self,
+        message_id: i64,
+        text: &str,
+    ) -> Result<(), TelegramAdapterError> {
+        self.poll
+            .edit_message(self.config.chat_id, message_id, text)
+            .map_err(TelegramAdapterError::Transport)
+    }
+
+    fn reply_to_status_message_id(&self, session_id: Option<&str>) -> Option<i64> {
+        session_id
+            .and_then(|value| self.codex_status_cards.get(value))
+            .map(|card| card.message_id)
+    }
+
+    fn upsert_codex_status_card(
+        &mut self,
+        event: CodexSessionStatusEvent,
+    ) -> Result<(), TelegramAdapterError> {
+        let now_ms = self.clock.now_ms();
+        let text = format_codex_status_card(&event, now_ms);
+        let session_id = event.session_id.clone();
+        if let Some(mut existing) = self.codex_status_cards.remove(&session_id) {
+            if existing.last_rendered_text != text {
+                match self.edit_chat_message(existing.message_id, &text) {
+                    Ok(()) => {
+                        existing.last_rendered_text = text;
+                    }
+                    Err(_) => {
+                        let Some(message_id) = self.send_to_chat(&text, None)? else {
+                            return Ok(());
+                        };
+                        existing.message_id = message_id;
+                        existing.last_rendered_text = text;
+                    }
+                }
+            }
+            existing.event = event;
+            existing.last_refresh_ms = now_ms;
+            self.codex_status_cards.insert(session_id, existing);
+            return Ok(());
+        }
+
+        let Some(message_id) = self.send_to_chat(&text, None)? else {
+            return Ok(());
+        };
+        self.codex_status_cards.insert(
+            session_id,
+            CodexStatusCard {
+                message_id,
+                event,
+                last_rendered_text: text,
+                last_refresh_ms: now_ms,
+            },
+        );
+        Ok(())
+    }
+
+    fn refresh_codex_status_cards(&mut self) -> Result<(), TelegramAdapterError> {
+        let now_ms = self.clock.now_ms();
+        let session_ids = self
+            .codex_status_cards
+            .iter()
+            .filter(|(_, card)| {
+                matches!(
+                    card.event.status,
+                    CodexSessionLifecycleStatus::Running
+                        | CodexSessionLifecycleStatus::WaitingApproval
+                ) && now_ms.saturating_sub(card.last_refresh_ms) >= Self::STATUS_CARD_REFRESH_MS
+            })
+            .map(|(session_id, _)| session_id.clone())
+            .collect::<Vec<_>>();
+        for session_id in session_ids {
+            let Some(mut card) = self.codex_status_cards.remove(&session_id) else {
+                continue;
+            };
+            let text = format_codex_status_card(&card.event, now_ms);
+            if text != card.last_rendered_text {
+                match self.edit_chat_message(card.message_id, &text) {
+                    Ok(()) => {
+                        card.last_rendered_text = text;
+                    }
+                    Err(_) => {
+                        if let Some(message_id) = self.send_to_chat(&text, None)? {
+                            card.message_id = message_id;
+                            card.last_rendered_text = text;
+                        }
+                    }
+                }
+            }
+            card.last_refresh_ms = now_ms;
+            self.codex_status_cards.insert(session_id, card);
+        }
+        Ok(())
     }
 
     fn refresh_typing(&mut self) -> Result<(), TelegramAdapterError> {

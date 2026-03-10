@@ -35,6 +35,8 @@ pub struct ApprovalRequestedEvent {
     pub reason: String,
     #[serde(default)]
     pub preview: Option<String>,
+    #[serde(default)]
+    pub reply_to_session_id: Option<String>,
     #[serde(default = "default_allow_approve_always")]
     pub allow_approve_always: bool,
     pub created_at_ms: UnixMillis,
@@ -89,12 +91,41 @@ pub struct QuarantineCompletedEvent {
     pub created_at_ms: UnixMillis,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexSessionLifecycleStatus {
+    Running,
+    WaitingApproval,
+    NeedsFollowup,
+    Completed,
+    Failed,
+}
+
+/// Event emitted when a Codex session status card should be created or updated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexSessionStatusEvent {
+    pub schema_version: u16,
+    pub run_id: RunId,
+    pub session_id: String,
+    pub session_name: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub status: CodexSessionLifecycleStatus,
+    pub started_at_ms: UnixMillis,
+    pub updated_at_ms: UnixMillis,
+    pub last_step: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
 /// Event emitted when assistant text is ready for user delivery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssistantMessageEvent {
     pub schema_version: u16,
     pub run_id: RunId,
     pub message: String,
+    #[serde(default)]
+    pub reply_to_session_id: Option<String>,
     pub created_at_ms: UnixMillis,
 }
 
@@ -106,5 +137,6 @@ pub enum RuntimeEvent {
     ApprovalResolved(ApprovalResolvedEvent),
     PolicyEvaluated(PolicyEvaluatedEvent),
     QuarantineCompleted(QuarantineCompletedEvent),
+    CodexSessionStatus(CodexSessionStatusEvent),
     AssistantMessage(AssistantMessageEvent),
 }

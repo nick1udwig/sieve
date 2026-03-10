@@ -7,8 +7,8 @@ use sieve_runtime::{CodexExecToolResult, CodexSessionToolResult, CodexTool, Runt
 use sieve_types::{
     ApprovalAction, ApprovalPromptKind, ApprovalRequestId, ApprovalRequestedEvent,
     ApprovalResolvedEvent, CodexExecRequest, CodexExecResult, CodexSandboxMode,
-    CodexSessionRequest, CodexTurnResult, CodexTurnStatus, CommandSegment, PlannerCodexSession,
-    RunId, RuntimeEvent,
+    CodexSessionLifecycleStatus, CodexSessionRequest, CodexSessionStatusEvent, CodexTurnResult,
+    CodexTurnStatus, CommandSegment, PlannerCodexSession, RunId, RuntimeEvent,
 };
 use std::collections::HashMap;
 use std::env;
@@ -220,7 +220,35 @@ impl CodexManager {
             task_summary,
             created_at_ms,
         };
-        let tool_result = self.run_codex_turn(run_ctx.clone()).await?;
+        let tool_result = match self.run_codex_turn(run_ctx.clone()).await {
+            Ok(result) => result,
+            Err(err) => {
+                if let Some(session_id) = &run_ctx.session_id {
+                    if let Some(thread_id) = run_ctx.thread_id.clone() {
+                        let _ = self.store.upsert_session(&StoredCodexSession {
+                            session_id: session_id.clone(),
+                            thread_id,
+                            session_name: run_ctx.session_name.clone(),
+                            cwd: run_ctx.cwd.clone().unwrap_or_else(|| ".".to_string()),
+                            sandbox: run_ctx.sandbox,
+                            task_summary: run_ctx.task_summary.clone(),
+                            last_result_summary: Some(err.clone()),
+                            status: "failed".to_string(),
+                            created_at_ms: run_ctx.created_at_ms,
+                            updated_at_ms: now_ms(),
+                        });
+                    }
+                }
+                self.emit_status_event(
+                    &run_ctx,
+                    CodexSessionLifecycleStatus::Failed,
+                    err.clone(),
+                    Some(err.clone()),
+                )
+                .await?;
+                return Err(err);
+            }
+        };
         if let Some(session_id) = &run_ctx.session_id {
             self.persist_session_result(session_id, &tool_result.result, &run_ctx, now)?;
         }
@@ -334,6 +362,16 @@ impl CodexManager {
                 created_at_ms: run_ctx.created_at_ms,
                 updated_at_ms: now_ms(),
             })?;
+            self.emit_status_event(
+                &run_ctx,
+                CodexSessionLifecycleStatus::Running,
+                format!(
+                    "starting bounded increment in {}",
+                    run_ctx.cwd.as_deref().unwrap_or(".")
+                ),
+                None,
+            )
+            .await?;
         }
 
         let turn_response = self
@@ -396,6 +434,16 @@ impl CodexManager {
                 run_ctx.created_at_ms,
                 now_ms(),
             )?;
+            self.emit_status_event(
+                &run_ctx,
+                lifecycle_status_from_turn_status(parsed.status.clone()),
+                parsed
+                    .user_visible
+                    .clone()
+                    .unwrap_or_else(|| parsed.summary.clone()),
+                Some(parsed.summary.clone()),
+            )
+            .await?;
         }
 
         Ok(CodexSessionToolResult { result: parsed })
@@ -591,11 +639,19 @@ impl CodexManager {
             },
             reason,
             preview,
+            reply_to_session_id: run_ctx.session_id.clone(),
             allow_approve_always: true,
             created_at_ms: now_ms(),
         };
         self.append_runtime_event(RuntimeEvent::ApprovalRequested(requested.clone()))
             .await?;
+        self.emit_status_event(
+            run_ctx,
+            CodexSessionLifecycleStatus::WaitingApproval,
+            requested.reason.clone(),
+            None,
+        )
+        .await?;
         self.approval_bus
             .publish_requested(requested)
             .await
@@ -613,7 +669,72 @@ impl CodexManager {
             created_at_ms: now_ms(),
         }))
         .await?;
+        self.emit_status_event(
+            run_ctx,
+            match resolved.action {
+                ApprovalAction::Deny => CodexSessionLifecycleStatus::Failed,
+                ApprovalAction::ApproveOnce | ApprovalAction::ApproveAlways => {
+                    CodexSessionLifecycleStatus::Running
+                }
+            },
+            match resolved.action {
+                ApprovalAction::Deny => "approval denied".to_string(),
+                ApprovalAction::ApproveOnce => "approval granted once".to_string(),
+                ApprovalAction::ApproveAlways => "approval granted always".to_string(),
+            },
+            None,
+        )
+        .await?;
         Ok(resolved.action)
+    }
+
+    async fn emit_status_event(
+        &self,
+        run_ctx: &SessionRunContext,
+        status: CodexSessionLifecycleStatus,
+        last_step: String,
+        summary: Option<String>,
+    ) -> Result<(), String> {
+        let Some(session_id) = run_ctx.session_id.clone() else {
+            return Ok(());
+        };
+        let updated_at_ms = now_ms();
+        if run_ctx.persist_session {
+            if let Some(mut stored) = self.store.session(&session_id)? {
+                stored.status = match status {
+                    CodexSessionLifecycleStatus::Running => "running".to_string(),
+                    CodexSessionLifecycleStatus::WaitingApproval => "waiting_approval".to_string(),
+                    CodexSessionLifecycleStatus::NeedsFollowup => "needs_followup".to_string(),
+                    CodexSessionLifecycleStatus::Completed => "completed".to_string(),
+                    CodexSessionLifecycleStatus::Failed => "failed".to_string(),
+                };
+                stored.updated_at_ms = updated_at_ms;
+                if let Some(summary) = summary.clone().or_else(|| {
+                    matches!(
+                        status,
+                        CodexSessionLifecycleStatus::WaitingApproval
+                            | CodexSessionLifecycleStatus::Failed
+                    )
+                    .then(|| last_step.clone())
+                }) {
+                    stored.last_result_summary = Some(summary);
+                }
+                self.store.upsert_session(&stored)?;
+            }
+        }
+        self.append_runtime_event(RuntimeEvent::CodexSessionStatus(CodexSessionStatusEvent {
+            schema_version: 1,
+            run_id: run_ctx.run_id.clone(),
+            session_id,
+            session_name: run_ctx.session_name.clone(),
+            cwd: run_ctx.cwd.clone(),
+            status,
+            started_at_ms: run_ctx.created_at_ms,
+            updated_at_ms,
+            last_step,
+            summary,
+        }))
+        .await
     }
 
     async fn append_runtime_event(&self, event: RuntimeEvent) -> Result<(), String> {
@@ -834,6 +955,14 @@ fn structured_turn_output_schema() -> serde_json::Value {
         },
         "required": ["status", "summary", "user_visible"]
     })
+}
+
+fn lifecycle_status_from_turn_status(status: CodexTurnStatus) -> CodexSessionLifecycleStatus {
+    match status {
+        CodexTurnStatus::Completed => CodexSessionLifecycleStatus::Completed,
+        CodexTurnStatus::NeedsFollowup => CodexSessionLifecycleStatus::NeedsFollowup,
+        CodexTurnStatus::Failed => CodexSessionLifecycleStatus::Failed,
+    }
 }
 
 fn decode_command_exec_result(response: &serde_json::Value) -> Result<CodexExecResult, String> {

@@ -61,6 +61,7 @@ fn main() {
         blocked_rule_id: "deny-rm-rf".to_string(),
         reason: "manual-smoke".to_string(),
         preview: None,
+        reply_to_session_id: None,
         allow_approve_always: true,
         created_at_ms: 0,
     };

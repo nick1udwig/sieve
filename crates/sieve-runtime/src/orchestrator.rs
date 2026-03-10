@@ -255,6 +255,7 @@ impl RuntimeOrchestrator {
             blocked_rule_id,
             reason,
             preview: None,
+            reply_to_session_id: None,
             allow_approve_always: true,
             created_at_ms: self.clock.now_ms(),
         };

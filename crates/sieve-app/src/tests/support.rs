@@ -2,7 +2,8 @@ use super::*;
 #[derive(Clone, Default)]
 struct SharedTelegramPoller {
     updates: Arc<StdMutex<VecDeque<Vec<TestTelegramUpdate>>>>,
-    sent_messages: Arc<StdMutex<Vec<(i64, String)>>>,
+    sent_messages: Arc<StdMutex<Vec<(i64, String, Option<i64>)>>>,
+    edited_messages: Arc<StdMutex<Vec<(i64, i64, String)>>>,
     sent_chat_actions: Arc<StdMutex<Vec<(i64, String)>>>,
     next_message_id: Arc<StdMutex<i64>>,
 }
@@ -15,7 +16,7 @@ impl SharedTelegramPoller {
             .push_back(updates);
     }
 
-    fn sent_messages(&self) -> Vec<(i64, String)> {
+    fn sent_messages(&self) -> Vec<(i64, String, Option<i64>)> {
         self.sent_messages
             .lock()
             .expect("telegram sent messages mutex poisoned")
@@ -44,11 +45,16 @@ impl TelegramLongPoll for SharedTelegramPoller {
             .unwrap_or_default())
     }
 
-    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String> {
+    fn send_message(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        reply_to_message_id: Option<i64>,
+    ) -> Result<Option<i64>, String> {
         self.sent_messages
             .lock()
             .expect("telegram sent messages mutex poisoned")
-            .push((chat_id, text.to_string()));
+            .push((chat_id, text.to_string(), reply_to_message_id));
         let mut next_message_id = self
             .next_message_id
             .lock()
@@ -56,6 +62,14 @@ impl TelegramLongPoll for SharedTelegramPoller {
         let message_id = *next_message_id;
         *next_message_id += 1;
         Ok(Some(message_id))
+    }
+
+    fn edit_message(&mut self, chat_id: i64, message_id: i64, text: &str) -> Result<(), String> {
+        self.edited_messages
+            .lock()
+            .expect("telegram edited messages mutex poisoned")
+            .push((chat_id, message_id, text.to_string()));
+        Ok(())
     }
 
     fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {
@@ -68,7 +82,7 @@ impl TelegramLongPoll for SharedTelegramPoller {
 }
 
 pub(crate) struct TelegramFlowResult {
-    pub(crate) sent_messages: Vec<(i64, String)>,
+    pub(crate) sent_messages: Vec<(i64, String, Option<i64>)>,
     pub(crate) sent_chat_actions: Vec<(i64, String)>,
 }
 
@@ -433,7 +447,7 @@ pub(crate) fn message_contains_plain_url(message: &str) -> bool {
 pub(crate) fn latest_telegram_message(flow: &TelegramFlowResult) -> Option<&str> {
     flow.sent_messages
         .last()
-        .map(|(_, message)| message.as_str())
+        .map(|(_, message, _)| message.as_str())
 }
 
 pub(crate) fn message_has_weather_signal(message: &str) -> bool {

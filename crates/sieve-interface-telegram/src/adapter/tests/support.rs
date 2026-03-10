@@ -41,7 +41,8 @@ impl TelegramEventBridge for TestBridge {
 
 pub(super) struct TestPoller {
     pub(super) updates: VecDeque<Vec<TelegramUpdate>>,
-    pub(super) sent_messages: Vec<(i64, String)>,
+    pub(super) sent_messages: Vec<(i64, String, Option<i64>)>,
+    pub(super) edited_messages: Vec<(i64, i64, String)>,
     pub(super) sent_chat_actions: Vec<(i64, String)>,
     next_message_id: i64,
 }
@@ -51,6 +52,7 @@ impl TestPoller {
         Self {
             updates: updates.into(),
             sent_messages: Vec::new(),
+            edited_messages: Vec::new(),
             sent_chat_actions: Vec::new(),
             next_message_id: 1,
         }
@@ -66,11 +68,23 @@ impl TelegramLongPoll for TestPoller {
         Ok(self.updates.pop_front().unwrap_or_default())
     }
 
-    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String> {
-        self.sent_messages.push((chat_id, text.to_string()));
+    fn send_message(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        reply_to_message_id: Option<i64>,
+    ) -> Result<Option<i64>, String> {
+        self.sent_messages
+            .push((chat_id, text.to_string(), reply_to_message_id));
         let message_id = self.next_message_id;
         self.next_message_id += 1;
         Ok(Some(message_id))
+    }
+
+    fn edit_message(&mut self, chat_id: i64, message_id: i64, text: &str) -> Result<(), String> {
+        self.edited_messages
+            .push((chat_id, message_id, text.to_string()));
+        Ok(())
     }
 
     fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {
@@ -132,6 +146,7 @@ pub(super) fn sample_approval_requested_with_id(
         blocked_rule_id: "deny-rm-rf".into(),
         reason: "mutating command".into(),
         preview: None,
+        reply_to_session_id: None,
         allow_approve_always: true,
         created_at_ms: 100,
     }
@@ -152,7 +167,8 @@ pub(super) fn test_config(allowed_sender_user_ids: Option<BTreeSet<i64>>) -> Tel
 #[derive(Clone, Default)]
 pub(super) struct SharedPoller {
     updates: Arc<Mutex<VecDeque<Vec<TelegramUpdate>>>>,
-    sent_messages: Arc<Mutex<Vec<(i64, String)>>>,
+    sent_messages: Arc<Mutex<Vec<(i64, String, Option<i64>)>>>,
+    edited_messages: Arc<Mutex<Vec<(i64, i64, String)>>>,
     sent_chat_actions: Arc<Mutex<Vec<(i64, String)>>>,
     next_message_id: Arc<Mutex<i64>>,
 }
@@ -165,7 +181,7 @@ impl SharedPoller {
             .push_back(updates);
     }
 
-    pub(super) fn sent_messages(&self) -> Vec<(i64, String)> {
+    pub(super) fn sent_messages(&self) -> Vec<(i64, String, Option<i64>)> {
         self.sent_messages
             .lock()
             .expect("shared sent messages mutex poisoned")
@@ -187,11 +203,16 @@ impl TelegramLongPoll for SharedPoller {
             .unwrap_or_default())
     }
 
-    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String> {
+    fn send_message(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        reply_to_message_id: Option<i64>,
+    ) -> Result<Option<i64>, String> {
         self.sent_messages
             .lock()
             .expect("shared sent messages mutex poisoned")
-            .push((chat_id, text.to_string()));
+            .push((chat_id, text.to_string(), reply_to_message_id));
         let mut next_id = self
             .next_message_id
             .lock()
@@ -199,6 +220,14 @@ impl TelegramLongPoll for SharedPoller {
         let message_id = *next_id;
         *next_id += 1;
         Ok(Some(message_id))
+    }
+
+    fn edit_message(&mut self, chat_id: i64, message_id: i64, text: &str) -> Result<(), String> {
+        self.edited_messages
+            .lock()
+            .expect("shared edited messages mutex poisoned")
+            .push((chat_id, message_id, text.to_string()));
+        Ok(())
     }
 
     fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {

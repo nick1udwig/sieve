@@ -16,6 +16,9 @@ Read when: touching Codex tool wiring, OCR ingress, approval passthrough, or Cod
 - Command and file-change approvals from Codex sessions are passed through Sieve approval flow and Telegram UI with the session name prefixed.
 - File-change approval prompts include best-effort diff preview text.
 - Most Codex events are logged but not surfaced directly to the user.
+- Telegram now keeps one editable status card per persistent Codex session and threads session-related assistant replies beneath that card.
+- Codex approval prompts stay separate Telegram messages, but they reply to the session status card when one exists.
+- Simple natural-language status questions about a saved Codex session are answered directly from trusted saved session metadata instead of going back through planner tool selection.
 - Old `codex exec` command-summary/catalog handling was removed from `sieve-command-summaries`.
 
 ## Tool Semantics

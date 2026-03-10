@@ -20,6 +20,7 @@ async fn jsonl_event_log_appends_in_order() {
         blocked_rule_id: "rule-1".to_string(),
         reason: "needs approval".to_string(),
         preview: None,
+        reply_to_session_id: None,
         allow_approve_always: true,
         created_at_ms: 1000,
     }))

@@ -79,6 +79,9 @@
     "preview": {
       "type": ["string", "null"]
     },
+    "reply_to_session_id": {
+      "type": ["string", "null"]
+    },
     "allow_approve_always": {
       "type": "boolean"
     },

@@ -102,11 +102,18 @@ pub(crate) async fn run_turn(
     )
     .await?;
 
-    let (assistant_message, assistant_delivered, assistant_suppressed_heartbeat_ok) =
-        match assistant_message {
-            GeneratedAssistantMessage::Deliver(message) => (message, true, false),
-            GeneratedAssistantMessage::SuppressHeartbeat => (String::new(), false, true),
-        };
+    let (
+        assistant_message,
+        reply_to_session_id,
+        assistant_delivered,
+        assistant_suppressed_heartbeat_ok,
+    ) = match assistant_message {
+        GeneratedAssistantMessage::Deliver {
+            message,
+            reply_to_session_id,
+        } => (message, reply_to_session_id, true, false),
+        GeneratedAssistantMessage::SuppressHeartbeat => (String::new(), None, false, true),
+    };
     let delivered_text = assistant_message.as_str();
     if assistant_delivered {
         println!("{}: {}", run_id.0, delivered_text);
@@ -127,6 +134,7 @@ pub(crate) async fn run_turn(
                 schema_version: 1,
                 run_id: run_id.clone(),
                 message: delivered_text.to_string(),
+                reply_to_session_id,
                 created_at_ms: now_ms(),
             }))
             .await?;

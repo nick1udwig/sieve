@@ -54,6 +54,7 @@ async fn runtime_bridge_submit_approval_resolves_pending_request() {
             blocked_rule_id: "rule".to_string(),
             reason: "reason".to_string(),
             preview: None,
+            reply_to_session_id: None,
             allow_approve_always: true,
             created_at_ms: 1,
         })

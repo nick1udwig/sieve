@@ -157,6 +157,7 @@ async fn emit_direct_assistant_message(
             schema_version: 1,
             run_id: run_id.clone(),
             message: message.to_string(),
+            reply_to_session_id: None,
             created_at_ms: now_ms(),
         }))
         .await?;

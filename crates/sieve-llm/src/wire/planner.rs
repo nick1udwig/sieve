@@ -174,6 +174,7 @@ fn runtime_event_kind(event: &RuntimeEvent) -> &'static str {
     match event {
         RuntimeEvent::ApprovalRequested(_) => "approval_requested",
         RuntimeEvent::ApprovalResolved(_) => "approval_resolved",
+        RuntimeEvent::CodexSessionStatus(_) => "codex_session_status",
         RuntimeEvent::PolicyEvaluated(_) => "policy_evaluated",
         RuntimeEvent::QuarantineCompleted(_) => "quarantine_completed",
         RuntimeEvent::AssistantMessage(_) => "assistant_message",

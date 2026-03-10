@@ -69,6 +69,8 @@ Start long-running mode (stdin + Telegram ingress, no initial prompt):
 cargo run -p sieve-app -- run
 ```
 
+In Telegram, persistent Codex sessions now get one editable status card, and later session-related replies are sent as replies to that card.
+
 One-off smoke:
 
 ```bash

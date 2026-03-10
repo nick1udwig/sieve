@@ -66,6 +66,10 @@ where
         format!("{}/bot{}/sendMessage", self.base_url, self.token)
     }
 
+    fn edit_message_url(&self) -> String {
+        format!("{}/bot{}/editMessageText", self.base_url, self.token)
+    }
+
     fn send_chat_action_url(&self) -> String {
         format!("{}/bot{}/sendChatAction", self.base_url, self.token)
     }
@@ -95,9 +99,19 @@ where
             .collect()
     }
 
-    fn send_message(&mut self, chat_id: i64, text: &str) -> Result<Option<i64>, String> {
-        let payload = serde_json::to_string(&TelegramSendMessageRequest { chat_id, text })
-            .map_err(|err| format!("telegram sendMessage encode failed: {err}"))?;
+    fn send_message(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        reply_to_message_id: Option<i64>,
+    ) -> Result<Option<i64>, String> {
+        let payload = serde_json::to_string(&TelegramSendMessageRequest {
+            chat_id,
+            text,
+            reply_parameters: reply_to_message_id
+                .map(|message_id| TelegramReplyParameters { message_id }),
+        })
+        .map_err(|err| format!("telegram sendMessage encode failed: {err}"))?;
 
         let raw = self.executor.run(
             "curl",
@@ -119,6 +133,35 @@ where
 
         let value = response.into_result("sendMessage")?;
         Ok(value.get("message_id").and_then(serde_json::Value::as_i64))
+    }
+
+    fn edit_message(&mut self, chat_id: i64, message_id: i64, text: &str) -> Result<(), String> {
+        let payload = serde_json::to_string(&TelegramEditMessageRequest {
+            chat_id,
+            message_id,
+            text,
+        })
+        .map_err(|err| format!("telegram editMessageText encode failed: {err}"))?;
+
+        let raw = self.executor.run(
+            "curl",
+            &[
+                "-sS",
+                "--fail",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                &payload,
+                &self.edit_message_url(),
+            ],
+        )?;
+
+        let response: TelegramApiResponse<serde_json::Value> = serde_json::from_str(&raw)
+            .map_err(|err| format!("telegram editMessageText decode failed: {err}"))?;
+        let _ = response.into_result("editMessageText")?;
+        Ok(())
     }
 
     fn send_chat_action(&mut self, chat_id: i64, action: &str) -> Result<(), String> {
@@ -308,6 +351,20 @@ struct TelegramIncomingReactionType {
 #[derive(Debug, Serialize)]
 struct TelegramSendMessageRequest<'a> {
     chat_id: i64,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_parameters: Option<TelegramReplyParameters>,
+}
+
+#[derive(Debug, Serialize)]
+struct TelegramReplyParameters {
+    message_id: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct TelegramEditMessageRequest<'a> {
+    chat_id: i64,
+    message_id: i64,
     text: &'a str,
 }
 
