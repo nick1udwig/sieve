@@ -19,15 +19,18 @@ use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 use sieve_runtime::{ApprovalBus, EventLogError};
+use std::future::Future;
 
 const DEFAULT_CODEX_PROGRAM: &str = "codex";
 const DEFAULT_TURN_TIMEOUT_MS: u64 = 15 * 60 * 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30 * 1000;
 
 #[derive(Debug, Clone)]
 struct CodexManagerConfig {
     program: String,
     model: Option<String>,
     turn_timeout_ms: u64,
+    request_timeout_ms: u64,
 }
 
 pub(crate) struct CodexManager {
@@ -82,6 +85,11 @@ impl CodexManager {
                     .and_then(|value| value.trim().parse::<u64>().ok())
                     .filter(|value| *value > 0)
                     .unwrap_or(DEFAULT_TURN_TIMEOUT_MS),
+                request_timeout_ms: env::var("SIEVE_CODEX_REQUEST_TIMEOUT_MS")
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+                    .filter(|value| *value > 0)
+                    .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
             },
             store: CodexSessionStore::new(store_path.into())?,
             approval_bus,
@@ -93,29 +101,34 @@ impl CodexManager {
         &self,
         request: CodexExecRequest,
     ) -> Result<CodexExecToolResult, String> {
+        let request = normalize_exec_request(request)?;
         let mut client = AppServerClient::spawn(&AppServerClientConfig {
             program: self.config.program.clone(),
         })
         .await?;
-        client.initialize().await?;
+        self.call_with_timeout("initialize", client.initialize())
+            .await?;
         let timeout_ms = request
             .timeout_ms
             .map(i64::try_from)
             .transpose()
             .map_err(|_| "codex exec timeout_ms exceeds i64 range".to_string())?;
-        let response = client
-            .request(
+        let response = self
+            .call_with_timeout(
                 "command/exec",
-                serde_json::json!({
-                    "command": request.command,
-                    "cwd": request.cwd,
-                    "timeoutMs": timeout_ms,
-                    "sandboxPolicy": sandbox_policy_json(
-                        request.sandbox,
-                        request.cwd.as_deref(),
-                        &request.writable_roots
-                    ),
-                }),
+                client.request(
+                    "command/exec",
+                    serde_json::json!({
+                        "command": request.command,
+                        "cwd": request.cwd,
+                        "timeoutMs": timeout_ms,
+                        "sandboxPolicy": sandbox_policy_json(
+                            request.sandbox,
+                            request.cwd.as_deref(),
+                            &request.writable_roots
+                        ),
+                    }),
+                ),
             )
             .await?;
         Ok(CodexExecToolResult {
@@ -127,6 +140,7 @@ impl CodexManager {
         &self,
         request: CodexSessionRequest,
     ) -> Result<CodexSessionToolResult, String> {
+        let request = normalize_session_request(request)?;
         let existing_names = self.store.existing_session_names()?;
         let session_name = session_name_from_instruction(&request.instruction, &existing_names);
         let run_ctx = SessionRunContext {
@@ -150,6 +164,7 @@ impl CodexManager {
         &self,
         request: CodexSessionRequest,
     ) -> Result<CodexSessionToolResult, String> {
+        let request = normalize_session_request(request)?;
         let resume_session_id = request
             .session_id
             .as_deref()
@@ -252,28 +267,35 @@ impl CodexManager {
             program: self.config.program.clone(),
         })
         .await?;
-        client.initialize().await?;
+        self.call_with_timeout("initialize", client.initialize())
+            .await?;
 
         let thread_id = if let Some(thread_id) = &run_ctx.thread_id {
-            let _ = client
-                .request(
+            let _ = self
+                .call_with_timeout(
                     "thread/resume",
-                    serde_json::json!({
-                        "threadId": thread_id,
-                    }),
+                    client.request(
+                        "thread/resume",
+                        serde_json::json!({
+                            "threadId": thread_id,
+                        }),
+                    ),
                 )
                 .await?;
             thread_id.clone()
         } else {
-            let response = client
-                .request(
+            let response = self
+                .call_with_timeout(
                     "thread/start",
-                    serde_json::json!({
-                        "cwd": run_ctx.cwd,
-                        "model": self.config.model,
-                        "approvalPolicy": "on-request",
-                        "ephemeral": !run_ctx.persist_session,
-                    }),
+                    client.request(
+                        "thread/start",
+                        serde_json::json!({
+                            "cwd": run_ctx.cwd,
+                            "model": self.config.model,
+                            "approvalPolicy": "on-request",
+                            "ephemeral": !run_ctx.persist_session,
+                        }),
+                    ),
                 )
                 .await?;
             let thread_id = response
@@ -281,15 +303,17 @@ impl CodexManager {
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "codex thread/start missing thread.id".to_string())?
                 .to_string();
-            client
-                .request(
+            self.call_with_timeout(
+                "thread/name/set",
+                client.request(
                     "thread/name/set",
                     serde_json::json!({
                         "threadId": thread_id,
                         "name": run_ctx.session_name,
                     }),
-                )
-                .await?;
+                ),
+            )
+            .await?;
             thread_id
         };
 
@@ -312,8 +336,10 @@ impl CodexManager {
             })?;
         }
 
-        let turn_response = client
-            .request(
+        let turn_response = self
+            .call_with_timeout(
+                "turn/start",
+                client.request(
                 "turn/start",
                 serde_json::json!({
                     "threadId": thread_id,
@@ -324,6 +350,7 @@ impl CodexManager {
                     "model": self.config.model,
                     "outputSchema": structured_turn_output_schema(),
                 }),
+                ),
             )
             .await?;
         let turn_id = turn_response
@@ -596,6 +623,24 @@ impl CodexManager {
             .map_err(format_event_log_error)
     }
 
+    async fn call_with_timeout<T>(
+        &self,
+        label: &str,
+        future: impl Future<Output = Result<T, String>>,
+    ) -> Result<T, String> {
+        timeout(
+            Duration::from_millis(self.config.request_timeout_ms),
+            future,
+        )
+        .await
+        .map_err(|_| {
+            format!(
+                "{label} timed out after {}ms",
+                self.config.request_timeout_ms
+            )
+        })?
+    }
+
     async fn record_session_event(
         &self,
         run_ctx: &SessionRunContext,
@@ -665,6 +710,81 @@ fn build_turn_input(instruction: &str, local_images: &[String]) -> Vec<serde_jso
         }));
     }
     input
+}
+
+fn normalize_exec_request(request: CodexExecRequest) -> Result<CodexExecRequest, String> {
+    let cwd = normalize_optional_path(request.cwd, None)?;
+    let writable_roots = normalize_path_list(request.writable_roots, cwd.as_deref())?;
+    Ok(CodexExecRequest {
+        command: request.command,
+        sandbox: request.sandbox,
+        cwd,
+        writable_roots,
+        timeout_ms: request.timeout_ms,
+    })
+}
+
+fn normalize_session_request(request: CodexSessionRequest) -> Result<CodexSessionRequest, String> {
+    let cwd = normalize_optional_path(request.cwd, None)?;
+    let writable_roots = normalize_path_list(request.writable_roots, cwd.as_deref())?;
+    let local_images = normalize_path_list(request.local_images, cwd.as_deref())?;
+    Ok(CodexSessionRequest {
+        session_id: request.session_id,
+        instruction: request.instruction,
+        sandbox: request.sandbox,
+        cwd,
+        writable_roots,
+        local_images,
+    })
+}
+
+fn normalize_optional_path(
+    raw: Option<String>,
+    base: Option<&str>,
+) -> Result<Option<String>, String> {
+    raw.map(|value| normalize_path(value, base)).transpose()
+}
+
+fn normalize_path_list(paths: Vec<String>, base: Option<&str>) -> Result<Vec<String>, String> {
+    let mut out = Vec::with_capacity(paths.len());
+    for path in paths {
+        let normalized = normalize_path(path, base)?;
+        if !out.iter().any(|existing| existing == &normalized) {
+            out.push(normalized);
+        }
+    }
+    Ok(out)
+}
+
+fn normalize_path(raw: String, base: Option<&str>) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("codex path must be non-empty".to_string());
+    }
+    let expanded = if trimmed == "~" {
+        home_dir()?
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        home_dir()?.join(rest)
+    } else {
+        let path = PathBuf::from(trimmed);
+        if path.is_absolute() {
+            path
+        } else if let Some(base) = base {
+            PathBuf::from(base).join(path)
+        } else {
+            std::env::current_dir()
+                .map_err(|err| format!("resolve current directory failed: {err}"))?
+                .join(path)
+        }
+    };
+    Ok(expanded.to_string_lossy().to_string())
+}
+
+fn home_dir() -> Result<PathBuf, String> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| "HOME is not set; cannot expand `~` path".to_string())
 }
 
 fn sandbox_policy_json(
@@ -893,10 +1013,12 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use sieve_runtime::{InProcessApprovalBus, RuntimeEventLog};
+    use std::env;
     use std::fs;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
+    use std::time::Instant;
     use tokio::time::sleep;
 
     #[test]
@@ -1018,6 +1140,63 @@ for line in sys.stdin:
     }
 
     #[tokio::test]
+    async fn codex_manager_session_normalizes_tilde_paths_before_turn_start() {
+        let root = unique_test_root("codex-session-paths");
+        let expected = format!(
+            "{}/git/modex",
+            env::var("HOME").unwrap_or_else(|_| "/root".to_string())
+        );
+        let script = write_mock_server(
+            &root,
+            &format!(
+                r#"#!/usr/bin/env python3
+import json, sys
+expected = {expected:?}
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({{"id": msg["id"], "result": {{"ok": True}}}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "thread/start":
+        assert msg["params"]["cwd"] == expected
+        print(json.dumps({{"id": msg["id"], "result": {{"thread": {{"id": "thr_paths"}}}}}}), flush=True)
+    elif method == "thread/name/set":
+        print(json.dumps({{"id": msg["id"], "result": {{}}}}), flush=True)
+    elif method == "turn/start":
+        params = msg["params"]
+        assert params["cwd"] == expected
+        assert expected in params["sandboxPolicy"]["writableRoots"]
+        assert all(path.startswith("/") for path in params["sandboxPolicy"]["writableRoots"])
+        print(json.dumps({{"id": msg["id"], "result": {{"turn": {{"id": "turn_paths"}}}}}}), flush=True)
+        print(json.dumps({{"method": "item/completed", "params": {{"item": {{"type": "agentMessage", "id": "msg_paths", "text": "{{\\\"status\\\":\\\"completed\\\",\\\"summary\\\":\\\"paths ok\\\",\\\"user_visible\\\":\\\"paths ok\\\"}}"}}}}}}), flush=True)
+        print(json.dumps({{"method": "turn/completed", "params": {{"turn": {{"id": "turn_paths", "threadId": "thr_paths", "status": "completed"}}}}}}), flush=True)
+"#,
+                expected = expected
+            ),
+        );
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = test_manager(&root, &script, approval_bus, event_log);
+
+        let result = manager
+            .run_session(CodexSessionRequest {
+                session_id: None,
+                instruction: "start the mobile codex project".to_string(),
+                sandbox: CodexSandboxMode::WorkspaceWrite,
+                cwd: Some("~/git/modex".to_string()),
+                writable_roots: vec!["~/git/modex".to_string()],
+                local_images: Vec::new(),
+            })
+            .await
+            .expect("codex session");
+
+        assert_eq!(result.result.status, CodexTurnStatus::Completed);
+        assert!(result.result.summary.contains("paths ok"));
+    }
+
+    #[tokio::test]
     async fn codex_manager_task_passes_local_image_input() {
         let root = unique_test_root("codex-exec");
         let script = write_mock_server(
@@ -1109,6 +1288,60 @@ for line in sys.stdin:
             .expect("codex session");
 
         assert_eq!(result.result.user_visible.as_deref(), Some("policy ok"));
+    }
+
+    #[tokio::test]
+    async fn codex_manager_session_times_out_hung_startup_request() {
+        let root = unique_test_root("codex-startup-timeout");
+        let script = write_mock_server(
+            &root,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({"id": msg["id"], "result": {"ok": True}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "thread/start":
+        print(json.dumps({"id": msg["id"], "result": {"thread": {"id": "thr_timeout"}}}), flush=True)
+    elif method == "thread/name/set":
+        continue
+"#,
+        );
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = CodexManager {
+            config: CodexManagerConfig {
+                program: script.to_string_lossy().to_string(),
+                model: Some("mock-model".to_string()),
+                turn_timeout_ms: 5_000,
+                request_timeout_ms: 100,
+            },
+            store: CodexSessionStore::new(root.join("state/codex.db")).expect("create codex store"),
+            approval_bus,
+            event_log,
+        };
+
+        let started = Instant::now();
+        let err = tokio::time::timeout(
+            Duration::from_secs(2),
+            manager.run_session(CodexSessionRequest {
+                session_id: None,
+                instruction: "start the project".to_string(),
+                sandbox: CodexSandboxMode::WorkspaceWrite,
+                cwd: Some("/tmp/repo".to_string()),
+                writable_roots: vec!["/tmp/repo".to_string()],
+                local_images: Vec::new(),
+            }),
+        )
+        .await
+        .expect("manager should not hang")
+        .expect_err("startup timeout should surface as error");
+
+        assert!(err.contains("thread/name/set timed out after 100ms"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[tokio::test]
@@ -1320,6 +1553,7 @@ for line in sys.stdin:
                 program: script.to_string_lossy().to_string(),
                 model: Some("mock-model".to_string()),
                 turn_timeout_ms: 5_000,
+                request_timeout_ms: 5_000,
             },
             store: CodexSessionStore::new(root.join("state/codex.db")).expect("create codex store"),
             approval_bus,

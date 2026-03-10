@@ -490,6 +490,105 @@ async fn orchestrate_planner_turn_dispatches_codex_session_tool() {
 }
 
 #[tokio::test]
+async fn orchestrate_planner_turn_keeps_codex_session_failures_recoverable() {
+    let planner_output = PlannerTurnOutput {
+        thoughts: Some("start codex session".to_string()),
+        tool_calls: vec![PlannerToolCall {
+            tool_name: "codex_session".to_string(),
+            args: BTreeMap::from([
+                ("instruction".to_string(), json!("start the project")),
+                ("sandbox".to_string(), json!("workspace_write")),
+                ("cwd".to_string(), json!("~/git/modex")),
+            ]),
+        }],
+    };
+    let approval_bus = Arc::new(InProcessApprovalBus::new());
+    let event_log = Arc::new(VecEventLog::default());
+    let planner = Arc::new(CapturingPlanner::new(planner_output));
+    let codex = Arc::new(CapturingCodex::new(
+        Err("unused".to_string()),
+        Err("thread/name/set timed out after 100ms".to_string()),
+    ));
+    let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+        shell: Arc::new(StubShell {
+            analysis: ShellAnalysis {
+                knowledge: CommandKnowledge::Known,
+                segments: Vec::new(),
+                unsupported_constructs: Vec::new(),
+            },
+        }),
+        summaries: Arc::new(StubSummaries {
+            outcome: SummaryOutcome {
+                knowledge: CommandKnowledge::Known,
+                summary: Some(stub_summary()),
+                reason: None,
+            },
+        }),
+        policy: Arc::new(StubPolicy {
+            decision: PolicyDecision {
+                kind: PolicyDecisionKind::Allow,
+                reason: "allow".to_string(),
+                blocked_rule_id: None,
+            },
+        }),
+        quarantine: Arc::new(StubQuarantine {
+            report: QuarantineReport {
+                run_id: RunId("run-codex-fail".to_string()),
+                trace_path: "/tmp/sieve/trace".to_string(),
+                stdout_path: None,
+                stderr_path: None,
+                attempted_capabilities: Vec::new(),
+                exit_code: Some(0),
+            },
+        }),
+        mainline: Arc::new(StubMainline),
+        planner: planner.clone(),
+        automation: None,
+        codex: Some(codex.clone()),
+        approval_bus,
+        event_log,
+        clock: Arc::new(DeterministicClock::new(1000)),
+    }));
+
+    let output = runtime
+        .orchestrate_planner_turn(PlannerRunRequest {
+            run_id: RunId("run-codex-fail".to_string()),
+            cwd: "/tmp/repo".to_string(),
+            user_message: "start the codex project".to_string(),
+            allowed_tools: vec!["codex_session".to_string()],
+            current_time_utc: None,
+            current_timezone: None,
+            allowed_net_connect_scopes: Vec::new(),
+            browser_sessions: Vec::new(),
+            codex_sessions: Vec::new(),
+            previous_events: Vec::new(),
+            guidance: None,
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime planner turn");
+
+    match &output.tool_results[0] {
+        PlannerToolResult::CodexSession {
+            request,
+            result,
+            failure_reason,
+        } => {
+            assert_eq!(request.cwd.as_deref(), Some("~/git/modex"));
+            assert!(result.is_none());
+            assert_eq!(
+                failure_reason.as_deref(),
+                Some("thread/name/set timed out after 100ms")
+            );
+        }
+        other => panic!("expected codex session failure result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn orchestrate_planner_turn_keeps_automation_argument_failures_recoverable() {
     let planner_output = PlannerTurnOutput {
         thoughts: Some("schedule reminder".to_string()),
