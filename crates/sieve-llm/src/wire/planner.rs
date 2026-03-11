@@ -17,6 +17,9 @@ Rules:
 - If `codex_session` available, use it for coding/file-manipulation/deep repo tasks, whether one-shot or resumable.
 - Do not shell out to `codex` through `bash`; use native `codex_exec` or `codex_session`.
 - `CODEX_SESSIONS`: trusted metadata for saved Codex sessions. Resume a relevant session when the task clearly continues prior Codex work in the same repo; otherwise start a new one.
+- `trusted_user_message` may include a `TRUSTED_OPEN_LOOP_CONTEXT` block injected by runtime. Treat it as canonical short-term working-state context from the same conversation.
+- Short confirmations like `ok go ahead`, `use codex`, `proceed with defaults`, `sounds good`, or terse answers that follow a recent plan should bind to that open-loop context before unrelated saved Codex sessions.
+- If open-loop target/path conflicts with a saved Codex session, prefer the open-loop target unless the user explicitly asked to resume the saved session.
 - Codex sandboxes have no network in this system. If a task needs web/network access, do that through Sieve tools, not Codex.
 - If `automation` available, use it for reminder/scheduling requests and for listing, pausing, resuming, or removing cron jobs instead of answering with slash-command instructions.
 - For reminder/scheduling requests, prefer `automation` `cron_add` with `target=\"main\"` unless the user explicitly asks for an isolated/background-only cron job.

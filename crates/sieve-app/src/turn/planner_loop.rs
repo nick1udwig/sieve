@@ -18,6 +18,11 @@ use crate::planner_progress::{
 };
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
+use crate::working_state::{
+    augment_user_message_with_open_loop_context, build_open_loop_from_preference_turn,
+    format_open_loop_status_reply, linked_session_for_loop, looks_like_open_loop_confirmation,
+    OpenLoopStore,
+};
 use chrono::{SecondsFormat, TimeZone, Utc};
 use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
 use sieve_runtime::{
@@ -89,12 +94,27 @@ pub(super) async fn generate_assistant_message(
     event_log: &FanoutRuntimeEventLog,
     cfg: &AppConfig,
     run_id: &RunId,
+    session_key: &str,
     trusted_user_message: &str,
     response_modality: InteractionModality,
     turn_kind: &TurnKind,
 ) -> Result<GeneratedAssistantMessage, Box<dyn std::error::Error>> {
+    let open_loop_store = OpenLoopStore::new(&cfg.codex_store_path)?;
     if matches!(turn_kind, TurnKind::User) {
         let codex_sessions = runtime.planner_codex_sessions().await?;
+        if looks_like_codex_status_query(trusted_user_message) {
+            if let Some(loop_record) =
+                open_loop_store.referenced_loop_for_status(session_key, trusted_user_message)?
+            {
+                let linked_session = linked_session_for_loop(&loop_record, &codex_sessions);
+                return Ok(GeneratedAssistantMessage::Deliver {
+                    message: format_open_loop_status_reply(&loop_record, linked_session),
+                    reply_to_session_id: linked_session
+                        .map(|session| session.session_id.clone())
+                        .or_else(|| loop_record.linked_codex_session_id.clone()),
+                });
+            }
+        }
         if let Some(session) = find_referenced_codex_session(trusted_user_message, &codex_sessions)
         {
             if looks_like_codex_status_query(trusted_user_message) {
@@ -123,6 +143,11 @@ pub(super) async fn generate_assistant_message(
         .saturating_add(max_compose_followup_cycles);
     let mut planner_step_limit = cfg.max_planner_steps.max(1);
     let planner_user_message = trusted_user_message.to_string();
+    let active_open_loop = if matches!(turn_kind, TurnKind::User) {
+        open_loop_store.active_loop_for_followup(session_key, trusted_user_message)?
+    } else {
+        None
+    };
 
     loop {
         while planner_steps_taken < planner_step_limit {
@@ -137,6 +162,15 @@ pub(super) async fn generate_assistant_message(
                 (None, Some(memory)) => format!("{planner_user_message}\n\n{memory}"),
                 (None, None) => planner_user_message.clone(),
             };
+            let planner_turn_user_message = active_open_loop
+                .as_ref()
+                .map(|loop_record| {
+                    augment_user_message_with_open_loop_context(
+                        &planner_turn_user_message,
+                        loop_record,
+                    )
+                })
+                .unwrap_or(planner_turn_user_message);
             let has_known_value_refs = runtime.has_known_value_refs()?;
             let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
                 &cfg.allowed_tools,
@@ -290,7 +324,7 @@ pub(super) async fn generate_assistant_message(
             let effective_signal = override_applied
                 .map(|(override_signal, _)| override_signal)
                 .unwrap_or(signal);
-            let (should_continue, next_step_limit, auto_extended_limit) =
+            let (mut should_continue, next_step_limit, auto_extended_limit) =
                 guidance_continue_decision(
                     effective_signal,
                     consecutive_empty_steps,
@@ -298,6 +332,14 @@ pub(super) async fn generate_assistant_message(
                     planner_step_limit,
                     planner_step_hard_limit,
                 );
+            if step_tool_count == 0
+                && matches!(
+                    effective_signal,
+                    PlannerGuidanceSignal::ContinueNeedPreferenceOrConstraint
+                )
+            {
+                should_continue = false;
+            }
             planner_step_limit = next_step_limit;
             append_turn_controller_event(
                 event_log,
@@ -343,6 +385,52 @@ pub(super) async fn generate_assistant_message(
             )
             .await;
             return Ok(heartbeat_message);
+        }
+
+        if aggregated_result.tool_results.is_empty()
+            && matches!(
+                planner_guidance
+                    .as_ref()
+                    .and_then(|guidance| guidance.signal().ok()),
+                Some(PlannerGuidanceSignal::ContinueNeedPreferenceOrConstraint)
+            )
+        {
+            if let Some(assistant_context) = aggregated_result
+                .thoughts
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                let open_loop = build_open_loop_from_preference_turn(
+                    session_key,
+                    run_id,
+                    trusted_user_message,
+                    assistant_context,
+                    active_open_loop.as_ref(),
+                    now_ms(),
+                );
+                open_loop_store.upsert_loop(&open_loop)?;
+                append_turn_controller_event(
+                    event_log,
+                    run_id,
+                    "turn_finalize",
+                    serde_json::json!({
+                        "planner_steps_taken": planner_steps_taken,
+                        "planner_step_limit": planner_step_limit,
+                        "planner_step_hard_limit": planner_step_hard_limit,
+                        "compose_followup_cycles": compose_followup_cycles,
+                        "quality_gate_len": 0,
+                        "summary_calls_used": summary_calls_used,
+                        "summary_call_budget": cfg.max_summary_calls_per_turn,
+                        "open_loop_id": open_loop.loop_id,
+                    }),
+                )
+                .await;
+                return Ok(GeneratedAssistantMessage::Deliver {
+                    message: open_loop.assistant_context.clone(),
+                    reply_to_session_id: None,
+                });
+            }
         }
 
         let (response_input, render_refs) = build_response_turn_input(
@@ -556,6 +644,23 @@ pub(super) async fn generate_assistant_message(
             }
         }
 
+        if let Some(loop_record) = active_open_loop.as_ref() {
+            if let Some((session_id, session_name)) =
+                first_codex_session_result_identity(&aggregated_result)
+            {
+                open_loop_store.mark_executing(
+                    &loop_record.loop_id,
+                    session_id.as_deref(),
+                    Some(&session_name),
+                    now_ms(),
+                )?;
+            } else if !aggregated_result.tool_results.is_empty()
+                && looks_like_open_loop_confirmation(trusted_user_message)
+            {
+                open_loop_store.mark_executing(&loop_record.loop_id, None, None, now_ms())?;
+            }
+        }
+
         append_turn_controller_event(
             event_log,
             run_id,
@@ -599,8 +704,28 @@ fn find_referenced_codex_session<'a>(
     let lower = message.to_ascii_lowercase();
     sessions
         .iter()
-        .filter(|session| lower.contains(&session.session_name.to_ascii_lowercase()))
-        .max_by_key(|session| session.session_name.len())
+        .filter_map(|session| {
+            let mut score = 0usize;
+            if lower.contains(&session.session_name.to_ascii_lowercase()) {
+                score = score.max(100);
+            }
+            if let Some(name) = session
+                .cwd
+                .rsplit('/')
+                .next()
+                .filter(|value| !value.is_empty())
+            {
+                if lower.contains(&name.to_ascii_lowercase()) {
+                    score = score.max(80);
+                }
+            }
+            if lower.contains(&session.task_summary.to_ascii_lowercase()) {
+                score = score.max(60);
+            }
+            (score > 0).then_some((score, session))
+        })
+        .max_by_key(|(score, session)| (*score, session.updated_at_utc.as_str()))
+        .map(|(_, session)| session)
 }
 
 fn format_codex_session_status_reply(session: &PlannerCodexSession) -> String {
@@ -673,6 +798,22 @@ fn reply_to_codex_session_id(
         })
 }
 
+fn first_codex_session_result_identity(
+    aggregated_result: &PlannerRunResult,
+) -> Option<(Option<String>, String)> {
+    aggregated_result
+        .tool_results
+        .iter()
+        .rev()
+        .find_map(|tool_result| match tool_result {
+            PlannerToolResult::CodexSession {
+                result: Some(result),
+                ..
+            } => Some((result.session_id.clone(), result.session_name.clone())),
+            _ => None,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,6 +848,14 @@ mod tests {
         let sessions = vec![sample_session()];
         let matched = find_referenced_codex_session("how is you-are-starting doing?", &sessions)
             .expect("match codex session");
+        assert_eq!(matched.session_id, "codex-session-1");
+    }
+
+    #[test]
+    fn find_referenced_codex_session_matches_cwd_basename() {
+        let sessions = vec![sample_session()];
+        let matched =
+            find_referenced_codex_session("how is modex work going?", &sessions).expect("match");
         assert_eq!(matched.session_id, "codex-session-1");
     }
 

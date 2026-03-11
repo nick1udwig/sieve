@@ -1,4 +1,5 @@
 use super::*;
+use sieve_types::{CodexExecRequest, CodexSessionRequest, PlannerCodexSession};
 #[derive(Clone, Default)]
 struct SharedTelegramPoller {
     updates: Arc<StdMutex<VecDeque<Vec<TestTelegramUpdate>>>>,
@@ -126,6 +127,15 @@ impl AppE2eHarness {
         allowed_tools: Vec<String>,
         policy_toml: &str,
     ) -> Self {
+        Self::new_with_codex(model_mode, allowed_tools, policy_toml, None)
+    }
+
+    pub(crate) fn new_with_codex(
+        model_mode: E2eModelMode,
+        allowed_tools: Vec<String>,
+        policy_toml: &str,
+        codex: Option<Arc<dyn sieve_runtime::CodexTool>>,
+    ) -> Self {
         let root = Self::unique_root("sieve-app-e2e");
         let event_log_path = root.join("logs/runtime-events.jsonl");
         let mut cfg = AppConfig {
@@ -204,7 +214,7 @@ impl AppE2eHarness {
             automation: automation
                 .clone()
                 .map(|manager| -> Arc<dyn sieve_runtime::AutomationTool> { manager }),
-            codex: None,
+            codex,
             approval_bus: approval_bus.clone(),
             event_log: event_log.clone(),
             clock: Arc::new(RuntimeClock),
@@ -464,4 +474,76 @@ pub(crate) fn message_has_weather_signal(message: &str) -> bool {
         || lower.contains("low")
         || lower.contains("cloud")
         || lower.contains("wind")
+}
+
+pub(crate) struct TestCodexTool {
+    planner_sessions: StdMutex<Vec<PlannerCodexSession>>,
+    session_requests: StdMutex<Vec<CodexSessionRequest>>,
+    session_results: StdMutex<VecDeque<Result<sieve_runtime::CodexSessionToolResult, String>>>,
+}
+
+impl TestCodexTool {
+    pub(crate) fn new(
+        session_results: Vec<Result<sieve_runtime::CodexSessionToolResult, String>>,
+    ) -> Self {
+        Self {
+            planner_sessions: StdMutex::new(Vec::new()),
+            session_requests: StdMutex::new(Vec::new()),
+            session_results: StdMutex::new(VecDeque::from(session_results)),
+        }
+    }
+
+    pub(crate) fn set_planner_sessions(&self, sessions: Vec<PlannerCodexSession>) {
+        *self
+            .planner_sessions
+            .lock()
+            .expect("test codex planner lock poisoned") = sessions;
+    }
+
+    pub(crate) fn session_requests(&self) -> Vec<CodexSessionRequest> {
+        self.session_requests
+            .lock()
+            .expect("test codex session lock poisoned")
+            .clone()
+    }
+}
+
+#[async_trait]
+impl sieve_runtime::CodexTool for TestCodexTool {
+    async fn exec(
+        &self,
+        _request: CodexExecRequest,
+    ) -> Result<sieve_runtime::CodexExecToolResult, String> {
+        Err("test codex exec not configured".to_string())
+    }
+
+    async fn run_task(
+        &self,
+        request: CodexSessionRequest,
+    ) -> Result<sieve_runtime::CodexSessionToolResult, String> {
+        self.run_session(request).await
+    }
+
+    async fn run_session(
+        &self,
+        request: CodexSessionRequest,
+    ) -> Result<sieve_runtime::CodexSessionToolResult, String> {
+        self.session_requests
+            .lock()
+            .map_err(|_| "test codex session lock poisoned".to_string())?
+            .push(request);
+        self.session_results
+            .lock()
+            .map_err(|_| "test codex result lock poisoned".to_string())?
+            .pop_front()
+            .unwrap_or_else(|| Err("test codex session queue exhausted".to_string()))
+    }
+
+    async fn planner_sessions(&self) -> Result<Vec<PlannerCodexSession>, String> {
+        Ok(self
+            .planner_sessions
+            .lock()
+            .map_err(|_| "test codex planner lock poisoned".to_string())?
+            .clone())
+    }
 }

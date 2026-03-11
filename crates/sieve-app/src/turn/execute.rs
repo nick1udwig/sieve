@@ -96,6 +96,7 @@ pub(crate) async fn run_turn(
         event_log,
         cfg,
         &run_id,
+        &prompt.session_key,
         &trusted_user_message,
         modality_contract.response,
         &prompt.turn_kind,
