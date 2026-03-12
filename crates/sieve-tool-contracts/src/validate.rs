@@ -5,7 +5,7 @@ use crate::{
 use serde_json::{Map, Value};
 use sieve_types::{
     AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, DeclassifyRequest,
-    EndorseRequest, Integrity, SinkKey, ValueRef,
+    EndorseRequest, Integrity, SinkChannel, SinkKey, ValueRef,
 };
 use url::Url;
 
@@ -315,7 +315,7 @@ fn parse_declassify(
         tool_call_index,
         tool_name,
         obj,
-        &["value_ref", "sink", "reason"],
+        &["value_ref", "sink", "channel", "reason"],
     )?;
 
     let value_ref = required_string(tool_call_index, tool_name, obj, "value_ref")?;
@@ -334,13 +334,40 @@ fn parse_declassify(
 
     let sink = required_string(tool_call_index, tool_name, obj, "sink")?;
     validate_sink(tool_call_index, tool_name, &sink)?;
+    let channel_raw = required_string(tool_call_index, tool_name, obj, "channel")?;
+    let channel = parse_sink_channel(tool_call_index, tool_name, &channel_raw)?;
 
     let reason = optional_string(tool_call_index, tool_name, obj, "reason")?;
     Ok(DeclassifyRequest {
         value_ref: ValueRef(value_ref),
         sink: SinkKey(sink),
+        channel,
         reason,
     })
+}
+
+fn parse_sink_channel(
+    tool_call_index: usize,
+    tool_name: &str,
+    channel_raw: &str,
+) -> Result<SinkChannel, ContractError> {
+    match channel_raw {
+        "body" => Ok(SinkChannel::Body),
+        "header" => Ok(SinkChannel::Header),
+        "query" => Ok(SinkChannel::Query),
+        "path" => Ok(SinkChannel::Path),
+        "cookie" => Ok(SinkChannel::Cookie),
+        _ => Err(make_error(
+            ToolContractErrorCode::InvalidEnumVariant,
+            tool_call_index,
+            tool_name,
+            "/channel",
+            Some("body|header|query|path|cookie".to_string()),
+            Some(channel_raw.to_string()),
+            "channel is not a supported variant".to_string(),
+            Some("use one of: body, header, query, path, cookie"),
+        )),
+    }
 }
 
 fn validate_sink(tool_call_index: usize, tool_name: &str, sink: &str) -> Result<(), ContractError> {

@@ -1,4 +1,5 @@
 use super::*;
+use sieve_types::{SinkChannel, SinkPermission};
 
 pub(crate) fn stub_summary() -> CommandSummary {
     CommandSummary {
@@ -10,6 +11,7 @@ pub(crate) fn stub_summary() -> CommandSummary {
         sink_checks: vec![SinkCheck {
             argument_name: "body".to_string(),
             sink: SinkKey("https://example.com/path".to_string()),
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef("v1".to_string())],
         }],
         unsupported_flags: Vec::new(),
@@ -21,7 +23,10 @@ pub(crate) fn label_with_sinks(integrity: Integrity, sinks: &[&str]) -> ValueLab
     provenance.insert(Source::User);
     let allowed_sinks = sinks
         .iter()
-        .map(|sink| SinkKey((*sink).to_string()))
+        .map(|sink| SinkPermission {
+            sink: SinkKey((*sink).to_string()),
+            channel: SinkChannel::Body,
+        })
         .collect();
     ValueLabel {
         integrity,

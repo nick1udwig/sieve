@@ -533,20 +533,25 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
         PlannerToolResult::Endorse {
             request,
             transition,
+            failure_reason,
         } => serde_json::json!({
             "tool": "endorse",
             "value_ref_len": request.value_ref.0.len(),
             "target_integrity": format_integrity(request.target_integrity),
-            "applied": transition.is_some()
+            "applied": transition.is_some(),
+            "failure_reason_len": failure_reason.as_ref().map(|value| value.len()).unwrap_or(0)
         }),
         PlannerToolResult::Declassify {
             request,
             transition,
+            failure_reason,
         } => serde_json::json!({
             "tool": "declassify",
             "value_ref_len": request.value_ref.0.len(),
             "sink_len": request.sink.0.len(),
-            "applied": transition.is_some()
+            "channel": format!("{:?}", request.channel).to_lowercase(),
+            "applied": transition.is_some(),
+            "failure_reason_len": failure_reason.as_ref().map(|value| value.len()).unwrap_or(0)
         }),
     }
 }

@@ -13,8 +13,8 @@ use sieve_runtime::{
 use sieve_shell::{ShellAnalysis, ShellAnalysisError, ShellAnalyzer};
 use sieve_types::{
     ApprovalRequestedEvent, CapacityType, Integrity, LlmModelConfig, LlmProvider, PlannerTurnInput,
-    PlannerTurnOutput, QuarantineReport, QuarantineRunRequest, RuntimeEvent, SinkKey, Source,
-    ValueLabel,
+    PlannerTurnOutput, QuarantineReport, QuarantineRunRequest, RuntimeEvent, SinkChannel, SinkKey,
+    SinkPermission, Source, ValueLabel,
 };
 use std::collections::BTreeSet;
 use std::fs;
@@ -191,7 +191,10 @@ pub fn label_with_sinks(integrity: Integrity, sinks: &[&str]) -> ValueLabel {
     provenance.insert(Source::User);
     let allowed_sinks = sinks
         .iter()
-        .map(|sink| SinkKey((*sink).to_string()))
+        .map(|sink| SinkPermission {
+            sink: SinkKey((*sink).to_string()),
+            channel: SinkChannel::Body,
+        })
         .collect();
     ValueLabel {
         integrity,

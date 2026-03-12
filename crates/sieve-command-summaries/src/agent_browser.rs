@@ -1,4 +1,6 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{
+    Action, Capability, CommandSummary, Resource, SinkChannel, SinkCheck, SinkKey, ValueRef,
+};
 
 use crate::{canonicalize_url_connect_scope, SummaryOutcome};
 
@@ -504,6 +506,7 @@ fn summarize_cookies_set(parsed: &ParsedGlobals) -> SummaryOutcome {
         vec![SinkCheck {
             argument_name: "value".to_string(),
             sink: origin.clone(),
+            channel: SinkChannel::Cookie,
             value_refs: vec![ValueRef(format!("argv:{cookie_value_index}"))],
         }],
         Some(origin),
@@ -641,6 +644,7 @@ fn finalize_known(
             sink_checks.push(SinkCheck {
                 argument_name: "--headers".to_string(),
                 sink: origin.clone(),
+                channel: SinkChannel::Header,
                 value_refs: vec![ValueRef(format!("argv:{idx}"))],
             });
         }

@@ -161,11 +161,16 @@ fn declassify_payload_json_round_trip() {
     let request = DeclassifyRequest {
         value_ref: ValueRef("v456".into()),
         sink: SinkKey("https://api.example.com/v1/upload".into()),
+        channel: SinkChannel::Body,
         reason: Some("user approved outbound upload".into()),
     };
     let response = DeclassifyResponse {
         value_ref: ValueRef("v456d".into()),
-        allowed_sinks_added: vec![SinkKey("https://api.example.com/v1/upload".into())],
+        release_value_ref: ValueRef("vrel_1".into()),
+        allowed_sinks_added: vec![SinkPermission {
+            sink: SinkKey("https://api.example.com/v1/upload".into()),
+            channel: SinkChannel::Body,
+        }],
     };
 
     let request_encoded = serde_json::to_string(&request).expect("serialize");

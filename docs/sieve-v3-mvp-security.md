@@ -35,9 +35,12 @@ Use a dedicated `cap-policy` format + small Rust evaluator for MVP.
 Each value carries a label:
 - provenance: source chain (`user`, `tool:<name>`, `quarantine:<cmd>`, etc.)
 - integrity: `trusted | untrusted`
-- allowed_sinks: set of sinks this value may flow to
+- allowed_sinks: set of `(sink, channel)` permissions this value may flow to
+- capacity_type: `bool | int | float | enum | trusted_string`
 
 This allows confidentiality checks at sinks and integrity checks on control decisions.
+Declassification should mint a derived release value rather than mutating the source label in place.
+Runtime may separately track source-to-release grants so real sink checks can honor the approved release without widening the source label.
 
 ## Policy checks
 
@@ -45,7 +48,13 @@ This allows confidentiality checks at sinks and integrity checks on control deci
 Consequential actions must not be triggered by untrusted control context unless explicitly endorsed.
 
 ### Confidentiality check (data flow)
-For every sink argument, verify each value flowing into that sink is allowed for that sink.
+For every sink argument, verify each value flowing into that sink is allowed for that sink and channel.
+
+### Capacity-aware explicit release
+`trusted_string` values must not be endorsed to trusted control or declassified directly.
+Release and endorsement should operate on bounded typed extracts instead.
+Approved `declassify` should return a release `value_ref` scoped to one sink and channel.
+Runtime policy should also deny sink flow for runtime-labeled `trusted_string` values and refuse to treat them as trusted control.
 
 ## Per-argument enforcement examples
 

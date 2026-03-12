@@ -51,6 +51,24 @@ pub enum CapacityType {
     TrustedString,
 }
 
+/// Narrow egress channel within one sink destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SinkChannel {
+    Body,
+    Header,
+    Query,
+    Path,
+    Cookie,
+}
+
+/// One sink permission scoped to destination and channel.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SinkPermission {
+    pub sink: SinkKey,
+    pub channel: SinkChannel,
+}
+
 /// Provenance source for labeled values.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -73,6 +91,6 @@ pub enum Source {
 pub struct ValueLabel {
     pub integrity: Integrity,
     pub provenance: BTreeSet<Source>,
-    pub allowed_sinks: BTreeSet<SinkKey>,
+    pub allowed_sinks: BTreeSet<SinkPermission>,
     pub capacity_type: CapacityType,
 }

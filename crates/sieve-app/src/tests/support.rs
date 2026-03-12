@@ -366,6 +366,36 @@ impl AppE2eHarness {
     pub(crate) fn jsonl_records(&self) -> Vec<Value> {
         read_jsonl_records(&self.cfg.event_log_path)
     }
+
+    pub(crate) async fn wait_for_approval(&self) -> ApprovalRequestedEvent {
+        for _ in 0..30 {
+            let published = self
+                .approval_bus
+                .published_events()
+                .expect("published approval events");
+            if let Some(first) = published.first() {
+                return first.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("approval not requested in time");
+    }
+
+    pub(crate) fn resolve_approval(
+        &self,
+        requested: &ApprovalRequestedEvent,
+        action: ApprovalAction,
+    ) {
+        self.approval_bus
+            .resolve(ApprovalResolvedEvent {
+                schema_version: 1,
+                request_id: requested.request_id.clone(),
+                run_id: requested.run_id.clone(),
+                action,
+                created_at_ms: now_ms(),
+            })
+            .expect("resolve approval");
+    }
 }
 
 pub(crate) fn read_jsonl_records(path: &Path) -> Vec<Value> {

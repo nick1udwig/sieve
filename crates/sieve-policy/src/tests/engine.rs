@@ -2,7 +2,8 @@ use super::{base_input, engine_with_default_policy};
 use crate::{PolicyEngine, TomlPolicyEngine};
 use sieve_types::{
     Action, Capability, CommandKnowledge, CommandSegment, CommandSummary, Integrity,
-    PolicyDecisionKind, Resource, SinkCheck, SinkKey, UncertainMode, UnknownMode, ValueRef,
+    PolicyDecisionKind, Resource, SinkChannel, SinkCheck, SinkKey, SinkPermission, UncertainMode,
+    UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 
@@ -88,6 +89,7 @@ require_trusted_control_for_mutating = true
         sink_checks: vec![SinkCheck {
             argument_name: "body".to_string(),
             sink: SinkKey("https://api.example.com/v1/upload?token=abc".to_string()),
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef("body_ref".to_string())],
         }],
         unsupported_flags: vec![],
@@ -179,6 +181,7 @@ require_trusted_control_for_mutating = true
         sink_checks: vec![SinkCheck {
             argument_name: "body".to_string(),
             sink: SinkKey("https://api.example.com/v1/upload?token=abc".to_string()),
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef("body_ref".to_string())],
         }],
         unsupported_flags: vec![],
@@ -189,11 +192,139 @@ require_trusted_control_for_mutating = true
         .allowed_sinks_by_value
         .insert(
             ValueRef("body_ref".to_string()),
-            BTreeSet::from([SinkKey("https://api.example.com/v1/upload".to_string())]),
+            BTreeSet::from([SinkPermission {
+                sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                channel: SinkChannel::Body,
+            }]),
         );
 
     let decision = engine.evaluate_precheck(&input);
     assert_eq!(decision.kind, PolicyDecisionKind::Allow);
+}
+
+#[test]
+fn allows_sink_when_runtime_context_has_release_grant_for_source_value() {
+    let engine = TomlPolicyEngine::from_toml_str(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+    )
+    .expect("policy parse");
+
+    let mut input = base_input();
+    input.command_segments[0].argv = vec![
+        "curl".to_string(),
+        "-X".to_string(),
+        "POST".to_string(),
+        "https://api.example.com/v1/upload".to_string(),
+        "-d".to_string(),
+        "{}".to_string(),
+    ];
+    input.summary = Some(CommandSummary {
+        required_capabilities: vec![Capability {
+            resource: Resource::Net,
+            action: Action::Write,
+            scope: "https://api.example.com/v1/upload".to_string(),
+        }],
+        sink_checks: vec![SinkCheck {
+            argument_name: "body".to_string(),
+            sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+            channel: SinkChannel::Body,
+            value_refs: vec![ValueRef("source_ref".to_string())],
+        }],
+        unsupported_flags: vec![],
+    });
+    input
+        .runtime_context
+        .sink_permissions
+        .released_sinks_by_source_value
+        .insert(
+            ValueRef("source_ref".to_string()),
+            BTreeSet::from([SinkPermission {
+                sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                channel: SinkChannel::Body,
+            }]),
+        );
+
+    let decision = engine.evaluate_precheck(&input);
+    assert_eq!(decision.kind, PolicyDecisionKind::Allow);
+}
+
+#[test]
+fn denies_sink_when_runtime_value_is_trusted_string_even_with_release_grant() {
+    let engine = TomlPolicyEngine::from_toml_str(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+    )
+    .expect("policy parse");
+
+    let mut input = base_input();
+    input.command_segments[0].argv = vec![
+        "curl".to_string(),
+        "-X".to_string(),
+        "POST".to_string(),
+        "https://api.example.com/v1/upload".to_string(),
+        "-d".to_string(),
+        "{}".to_string(),
+    ];
+    input.summary = Some(CommandSummary {
+        required_capabilities: vec![Capability {
+            resource: Resource::Net,
+            action: Action::Write,
+            scope: "https://api.example.com/v1/upload".to_string(),
+        }],
+        sink_checks: vec![SinkCheck {
+            argument_name: "body".to_string(),
+            sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+            channel: SinkChannel::Body,
+            value_refs: vec![ValueRef("source_ref".to_string())],
+        }],
+        unsupported_flags: vec![],
+    });
+    input
+        .runtime_context
+        .sink_permissions
+        .released_sinks_by_source_value
+        .insert(
+            ValueRef("source_ref".to_string()),
+            BTreeSet::from([SinkPermission {
+                sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                channel: SinkChannel::Body,
+            }]),
+        );
+    input
+        .runtime_context
+        .sink_permissions
+        .capacity_type_by_value
+        .insert(
+            ValueRef("source_ref".to_string()),
+            sieve_types::CapacityType::TrustedString,
+        );
+
+    let decision = engine.evaluate_precheck(&input);
+    assert_eq!(decision.kind, PolicyDecisionKind::Deny);
+    assert_eq!(
+        decision.blocked_rule_id.as_deref(),
+        Some("sink-capacity-denied")
+    );
+    assert!(decision.reason.contains("typed extraction"));
 }
 
 #[test]
@@ -234,6 +365,7 @@ require_trusted_control_for_mutating = true
         sink_checks: vec![SinkCheck {
             argument_name: "body".to_string(),
             sink: SinkKey("https://api.example.com/v1/upload?token=abc".to_string()),
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef("body_ref".to_string())],
         }],
         unsupported_flags: vec![],
@@ -241,6 +373,66 @@ require_trusted_control_for_mutating = true
 
     let decision = engine.evaluate_precheck(&input);
     assert_eq!(decision.kind, PolicyDecisionKind::Allow);
+}
+
+#[test]
+fn denies_sink_when_same_destination_permission_has_wrong_channel() {
+    let engine = TomlPolicyEngine::from_toml_str(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+    )
+    .expect("policy parse");
+
+    let mut input = base_input();
+    input.command_segments[0].argv = vec![
+        "curl".to_string(),
+        "-X".to_string(),
+        "POST".to_string(),
+        "https://api.example.com/v1/upload".to_string(),
+        "-H".to_string(),
+        "Authorization: secret".to_string(),
+    ];
+    input.summary = Some(CommandSummary {
+        required_capabilities: vec![Capability {
+            resource: Resource::Net,
+            action: Action::Write,
+            scope: "https://api.example.com/v1/upload".to_string(),
+        }],
+        sink_checks: vec![SinkCheck {
+            argument_name: "-H".to_string(),
+            sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+            channel: SinkChannel::Header,
+            value_refs: vec![ValueRef("header_ref".to_string())],
+        }],
+        unsupported_flags: vec![],
+    });
+    input
+        .runtime_context
+        .sink_permissions
+        .allowed_sinks_by_value
+        .insert(
+            ValueRef("header_ref".to_string()),
+            BTreeSet::from([SinkPermission {
+                sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                channel: SinkChannel::Body,
+            }]),
+        );
+
+    let decision = engine.evaluate_precheck(&input);
+    assert_eq!(decision.kind, PolicyDecisionKind::Deny);
+    assert_eq!(
+        decision.blocked_rule_id.as_deref(),
+        Some("sink-flow-denied")
+    );
 }
 
 #[test]

@@ -1,6 +1,7 @@
 use sieve_command_summaries::SummaryOutcome;
 use sieve_types::{
-    Action, Capability, CommandKnowledge, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef,
+    Action, Capability, CommandKnowledge, CommandSummary, Resource, SinkChannel, SinkCheck,
+    SinkKey, ValueRef,
 };
 use std::path::Path;
 use url::Url;
@@ -227,6 +228,7 @@ fn parse_text_input(
         vec![SinkCheck {
             argument_name: parsed.remaining[0].value.clone(),
             sink,
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef(format!("argv:{}", parsed.remaining[2].index))],
         }],
     )
@@ -248,6 +250,7 @@ fn parse_keyboard(
         vec![SinkCheck {
             argument_name: format!("keyboard {}", parsed.remaining[1].value),
             sink,
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef(format!("argv:{}", parsed.remaining[2].index))],
         }],
     )
@@ -358,6 +361,7 @@ fn parse_storage(
             vec![SinkCheck {
                 argument_name: "storage.set".to_string(),
                 sink,
+                channel: SinkChannel::Body,
                 value_refs: vec![ValueRef(format!("argv:{}", parsed.remaining[4].index))],
             }],
         ),

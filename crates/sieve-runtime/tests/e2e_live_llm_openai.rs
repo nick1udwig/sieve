@@ -13,7 +13,7 @@ use sieve_runtime::{
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
     ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, Integrity, LlmModelConfig,
-    LlmProvider, RunId, SinkKey, UncertainMode, UnknownMode, ValueRef,
+    LlmProvider, RunId, SinkChannel, SinkKey, SinkPermission, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 use std::env;
@@ -221,18 +221,20 @@ async fn openai_live_runtime_planner_executes_endorse_with_approval() {
         .await
         .expect("task join")
         .expect("live endorse turn");
-    let (request, transition) = output
+    let (request, transition, failure_reason) = output
         .tool_results
         .iter()
         .find_map(|result| match result {
             PlannerToolResult::Endorse {
                 request,
                 transition,
-            } => Some((request, transition)),
+                failure_reason,
+            } => Some((request, transition, failure_reason)),
             _ => None,
         })
         .expect("planner must produce endorse tool result");
     assert_eq!(request.value_ref, ValueRef("v_live_endorse".to_string()));
+    assert_eq!(failure_reason, &None);
     let transition = transition.as_ref().expect("endorse transition must exist");
     assert_eq!(transition.value_ref, ValueRef("v_live_endorse".to_string()));
     assert_eq!(transition.to_integrity, Integrity::Trusted);
@@ -299,19 +301,22 @@ async fn openai_live_runtime_planner_executes_declassify_with_approval() {
         .await
         .expect("task join")
         .expect("live declassify turn");
-    let (request, transition) = output
+    let (request, transition, failure_reason) = output
         .tool_results
         .iter()
         .find_map(|result| match result {
             PlannerToolResult::Declassify {
                 request,
                 transition,
-            } => Some((request, transition)),
+                failure_reason,
+            } => Some((request, transition, failure_reason)),
             _ => None,
         })
         .expect("planner must produce declassify tool result");
     assert_eq!(request.value_ref, ValueRef("v_live_declassify".to_string()));
     assert_eq!(request.sink, sink);
+    assert_eq!(request.channel, SinkChannel::Body);
+    assert_eq!(failure_reason, &None);
     let transition = transition
         .as_ref()
         .expect("declassify transition must exist");
@@ -319,15 +324,31 @@ async fn openai_live_runtime_planner_executes_declassify_with_approval() {
         transition.value_ref,
         ValueRef("v_live_declassify".to_string())
     );
+    assert_ne!(
+        transition.release_value_ref,
+        ValueRef("v_live_declassify".to_string())
+    );
     assert_eq!(transition.sink, sink);
-    assert!(!transition.sink_was_already_allowed);
+    assert_eq!(transition.channel, SinkChannel::Body);
+    assert!(!transition.release_value_existed);
     assert_eq!(transition.approved_by, Some(requested.request_id));
 
-    let label = runtime
+    let source_label = runtime
         .value_label(&ValueRef("v_live_declassify".to_string()))
         .expect("read label")
         .expect("label exists");
-    assert!(label.allowed_sinks.contains(&sink));
+    assert!(!source_label.allowed_sinks.contains(&SinkPermission {
+        sink: sink.clone(),
+        channel: SinkChannel::Body,
+    }));
+    let release_label = runtime
+        .value_label(&transition.release_value_ref)
+        .expect("read release label")
+        .expect("release label exists");
+    assert!(release_label.allowed_sinks.contains(&SinkPermission {
+        sink,
+        channel: SinkChannel::Body,
+    }));
 }
 
 #[tokio::test]

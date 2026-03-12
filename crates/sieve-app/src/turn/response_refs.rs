@@ -412,6 +412,7 @@ fn summarize_tool_result(
         PlannerToolResult::Endorse {
             request,
             transition,
+            failure_reason,
         } => {
             let value_ref_id = format!("value:{}", request.value_ref.0);
             render_refs.insert(
@@ -433,7 +434,7 @@ fn summarize_tool_result(
                 tool_name: "endorse".to_string(),
                 outcome,
                 attempted_command: None,
-                failure_reason: None,
+                failure_reason: failure_reason.clone(),
                 refs: vec![ResponseRefMetadata {
                     ref_id: value_ref_id,
                     kind: "value_ref".to_string(),
@@ -445,9 +446,14 @@ fn summarize_tool_result(
         PlannerToolResult::Declassify {
             request,
             transition,
+            failure_reason,
         } => {
             let value_ref_id = format!("value:{}", request.value_ref.0);
-            let sink_ref_id = format!("sink:{}", request.sink.0);
+            let release_ref_id = transition
+                .as_ref()
+                .map(|transition| format!("value:{}", transition.release_value_ref.0));
+            let channel = format!("{:?}", request.channel).to_lowercase();
+            let sink_ref_id = format!("sink:{}:{}", request.sink.0, channel);
             render_refs.insert(
                 value_ref_id.clone(),
                 RenderRef::Literal {
@@ -457,13 +463,29 @@ fn summarize_tool_result(
             render_refs.insert(
                 sink_ref_id.clone(),
                 RenderRef::Literal {
-                    value: request.sink.0.clone(),
+                    value: format!("{} [{}]", request.sink.0, channel),
                 },
             );
+            if let Some(transition) = transition {
+                let derived_ref_id = release_ref_id
+                    .clone()
+                    .expect("release ref render id must exist for declassify transition");
+                render_refs.insert(
+                    derived_ref_id,
+                    RenderRef::Literal {
+                        value: transition.release_value_ref.0.clone(),
+                    },
+                );
+            }
             let outcome = match transition {
                 Some(transition) => format!(
-                    "declassify applied for [[ref:{}]] -> [[ref:{}]] (already_allowed={})",
-                    value_ref_id, sink_ref_id, transition.sink_was_already_allowed
+                    "declassify applied for [[ref:{}]] -> [[ref:{}]] via release [[ref:{}]] (existing_release={})",
+                    value_ref_id,
+                    sink_ref_id,
+                    release_ref_id
+                        .as_deref()
+                        .expect("release ref render id must exist for declassify transition"),
+                    transition.release_value_existed
                 ),
                 None => format!(
                     "declassify not applied for [[ref:{}]] -> [[ref:{}]]",
@@ -474,7 +496,7 @@ fn summarize_tool_result(
                 tool_name: "declassify".to_string(),
                 outcome,
                 attempted_command: None,
-                failure_reason: None,
+                failure_reason: failure_reason.clone(),
                 refs: vec![
                     ResponseRefMetadata {
                         ref_id: value_ref_id,
@@ -488,7 +510,16 @@ fn summarize_tool_result(
                         byte_count: 0,
                         line_count: 0,
                     },
-                ],
+                    ResponseRefMetadata {
+                        ref_id: release_ref_id.unwrap_or_default(),
+                        kind: "value_ref".to_string(),
+                        byte_count: 0,
+                        line_count: 0,
+                    },
+                ]
+                .into_iter()
+                .filter(|metadata| !metadata.ref_id.is_empty())
+                .collect(),
             }
         }
     }

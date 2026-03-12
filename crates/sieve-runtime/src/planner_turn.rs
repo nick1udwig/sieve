@@ -41,10 +41,12 @@ pub enum PlannerToolResult {
     Endorse {
         request: EndorseRequest,
         transition: Option<EndorseStateTransition>,
+        failure_reason: Option<String>,
     },
     Declassify {
         request: DeclassifyRequest,
         transition: Option<DeclassifyStateTransition>,
+        failure_reason: Option<String>,
     },
 }
 
@@ -119,21 +121,33 @@ impl RuntimeOrchestrator {
                     });
                 }
                 TypedCall::Endorse(endorse_request) => {
-                    let transition = self
-                        .endorse_value_once(request.run_id.clone(), endorse_request.clone())
+                    let outcome = self
+                        .endorse_value_once_outcome_with_context(
+                            request.run_id.clone(),
+                            endorse_request.clone(),
+                            request.control_value_refs.clone(),
+                            request.control_endorsed_by.clone(),
+                        )
                         .await?;
                     tool_results.push(PlannerToolResult::Endorse {
                         request: endorse_request,
-                        transition,
+                        transition: outcome.transition,
+                        failure_reason: outcome.failure_reason,
                     });
                 }
                 TypedCall::Declassify(declassify_request) => {
-                    let transition = self
-                        .declassify_value_once(request.run_id.clone(), declassify_request.clone())
+                    let outcome = self
+                        .declassify_value_once_outcome_with_context(
+                            request.run_id.clone(),
+                            declassify_request.clone(),
+                            request.control_value_refs.clone(),
+                            request.control_endorsed_by.clone(),
+                        )
                         .await?;
                     tool_results.push(PlannerToolResult::Declassify {
                         request: declassify_request,
-                        transition,
+                        transition: outcome.transition,
+                        failure_reason: outcome.failure_reason,
                     });
                 }
             }

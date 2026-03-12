@@ -206,6 +206,16 @@
               "args": {
                 "additionalProperties": false,
                 "properties": {
+                  "channel": {
+                    "enum": [
+                      "body",
+                      "header",
+                      "query",
+                      "path",
+                      "cookie"
+                    ],
+                    "type": "string"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -222,7 +232,8 @@
                 },
                 "required": [
                   "value_ref",
-                  "sink"
+                  "sink",
+                  "channel"
                 ],
                 "type": "object"
               },

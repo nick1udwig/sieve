@@ -68,12 +68,16 @@ Not in MVP:
 ### 3.2 Labels per runtime value
 - `integrity`: `trusted | untrusted`
 - `provenance`: source lineage
-- `allowed_sinks`: concrete sink set
+- `allowed_sinks`: concrete `(sink, channel)` set
 - `capacity_type`: `bool | int | float | enum | trusted_string`
 
 Rules:
 - Non-trusted strings cannot flow to Planner.
 - Typed Q guidance signals may flow to Planner, but remain policy-controlled for consequential use.
+- `trusted_string` values must not be endorsed to `trusted` and must not be declassified directly.
+- `declassify` must mint a derived release value for sink use; do not mutate the source label in place.
+- Runtime policy must deny sink flow for runtime-labeled `trusted_string` values.
+- Runtime policy must treat `trusted_string` control refs as untrusted for consequential actions.
 
 ## 4. Enforcement semantics
 
@@ -84,7 +88,7 @@ For mutating/unknown commands:
 
 ### 4.2 Confidentiality (P-F style)
 For each sink argument:
-- all payload values flowing to sink must allow that exact sink.
+- all payload values flowing to sink must allow that exact sink and channel.
 
 ### 4.3 Per-argument examples
 - `rm -rf X` -> `deny_with_approval`.
@@ -123,6 +127,7 @@ Bootstrap source for MVP command classes:
 #### Tool: `endorse`
 Purpose:
 - upgrade integrity of typed value for control-use.
+- `trusted_string` is not eligible; derive a bounded typed value first.
 
 Request:
 ```json
@@ -141,7 +146,7 @@ Response:
 {
   "ok": true,
   "result": {
-    "value_ref": "v123e",
+    "value_ref": "v123",
     "integrity": "trusted"
   }
 }
@@ -160,7 +165,9 @@ Failure:
 
 #### Tool: `declassify`
 Purpose:
-- relax confidentiality for a specific sink.
+- relax confidentiality for a specific sink and channel.
+- `trusted_string` is not eligible; derive a bounded typed value first.
+- success mints a derived release `value_ref` scoped to that sink and channel.
 
 Request:
 ```json
@@ -169,6 +176,7 @@ Request:
   "params": {
     "value_ref": "v456",
     "sink": "https://api.example.com/v1/upload",
+    "channel": "body",
     "reason": "optional-human-readable"
   }
 }
@@ -179,8 +187,14 @@ Response:
 {
   "ok": true,
   "result": {
-    "value_ref": "v456d",
-    "allowed_sinks_added": ["https://api.example.com:443/v1/upload"]
+    "value_ref": "v456",
+    "release_value_ref": "vrel_1",
+    "allowed_sinks_added": [
+      {
+        "sink": "https://api.example.com:443/v1/upload",
+        "channel": "body"
+      }
+    ]
   }
 }
 ```
@@ -198,8 +212,11 @@ Failure:
 
 ### 7.2 Approval and execution semantics for explicit tools
 - Both tools require policy check and user approval.
+- Both tools fail before approval if `value_ref` is unknown.
 - Approvals are one-shot only in MVP.
 - No automatic endorse/declassify.
+- `declassify` leaves the source label unchanged and creates a derived release `value_ref`.
+- Runtime policy may honor that release for later use of the same source value only at the approved sink and channel.
 
 ## 8. deny_with_approval semantics (proposed and adopted)
 

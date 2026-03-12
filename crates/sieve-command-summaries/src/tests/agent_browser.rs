@@ -1,6 +1,8 @@
 use super::argv;
 use crate::summarize_argv;
-use sieve_types::{Action, Capability, CommandKnowledge, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{
+    Action, Capability, CommandKnowledge, Resource, SinkChannel, SinkCheck, SinkKey, ValueRef,
+};
 
 #[test]
 fn agent_browser_open_requires_explicit_origin_connect_capability() {
@@ -37,6 +39,7 @@ fn agent_browser_open_headers_add_sink_check() {
         vec![SinkCheck {
             argument_name: "--headers".to_string(),
             sink: SinkKey("https://api.example.com/".to_string()),
+            channel: SinkChannel::Header,
             value_refs: vec![ValueRef("argv:4".to_string())],
         }]
     );
@@ -164,6 +167,7 @@ fn agent_browser_cookies_set_with_url_extracts_sink_check() {
         vec![SinkCheck {
             argument_name: "value".to_string(),
             sink: SinkKey("https://app.example.com/".to_string()),
+            channel: SinkChannel::Cookie,
             value_refs: vec![ValueRef("argv:4".to_string())],
         }]
     );

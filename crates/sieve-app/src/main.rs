@@ -60,7 +60,10 @@ use logging::FanoutRuntimeEventLog;
 pub(crate) use logging::{now_ms, ConversationLogRecord, ConversationRole, TelegramLoopEvent};
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
+pub(crate) use planner_feedback::{
+    planner_explicit_tool_feedback, planner_memory_context, planner_memory_feedback,
+    planner_policy_feedback,
+};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use planner_progress::{
@@ -109,7 +112,7 @@ use sieve_types::{Action, InteractionModality, Resource};
 #[allow(unused_imports)]
 pub(crate) use sieve_types::{
     ApprovalResolvedEvent, Capability, ModalityOverrideReason, PlannerGuidanceSignal, RunId,
-    RuntimeEvent, UncertainMode, UnknownMode,
+    RuntimeEvent, UncertainMode, UnknownMode, ValueRef,
 };
 #[cfg(test)]
 #[allow(unused_imports)]

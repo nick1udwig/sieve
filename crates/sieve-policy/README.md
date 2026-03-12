@@ -30,4 +30,7 @@ Notes:
 - Query/fragment ignored for sink keys.
 - Unknown/uncertain handling is from `PrecheckInput` modes (`ask|accept|deny`).
 - Consequential-action integrity checks read `PrecheckInput.runtime_context.control.integrity`.
-- Sink flow checks read `PrecheckInput.runtime_context.sink_permissions` and also honor TOML `[value_sinks]`.
+- Sink flow checks read `PrecheckInput.runtime_context.sink_permissions` as channel-scoped permissions.
+- Runtime sink permissions may come from either direct value labels or derived release grants keyed by the source value.
+- Runtime-labeled `trusted_string` values are rejected for sink flow even if an ambient sink grant exists.
+- TOML `[value_sinks]` remains a body-only compatibility fallback.

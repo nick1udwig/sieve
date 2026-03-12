@@ -1,4 +1,4 @@
-use crate::{Capability, RunId, RuntimePolicyContext, SinkKey, ValueRef};
+use crate::{Capability, RunId, RuntimePolicyContext, SinkChannel, SinkKey, ValueRef};
 use serde::{Deserialize, Serialize};
 
 /// Policy mode for commands parsed but not summarized.
@@ -50,6 +50,7 @@ pub enum CommandKnowledge {
 pub struct SinkCheck {
     pub argument_name: String,
     pub sink: SinkKey,
+    pub channel: SinkChannel,
     pub value_refs: Vec<ValueRef>,
 }
 

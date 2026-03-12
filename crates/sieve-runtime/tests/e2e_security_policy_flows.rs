@@ -9,8 +9,8 @@ use sieve_command_summaries::DefaultCommandSummarizer;
 use sieve_runtime::{RuntimeDisposition, ShellRunRequest};
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{
-    ApprovalAction, ApprovalResolvedEvent, EndorseRequest, Integrity, RunId, RuntimeEvent, SinkKey,
-    UncertainMode, UnknownMode, ValueRef,
+    ApprovalAction, ApprovalResolvedEvent, EndorseRequest, Integrity, RunId, RuntimeEvent,
+    SinkChannel, SinkKey, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -144,6 +144,7 @@ require_trusted_control_for_mutating = true
                     sieve_types::DeclassifyRequest {
                         value_ref: ValueRef("argv:5".to_string()),
                         sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                        channel: SinkChannel::Body,
                         reason: None,
                     },
                 )
@@ -165,7 +166,20 @@ require_trusted_control_for_mutating = true
         .expect("task join")
         .expect("runtime ok")
         .expect("approved transition");
-    assert!(!first_transition.sink_was_already_allowed);
+    assert!(!first_transition.release_value_existed);
+    let source_label = runtime
+        .value_label(&ValueRef("argv:5".to_string()))
+        .expect("read source label")
+        .expect("source label exists");
+    assert!(source_label.allowed_sinks.is_empty());
+    let release_label = runtime
+        .value_label(&first_transition.release_value_ref)
+        .expect("read release label")
+        .expect("release label exists");
+    assert!(release_label.allowed_sinks.iter().any(|permission| {
+        permission.sink == SinkKey("https://api.example.com/v1/upload".to_string())
+            && permission.channel == SinkChannel::Body
+    }));
 
     let second = runtime
         .orchestrate_shell(ShellRunRequest {
@@ -196,6 +210,7 @@ require_trusted_control_for_mutating = true
                     sieve_types::DeclassifyRequest {
                         value_ref: ValueRef("argv:5".to_string()),
                         sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                        channel: SinkChannel::Body,
                         reason: None,
                     },
                 )
@@ -215,6 +230,105 @@ require_trusted_control_for_mutating = true
         .expect("resolve second declassify approval");
     let second_transition = second_task.await.expect("task join").expect("runtime ok");
     assert!(second_transition.is_none());
+}
+
+#[tokio::test]
+async fn declassify_body_does_not_authorize_header_flow() {
+    let policy_toml = r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#;
+    let (runtime, approval_bus, _event_log) = mk_runtime(
+        Arc::new(BasicShellAnalyzer),
+        Arc::new(DefaultCommandSummarizer),
+        policy_toml,
+        Arc::new(RecordingQuarantine::default()),
+    );
+    runtime
+        .upsert_value_label(
+            ValueRef("argv:5".to_string()),
+            label_with_sinks(Integrity::Trusted, &[]),
+        )
+        .expect("seed header value");
+
+    let first = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-header-1".to_string()),
+            cwd: "/tmp".to_string(),
+            script: "curl -X POST https://api.example.com/v1/upload -H 'Authorization: secret'"
+                .to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+    match first {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("channel header"));
+        }
+        other => panic!("expected header sink denial, got {other:?}"),
+    }
+
+    let declassify_task = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move {
+            runtime
+                .declassify_value_once(
+                    RunId("run-header-declassify".to_string()),
+                    sieve_types::DeclassifyRequest {
+                        value_ref: ValueRef("argv:5".to_string()),
+                        sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                        channel: SinkChannel::Body,
+                        reason: None,
+                    },
+                )
+                .await
+        })
+    };
+    let requested = wait_for_approval_count(&approval_bus, 1).await[0].clone();
+    approval_bus
+        .resolve(ApprovalResolvedEvent {
+            schema_version: 1,
+            request_id: requested.request_id,
+            run_id: requested.run_id,
+            action: ApprovalAction::ApproveOnce,
+            created_at_ms: 1202,
+        })
+        .expect("resolve approval");
+    declassify_task
+        .await
+        .expect("task join")
+        .expect("runtime ok")
+        .expect("approved transition");
+
+    let second = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-header-2".to_string()),
+            cwd: "/tmp".to_string(),
+            script: "curl -X POST https://api.example.com/v1/upload -H 'Authorization: secret'"
+                .to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+    match second {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("channel header"));
+        }
+        other => panic!("expected header sink denial after body approval, got {other:?}"),
+    }
 }
 
 #[tokio::test]

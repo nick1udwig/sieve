@@ -720,10 +720,12 @@ async fn orchestrate_planner_turn_executes_endorse_with_approval() {
         PlannerToolResult::Endorse {
             request,
             transition: Some(transition),
+            failure_reason,
         } => {
             assert_eq!(request.value_ref, ValueRef("v_control".to_string()));
             assert_eq!(transition.to_integrity, Integrity::Trusted);
             assert_eq!(transition.approved_by, Some(requested.request_id));
+            assert_eq!(failure_reason, &None);
         }
         other => panic!("expected endorse transition, got {other:?}"),
     }
@@ -733,4 +735,146 @@ async fn orchestrate_planner_turn_executes_endorse_with_approval() {
         .expect("read value label")
         .expect("value label present");
     assert_eq!(label.integrity, Integrity::Trusted);
+}
+
+#[tokio::test]
+async fn orchestrate_planner_turn_reports_unknown_value_ref_for_endorse() {
+    let mut args = BTreeMap::new();
+    args.insert("value_ref".to_string(), json!("v_missing"));
+    args.insert("target_integrity".to_string(), json!("trusted"));
+    let planner_output = PlannerTurnOutput {
+        thoughts: None,
+        tool_calls: vec![PlannerToolCall {
+            tool_name: "endorse".to_string(),
+            args,
+        }],
+    };
+    let segments = vec![CommandSegment {
+        argv: vec!["echo".to_string(), "ok".to_string()],
+        operator_before: None,
+    }];
+    let (runtime, _planner, approval_bus, _event_log) = mk_runtime_with_capturing_planner(
+        planner_output,
+        CommandKnowledge::Known,
+        segments,
+        CommandKnowledge::Known,
+        PolicyDecisionKind::Allow,
+    );
+
+    let output = runtime
+        .orchestrate_planner_turn(PlannerRunRequest {
+            run_id: RunId("run-missing-endorse".to_string()),
+            cwd: "/tmp".to_string(),
+            user_message: "endorse missing ref".to_string(),
+            allowed_tools: vec!["endorse".to_string()],
+            current_time_utc: None,
+            current_timezone: None,
+            allowed_net_connect_scopes: Vec::new(),
+            browser_sessions: Vec::new(),
+            previous_events: Vec::new(),
+            guidance: None,
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime planner turn");
+
+    assert!(approval_bus
+        .published_events()
+        .expect("published events")
+        .is_empty());
+    assert_eq!(output.tool_results.len(), 1);
+    match &output.tool_results[0] {
+        PlannerToolResult::Endorse {
+            request,
+            transition: None,
+            failure_reason,
+        } => {
+            assert_eq!(request.value_ref, ValueRef("v_missing".to_string()));
+            assert_eq!(failure_reason.as_deref(), Some("unknown value ref: v_missing"));
+        }
+        other => panic!("expected endorse failure result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn orchestrate_planner_turn_reports_trusted_string_declassify_denial() {
+    let mut args = BTreeMap::new();
+    args.insert("value_ref".to_string(), json!("v_string"));
+    args.insert(
+        "sink".to_string(),
+        json!("https://api.example.com/v1/upload"),
+    );
+    args.insert("channel".to_string(), json!("body"));
+    let planner_output = PlannerTurnOutput {
+        thoughts: None,
+        tool_calls: vec![PlannerToolCall {
+            tool_name: "declassify".to_string(),
+            args,
+        }],
+    };
+    let segments = vec![CommandSegment {
+        argv: vec!["echo".to_string(), "ok".to_string()],
+        operator_before: None,
+    }];
+    let (runtime, _planner, approval_bus, _event_log) = mk_runtime_with_capturing_planner(
+        planner_output,
+        CommandKnowledge::Known,
+        segments,
+        CommandKnowledge::Known,
+        PolicyDecisionKind::Allow,
+    );
+    runtime
+        .upsert_value_label(
+            ValueRef("v_string".to_string()),
+            ValueLabel {
+                integrity: Integrity::Trusted,
+                provenance: BTreeSet::new(),
+                allowed_sinks: BTreeSet::new(),
+                capacity_type: sieve_types::CapacityType::TrustedString,
+            },
+        )
+        .expect("seed trusted_string value");
+
+    let output = runtime
+        .orchestrate_planner_turn(PlannerRunRequest {
+            run_id: RunId("run-trusted-string-declassify".to_string()),
+            cwd: "/tmp".to_string(),
+            user_message: "declassify string".to_string(),
+            allowed_tools: vec!["declassify".to_string()],
+            current_time_utc: None,
+            current_timezone: None,
+            allowed_net_connect_scopes: Vec::new(),
+            browser_sessions: Vec::new(),
+            previous_events: Vec::new(),
+            guidance: None,
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime planner turn");
+
+    assert!(approval_bus
+        .published_events()
+        .expect("published events")
+        .is_empty());
+    assert_eq!(output.tool_results.len(), 1);
+    match &output.tool_results[0] {
+        PlannerToolResult::Declassify {
+            request,
+            transition: None,
+            failure_reason,
+        } => {
+            assert_eq!(request.value_ref, ValueRef("v_string".to_string()));
+            assert_eq!(
+                failure_reason.as_deref(),
+                Some("trusted_string values require typed extraction before declassify")
+            );
+        }
+        other => panic!("expected declassify failure result, got {other:?}"),
+    }
 }

@@ -1,6 +1,8 @@
 use super::argv;
 use crate::{planner_command_catalog, summarize_argv};
-use sieve_types::{Action, Capability, CommandKnowledge, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{
+    Action, Capability, CommandKnowledge, Resource, SinkChannel, SinkCheck, SinkKey, ValueRef,
+};
 
 #[test]
 fn planner_command_catalog_includes_gws_entry() {
@@ -55,6 +57,7 @@ fn gws_read_method_with_params_requires_connect_and_sink_check() {
         vec![SinkCheck {
             argument_name: "--params".to_string(),
             sink: SinkKey("https://www.googleapis.com/".to_string()),
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef("argv:5".to_string())],
         }]
     );
@@ -99,11 +102,13 @@ fn gws_write_method_with_json_and_output_maps_caps() {
             SinkCheck {
                 argument_name: "--params".to_string(),
                 sink: SinkKey("https://www.googleapis.com/".to_string()),
+                channel: SinkChannel::Body,
                 value_refs: vec![ValueRef("argv:6".to_string())],
             },
             SinkCheck {
                 argument_name: "--json".to_string(),
                 sink: SinkKey("https://www.googleapis.com/".to_string()),
+                channel: SinkChannel::Body,
                 value_refs: vec![ValueRef("argv:8".to_string())],
             }
         ]
@@ -145,6 +150,7 @@ fn gws_upload_uses_upload_origin_and_reads_local_file() {
         vec![SinkCheck {
             argument_name: "--json".to_string(),
             sink: SinkKey("https://www.googleapis.com/upload/".to_string()),
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef("argv:5".to_string())],
         }]
     );

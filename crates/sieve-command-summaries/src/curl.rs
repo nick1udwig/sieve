@@ -3,7 +3,9 @@ use crate::{
     unknown_with_flags, SummaryOutcome,
 };
 use sieve_policy::{canonicalize_net_origin_scope, canonicalize_sink_key};
-use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{
+    Action, Capability, CommandSummary, Resource, SinkChannel, SinkCheck, SinkKey, ValueRef,
+};
 
 pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     if !is_curl_command(argv) {
@@ -11,14 +13,15 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     }
 
     #[derive(Debug, Clone)]
-    struct PayloadArg {
+    struct TrackedArg {
         flag: String,
         value_index: usize,
     }
 
     let mut method: Option<String> = None;
     let mut url_raw: Option<String> = None;
-    let mut payloads: Vec<PayloadArg> = Vec::new();
+    let mut payloads: Vec<TrackedArg> = Vec::new();
+    let mut headers: Vec<TrackedArg> = Vec::new();
     let mut unsupported_flags: Vec<String> = Vec::new();
     let mut i = 1usize;
     let mut saw_end_of_flags = false;
@@ -79,7 +82,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl payload flag missing value"));
                 }
-                payloads.push(PayloadArg {
+                payloads.push(TrackedArg {
                     flag: arg.clone(),
                     value_index: i + 1,
                 });
@@ -88,7 +91,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             }
 
             if arg.starts_with("-d") && arg.len() > 2 {
-                payloads.push(PayloadArg {
+                payloads.push(TrackedArg {
                     flag: "-d".to_string(),
                     value_index: i,
                 });
@@ -106,7 +109,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                         | "--data-urlencode"
                         | "--json"
                 ) {
-                    payloads.push(PayloadArg {
+                    payloads.push(TrackedArg {
                         flag: flag.to_string(),
                         value_index: i,
                     });
@@ -141,11 +144,19 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl header flag missing value"));
                 }
+                headers.push(TrackedArg {
+                    flag: arg.clone(),
+                    value_index: i + 1,
+                });
                 i += 2;
                 continue;
             }
 
             if arg.starts_with("--header=") {
+                headers.push(TrackedArg {
+                    flag: "--header".to_string(),
+                    value_index: i,
+                });
                 i += 1;
                 continue;
             }
@@ -205,14 +216,21 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         ));
     };
 
-    let sink_checks = payloads
+    let mut sink_checks: Vec<SinkCheck> = payloads
         .into_iter()
         .map(|payload| SinkCheck {
             argument_name: payload.flag,
             sink: sink.clone(),
+            channel: SinkChannel::Body,
             value_refs: vec![ValueRef(format!("argv:{}", payload.value_index))],
         })
         .collect();
+    sink_checks.extend(headers.into_iter().map(|header| SinkCheck {
+        argument_name: header.flag,
+        sink: sink.clone(),
+        channel: SinkChannel::Header,
+        value_refs: vec![ValueRef(format!("argv:{}", header.value_index))],
+    }));
 
     Some(known_outcome(CommandSummary {
         required_capabilities: vec![Capability {

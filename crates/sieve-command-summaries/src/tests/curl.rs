@@ -1,6 +1,8 @@
 use super::argv;
 use crate::summarize_argv;
-use sieve_types::{Action, Capability, CommandKnowledge, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{
+    Action, Capability, CommandKnowledge, Resource, SinkChannel, SinkCheck, SinkKey, ValueRef,
+};
 
 #[test]
 fn curl_post_url_requires_net_write_no_payload_sink_checks() {
@@ -38,6 +40,7 @@ fn curl_post_with_payload_extracts_sink_check() {
         summary.sink_checks[0].sink,
         SinkKey("https://api.example.com/v1/upload".to_string())
     );
+    assert_eq!(summary.sink_checks[0].channel, SinkChannel::Body);
     assert_eq!(
         summary.sink_checks[0].value_refs,
         vec![ValueRef("argv:5".to_string())]
@@ -82,6 +85,29 @@ fn curl_put_with_payload_extracts_sink_check() {
     assert_eq!(
         summary.sink_checks[0].sink,
         SinkKey("https://api.example.com/v1/upload".to_string())
+    );
+    assert_eq!(summary.sink_checks[0].channel, SinkChannel::Body);
+}
+
+#[test]
+fn curl_header_extracts_header_sink_check() {
+    let out = summarize_argv(&argv(&[
+        "curl",
+        "-X",
+        "POST",
+        "https://api.example.com/v1/upload",
+        "-H",
+        "Authorization: Bearer secret",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(summary.sink_checks.len(), 1);
+    assert_eq!(summary.sink_checks[0].argument_name, "-H");
+    assert_eq!(summary.sink_checks[0].channel, SinkChannel::Header);
+    assert_eq!(
+        summary.sink_checks[0].value_refs,
+        vec![ValueRef("argv:5".to_string())]
     );
 }
 

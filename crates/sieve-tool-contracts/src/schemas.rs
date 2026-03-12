@@ -203,8 +203,12 @@ fn declassify_args_schema() -> Value {
                 "type": "string",
                 "description": "absolute URL sink key"
             },
+            "channel": {
+                "type": "string",
+                "enum": ["body", "header", "query", "path", "cookie"]
+            },
             "reason": {"type": ["string", "null"]}
         },
-        "required": ["value_ref", "sink"]
+        "required": ["value_ref", "sink", "channel"]
     })
 }

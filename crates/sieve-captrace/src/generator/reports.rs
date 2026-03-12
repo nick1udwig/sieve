@@ -162,6 +162,10 @@ pub fn render_rust_snippet(command: &str, variants: &[GeneratedVariantDefinition
                     "                        sink: SinkKey({}.to_string()),\n",
                     rust_string_literal(&check.sink.0)
                 ));
+                out.push_str(&format!(
+                    "                        channel: SinkChannel::{:?},\n",
+                    check.channel
+                ));
                 out.push_str("                        value_refs: vec![\n");
                 for value_ref in &check.value_refs {
                     out.push_str(&format!(

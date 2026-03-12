@@ -1,4 +1,5 @@
 use super::*;
+use sieve_types::{CapacityType, SinkChannel, SinkPermission};
 
 #[tokio::test]
 async fn orchestrate_shell_passes_runtime_context_to_policy() {
@@ -109,7 +110,10 @@ async fn orchestrate_shell_passes_runtime_context_to_policy() {
         .allowed_sinks_by_value
         .get(&ValueRef("v_payload".to_string()))
         .expect("payload sink permissions");
-    assert!(sinks.contains(&SinkKey("https://example.com/path".to_string())));
+    assert!(sinks.contains(&SinkPermission {
+        sink: SinkKey("https://example.com/path".to_string()),
+        channel: SinkChannel::Body,
+    }));
 }
 
 #[tokio::test]
@@ -154,4 +158,96 @@ async fn orchestrate_shell_executes_mainline_with_segment_report() {
     assert_eq!(request.cwd, "/tmp");
     assert_eq!(request.script, "echo ok");
     assert_eq!(request.command_segments, segments);
+}
+
+#[tokio::test]
+async fn orchestrate_shell_marks_trusted_string_control_as_untrusted() {
+    let segments = vec![CommandSegment {
+        argv: vec!["echo".to_string(), "ok".to_string()],
+        operator_before: None,
+    }];
+    let approval_bus = Arc::new(InProcessApprovalBus::new());
+    let event_log = Arc::new(VecEventLog::default());
+    let policy = Arc::new(CapturingPolicy::new(PolicyDecision {
+        kind: PolicyDecisionKind::Allow,
+        reason: "allow".to_string(),
+        blocked_rule_id: None,
+    }));
+
+    let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
+        shell: Arc::new(StubShell {
+            analysis: ShellAnalysis {
+                knowledge: CommandKnowledge::Known,
+                segments,
+                unsupported_constructs: Vec::new(),
+            },
+        }),
+        summaries: Arc::new(StubSummaries {
+            outcome: SummaryOutcome {
+                knowledge: CommandKnowledge::Known,
+                summary: Some(stub_summary()),
+                reason: None,
+            },
+        }),
+        policy: policy.clone(),
+        quarantine: Arc::new(StubQuarantine {
+            report: QuarantineReport {
+                run_id: RunId("run-trusted-string-control".to_string()),
+                trace_path: "/tmp/sieve/trace".to_string(),
+                stdout_path: None,
+                stderr_path: None,
+                attempted_capabilities: Vec::new(),
+                exit_code: Some(0),
+            },
+        }),
+        mainline: Arc::new(StubMainline),
+        planner: Arc::new(StubPlanner {
+            config: LlmModelConfig {
+                provider: LlmProvider::OpenAi,
+                model: "gpt-test".to_string(),
+                api_base: None,
+            },
+        }),
+        automation: None,
+        approval_bus,
+        event_log,
+        clock: Arc::new(DeterministicClock::new(1000)),
+    }));
+
+    runtime
+        .upsert_value_label(
+            ValueRef("v_control_string".to_string()),
+            ValueLabel {
+                integrity: Integrity::Trusted,
+                provenance: BTreeSet::from([Source::User]),
+                allowed_sinks: BTreeSet::new(),
+                capacity_type: CapacityType::TrustedString,
+            },
+        )
+        .expect("insert control value label");
+
+    let disposition = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-trusted-string-control".to_string()),
+            cwd: "/tmp".to_string(),
+            script: "echo ok".to_string(),
+            control_value_refs: BTreeSet::from([ValueRef("v_control_string".to_string())]),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+    match disposition {
+        RuntimeDisposition::ExecuteMainline(report) => {
+            assert_eq!(report.run_id, RunId("run-trusted-string-control".to_string()));
+        }
+        other => panic!("expected mainline execution, got {other:?}"),
+    }
+
+    let captured = policy.captured_input();
+    assert_eq!(
+        captured.runtime_context.control.integrity,
+        Integrity::Untrusted
+    );
 }

@@ -117,7 +117,7 @@ fn tool_description(tool_name: &str) -> &'static str {
         }
         "bash" => "Run a cataloged shell command through runtime policy gates.",
         "endorse" => "Raise integrity of a labeled value_ref after explicit approval.",
-        "declassify" => "Allow a labeled value_ref to flow to one exact sink after explicit approval.",
+        "declassify" => "Create a derived release value_ref authorized for one exact sink and channel after explicit approval.",
         _ => "Planner tool",
     }
 }

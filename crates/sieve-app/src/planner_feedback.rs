@@ -5,6 +5,7 @@ use crate::planner_progress::{
 use crate::render_refs::read_artifact_as_string;
 use crate::response_style::extract_plain_urls_from_text;
 use sieve_runtime::{MainlineArtifactKind, PlannerToolResult, RuntimeDisposition};
+use sieve_types::{SinkChannel, ValueRef};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -125,6 +126,57 @@ pub(crate) fn planner_policy_feedback(tool_results: &[PlannerToolResult]) -> Opt
     Some(lines.join("\n"))
 }
 
+fn sink_channel_name(channel: SinkChannel) -> &'static str {
+    match channel {
+        SinkChannel::Body => "body",
+        SinkChannel::Header => "header",
+        SinkChannel::Query => "query",
+        SinkChannel::Path => "path",
+        SinkChannel::Cookie => "cookie",
+    }
+}
+
+pub(crate) fn planner_explicit_tool_feedback(tool_results: &[PlannerToolResult]) -> Option<String> {
+    for result in tool_results.iter().rev().take(8) {
+        match result {
+            PlannerToolResult::Declassify {
+                request,
+                transition: Some(transition),
+                ..
+            } => {
+                let channel = sink_channel_name(request.channel);
+                let existed = if transition.release_value_existed {
+                    "existing"
+                } else {
+                    "new"
+                };
+                return Some(format!(
+                    "Explicit tool feedback (trusted): declassify minted {existed} release value_ref `{}` for source `{}` to sink `{}` channel `{channel}`. Use only `{}` for that egress. Do not reuse source `{}` for the sink.",
+                    transition.release_value_ref.0,
+                    request.value_ref.0,
+                    request.sink.0,
+                    transition.release_value_ref.0,
+                    request.value_ref.0,
+                ));
+            }
+            PlannerToolResult::Declassify {
+                request,
+                transition: None,
+                failure_reason: Some(reason),
+            } => {
+                let channel = sink_channel_name(request.channel);
+                return Some(format!(
+                    "Explicit tool feedback (trusted): declassify for source `{}` to sink `{}` channel `{channel}` failed: {reason}. Do not assume any release value_ref exists.",
+                    request.value_ref.0,
+                    request.sink.0,
+                ));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn is_sieve_lcm_query_command(command: &str) -> bool {
     let mut parts = command.split_whitespace();
     matches!(
@@ -146,7 +198,39 @@ pub(crate) fn trim_for_prompt(value: &str, max_chars: usize) -> String {
     out
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct PlannerMemoryContext {
+    pub feedback: Option<String>,
+    pub control_value_refs: BTreeSet<ValueRef>,
+}
+
+#[derive(Debug, Default)]
+struct PlannerMemoryObservation {
+    trusted_excerpts: Vec<String>,
+    untrusted_refs: Vec<ValueRef>,
+}
+
+pub(crate) async fn planner_memory_context(
+    tool_results: &[PlannerToolResult],
+) -> PlannerMemoryContext {
+    let Some(observation) = latest_memory_observation(tool_results).await else {
+        return PlannerMemoryContext::default();
+    };
+    let feedback = planner_memory_feedback_from_observation(&observation);
+    let control_value_refs = observation.untrusted_refs.into_iter().collect();
+    PlannerMemoryContext {
+        feedback,
+        control_value_refs,
+    }
+}
+
 pub(crate) async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) -> Option<String> {
+    planner_memory_context(tool_results).await.feedback
+}
+
+async fn latest_memory_observation(
+    tool_results: &[PlannerToolResult],
+) -> Option<PlannerMemoryObservation> {
     for result in tool_results.iter().rev().take(8) {
         let PlannerToolResult::Bash {
             command,
@@ -187,7 +271,7 @@ pub(crate) async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) 
                 items
                     .iter()
                     .filter_map(|item| item.get("ref").and_then(serde_json::Value::as_str))
-                    .map(str::to_string)
+                    .map(|value| ValueRef(value.to_string()))
                     .take(5)
                     .collect::<Vec<_>>()
             })
@@ -197,18 +281,31 @@ pub(crate) async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) 
             continue;
         }
 
-        let mut lines = Vec::new();
-        lines.push(
-            "Memory query feedback (trusted): use trusted excerpts below as evidence; untrusted refs are opaque."
-                .to_string(),
-        );
-        for excerpt in trusted_excerpts {
-            lines.push(format!("- trusted excerpt: {excerpt}"));
-        }
-        for reference in untrusted_refs {
-            lines.push(format!("- untrusted ref: {reference}"));
-        }
-        return Some(lines.join("\n"));
+        return Some(PlannerMemoryObservation {
+            trusted_excerpts,
+            untrusted_refs,
+        });
     }
     None
+}
+
+fn planner_memory_feedback_from_observation(
+    observation: &PlannerMemoryObservation,
+) -> Option<String> {
+    if observation.trusted_excerpts.is_empty() && observation.untrusted_refs.is_empty() {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+    lines.push(
+        "Memory query feedback (trusted): use trusted excerpts below as evidence; untrusted refs are opaque."
+            .to_string(),
+    );
+    for excerpt in &observation.trusted_excerpts {
+        lines.push(format!("- trusted excerpt: {excerpt}"));
+    }
+    for reference in &observation.untrusted_refs {
+        lines.push(format!("- untrusted ref: {}", reference.0));
+    }
+    Some(lines.join("\n"))
 }

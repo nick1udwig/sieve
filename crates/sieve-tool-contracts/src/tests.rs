@@ -2,7 +2,7 @@ use super::*;
 use serde_json::{json, Value};
 use sieve_types::{
     AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, DeclassifyRequest,
-    EndorseRequest, Integrity, SinkKey, ToolContractErrorCode, ValueRef,
+    EndorseRequest, Integrity, SinkChannel, SinkKey, ToolContractErrorCode, ValueRef,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -88,6 +88,7 @@ fn validate_declassify_success() {
         &json!({
             "value_ref": "v456",
             "sink": "https://api.example.com/v1/upload",
+            "channel": "body",
             "reason": null
         }),
     )
@@ -97,6 +98,7 @@ fn validate_declassify_success() {
         TypedCall::Declassify(DeclassifyRequest {
             value_ref: ValueRef("v456".to_string()),
             sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+            channel: SinkChannel::Body,
             reason: None,
         })
     );
@@ -108,12 +110,28 @@ fn validate_declassify_rejects_invalid_sink() {
         "declassify",
         &json!({
             "value_ref": "v456",
-            "sink": "/tmp/local-file"
+            "sink": "/tmp/local-file",
+            "channel": "body"
         }),
     )
     .expect_err("invalid sink");
     assert_eq!(err.code, ToolContractErrorCode::InvalidValue);
     assert_eq!(err.argument_path, "/sink");
+}
+
+#[test]
+fn validate_declassify_rejects_invalid_channel() {
+    let err = validate(
+        "declassify",
+        &json!({
+            "value_ref": "v456",
+            "sink": "https://api.example.com/v1/upload",
+            "channel": "footer"
+        }),
+    )
+    .expect_err("invalid channel");
+    assert_eq!(err.code, ToolContractErrorCode::InvalidEnumVariant);
+    assert_eq!(err.argument_path, "/channel");
 }
 
 #[test]

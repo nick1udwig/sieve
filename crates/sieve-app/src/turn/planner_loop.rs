@@ -11,7 +11,9 @@ use crate::logging::{
     append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
     FanoutRuntimeEventLog,
 };
-use crate::planner_feedback::{planner_memory_feedback, planner_policy_feedback};
+use crate::planner_feedback::{
+    planner_explicit_tool_feedback, planner_memory_context, planner_policy_feedback,
+};
 use crate::planner_progress::{
     build_guidance_prompt, guidance_continue_decision, has_repeated_bash_outcome,
     progress_contract_override_signal,
@@ -106,15 +108,20 @@ pub(super) async fn generate_assistant_message(
         while planner_steps_taken < planner_step_limit {
             let step_number = planner_steps_taken + 1;
             let policy_feedback = planner_policy_feedback(&aggregated_result.tool_results);
-            let memory_feedback = planner_memory_feedback(&aggregated_result.tool_results).await;
-            let planner_turn_user_message = match (policy_feedback, memory_feedback) {
-                (Some(policy), Some(memory)) => {
-                    format!("{planner_user_message}\n\n{policy}\n\n{memory}")
-                }
-                (Some(policy), None) => format!("{planner_user_message}\n\n{policy}"),
-                (None, Some(memory)) => format!("{planner_user_message}\n\n{memory}"),
-                (None, None) => planner_user_message.clone(),
-            };
+            let explicit_tool_feedback =
+                planner_explicit_tool_feedback(&aggregated_result.tool_results);
+            let memory_context = planner_memory_context(&aggregated_result.tool_results).await;
+            let mut planner_turn_parts = vec![planner_user_message.clone()];
+            if let Some(policy) = policy_feedback {
+                planner_turn_parts.push(policy);
+            }
+            if let Some(explicit) = explicit_tool_feedback {
+                planner_turn_parts.push(explicit);
+            }
+            if let Some(memory) = memory_context.feedback {
+                planner_turn_parts.push(memory);
+            }
+            let planner_turn_user_message = planner_turn_parts.join("\n\n");
             let has_known_value_refs = runtime.has_known_value_refs()?;
             let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
                 &cfg.allowed_tools,
@@ -138,7 +145,7 @@ pub(super) async fn generate_assistant_message(
                     browser_sessions,
                     previous_events: event_log.snapshot(),
                     guidance: planner_guidance.clone(),
-                    control_value_refs: BTreeSet::new(),
+                    control_value_refs: memory_context.control_value_refs,
                     control_endorsed_by: None,
                     unknown_mode: cfg.unknown_mode,
                     uncertain_mode: cfg.uncertain_mode,

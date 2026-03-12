@@ -2,8 +2,9 @@ use crate::canonicalize_sink_key;
 use crate::config::{DenyRuleDecision, PolicyConfig, ViolationMode};
 use crate::normalize::{normalize_capability_scope, normalize_config};
 use sieve_types::{
-    Action, Capability, CommandKnowledge, Integrity, PolicyDecision, PolicyDecisionKind,
-    PrecheckInput, RuntimePolicyContext, UncertainMode, UnknownMode, ValueRef,
+    Action, CapacityType, Capability, CommandKnowledge, Integrity, PolicyDecision,
+    PolicyDecisionKind, PrecheckInput, RuntimePolicyContext, SinkChannel, UncertainMode,
+    UnknownMode, ValueRef,
 };
 use thiserror::Error;
 
@@ -112,11 +113,28 @@ impl PolicyEngine for TomlPolicyEngine {
             let sink_canonical =
                 canonicalize_sink_key(&check.sink.0).unwrap_or_else(|_| check.sink.0.clone());
             for value_ref in &check.value_refs {
-                if !self.value_allows_sink(value_ref, &sink_canonical, &input.runtime_context) {
+                if self.runtime_value_requires_typed_extraction(value_ref, &input.runtime_context) {
                     return self.policy_violation_decision(
                         format!(
-                            "value {} cannot flow to sink {} for arg {}",
-                            value_ref.0, sink_canonical, check.argument_name
+                            "trusted_string value {} requires typed extraction before sink flow",
+                            value_ref.0
+                        ),
+                        "sink-capacity-denied",
+                    );
+                }
+                if !self.value_allows_sink(
+                    value_ref,
+                    &sink_canonical,
+                    check.channel,
+                    &input.runtime_context,
+                ) {
+                    return self.policy_violation_decision(
+                        format!(
+                            "value {} cannot flow to sink {} channel {} for arg {}",
+                            value_ref.0,
+                            sink_canonical,
+                            format!("{:?}", check.channel).to_lowercase(),
+                            check.argument_name
                         ),
                         "sink-flow-denied",
                     );
@@ -213,16 +231,18 @@ impl TomlPolicyEngine {
         &self,
         value_ref: &ValueRef,
         sink: &str,
+        channel: SinkChannel,
         runtime_context: &RuntimePolicyContext,
     ) -> bool {
-        self.runtime_value_allows_sink(value_ref, sink, runtime_context)
-            || self.config_value_allows_sink(value_ref, sink)
+        self.runtime_value_allows_sink(value_ref, sink, channel, runtime_context)
+            || self.config_value_allows_sink(value_ref, sink, channel)
     }
 
     fn runtime_value_allows_sink(
         &self,
         value_ref: &ValueRef,
         sink: &str,
+        channel: SinkChannel,
         runtime_context: &RuntimePolicyContext,
     ) -> bool {
         runtime_context
@@ -231,18 +251,51 @@ impl TomlPolicyEngine {
             .get(value_ref)
             .is_some_and(|sinks| {
                 sinks.iter().any(|allowed_sink| {
-                    canonicalize_sink_key(&allowed_sink.0)
-                        .unwrap_or_else(|_| allowed_sink.0.clone())
-                        == sink
+                    allowed_sink.channel == channel
+                        && canonicalize_sink_key(&allowed_sink.sink.0)
+                            .unwrap_or_else(|_| allowed_sink.sink.0.clone())
+                            == sink
                 })
             })
+            || runtime_context
+                .sink_permissions
+                .released_sinks_by_source_value
+                .get(value_ref)
+                .is_some_and(|sinks| {
+                    sinks.iter().any(|allowed_sink| {
+                        allowed_sink.channel == channel
+                            && canonicalize_sink_key(&allowed_sink.sink.0)
+                                .unwrap_or_else(|_| allowed_sink.sink.0.clone())
+                                == sink
+                    })
+                })
     }
 
-    fn config_value_allows_sink(&self, value_ref: &ValueRef, sink: &str) -> bool {
+    fn config_value_allows_sink(
+        &self,
+        value_ref: &ValueRef,
+        sink: &str,
+        channel: SinkChannel,
+    ) -> bool {
+        if channel != SinkChannel::Body {
+            return false;
+        }
         self.config
             .value_sinks
             .get(&value_ref.0)
             .is_some_and(|sinks| sinks.contains(sink))
+    }
+
+    fn runtime_value_requires_typed_extraction(
+        &self,
+        value_ref: &ValueRef,
+        runtime_context: &RuntimePolicyContext,
+    ) -> bool {
+        runtime_context
+            .sink_permissions
+            .capacity_type_by_value
+            .get(value_ref)
+            .is_some_and(|capacity_type| *capacity_type == CapacityType::TrustedString)
     }
 
     fn policy_violation_decision(&self, reason: String, rule_id: &str) -> PolicyDecision {

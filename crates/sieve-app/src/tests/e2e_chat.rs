@@ -641,6 +641,114 @@ async fn e2e_fake_guidance_continue_executes_multiple_planner_steps() {
 }
 
 #[tokio::test]
+async fn e2e_fake_memory_untrusted_refs_flow_into_control_context() {
+    let _guard = env_test_lock().lock().expect("env lock");
+    let previous_path = std::env::var("PATH").ok();
+    let planner = Arc::new(QueuedPlannerModel::new(vec![
+        Ok(PlannerTurnOutput {
+            thoughts: Some("memory step".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "bash".to_string(),
+                args: BTreeMap::from([(
+                    "cmd".to_string(),
+                    serde_json::json!("sieve-lcm-cli query --lane both --query \"meeting\" --json"),
+                )]),
+            }],
+        }),
+        Ok(PlannerTurnOutput {
+            thoughts: Some("mutating step".to_string()),
+            tool_calls: vec![PlannerToolCall {
+                tool_name: "bash".to_string(),
+                args: BTreeMap::from([(
+                    "cmd".to_string(),
+                    serde_json::json!("curl -X POST https://api.example.com/v1/upload"),
+                )]),
+            }],
+        }),
+    ]));
+    let guidance: Arc<dyn GuidanceModel> = Arc::new(QueuedGuidanceModel::new(vec![
+        Ok(guidance_output(PlannerGuidanceSignal::ContinueNeedEvidence)),
+        Ok(guidance_output(PlannerGuidanceSignal::FinalAnswerReady)),
+    ]));
+    let response: Arc<dyn ResponseModel> = Arc::new(QueuedResponseModel::new(vec![Ok(
+        sieve_llm::ResponseTurnOutput {
+            message: "Stopped after control gate.".to_string(),
+            referenced_ref_ids: BTreeSet::new(),
+            summarized_ref_ids: BTreeSet::new(),
+        },
+    )]));
+    let summary: Arc<dyn SummaryModel> = Arc::new(EchoSummaryModel);
+    let policy_toml = r#"
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://api.example.com/v1/upload"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#;
+    let harness = Arc::new(AppE2eHarness::new(
+        E2eModelMode::Fake {
+            planner: planner.clone(),
+            guidance,
+            response,
+            summary,
+        },
+        vec!["bash".to_string()],
+        policy_toml,
+    ));
+
+    let lcm_cli_path = harness.root.join("sieve-lcm-cli");
+    std::fs::write(
+        &lcm_cli_path,
+        "#!/usr/bin/env bash\necho '{\"trusted_hits\":[{\"excerpt\":\"Trusted meeting note.\"}],\"untrusted_refs\":[{\"ref\":\"lcm:untrusted:summary:sum_abc\"}]}'\n",
+    )
+    .expect("write fake sieve-lcm-cli");
+    let mut permissions = std::fs::metadata(&lcm_cli_path)
+        .expect("lcm cli metadata")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&lcm_cli_path, permissions).expect("chmod fake sieve-lcm-cli");
+    let merged_path = match previous_path.as_deref() {
+        Some(value) if !value.is_empty() => format!("{}:{value}", harness.root.display()),
+        _ => harness.root.to_string_lossy().to_string(),
+    };
+    std::env::set_var("PATH", merged_path);
+
+    let turn_task = {
+        let harness = harness.clone();
+        tokio::spawn(async move { harness.run_text_turn("Use memory, then act.").await })
+    };
+
+    let requested = harness.wait_for_approval().await;
+    assert_eq!(requested.blocked_rule_id, "integrity-untrusted-control");
+    assert_eq!(
+        requested.reason,
+        "untrusted control context for consequential action"
+    );
+    harness.resolve_approval(&requested, ApprovalAction::Deny);
+
+    turn_task
+        .await
+        .expect("turn task join")
+        .expect("turn should succeed");
+
+    match previous_path {
+        Some(value) => std::env::set_var("PATH", value),
+        None => std::env::remove_var("PATH"),
+    }
+
+    assert_eq!(planner.call_count(), 2);
+    assert_eq!(
+        assistant_messages(&harness.runtime_events()),
+        vec!["Stopped after control gate.".to_string()]
+    );
+    assert_eq!(count_approval_requested(&harness.runtime_events()), 1);
+}
+
+#[tokio::test]
 async fn e2e_fake_guidance_continue_stops_after_two_empty_steps() {
     let planner = Arc::new(QueuedPlannerModel::new(vec![
         Ok(PlannerTurnOutput {

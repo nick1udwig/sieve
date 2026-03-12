@@ -1,4 +1,6 @@
-use crate::{ApprovalRequestId, Integrity, SinkKey, ValueRef};
+use crate::{
+    ApprovalRequestId, CapacityType, Integrity, SinkChannel, SinkKey, SinkPermission, ValueRef,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -61,7 +63,9 @@ pub struct ControlContext {
 /// Per-value sink permission context used by confidentiality checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SinkPermissionContext {
-    pub allowed_sinks_by_value: BTreeMap<ValueRef, BTreeSet<SinkKey>>,
+    pub allowed_sinks_by_value: BTreeMap<ValueRef, BTreeSet<SinkPermission>>,
+    pub released_sinks_by_source_value: BTreeMap<ValueRef, BTreeSet<SinkPermission>>,
+    pub capacity_type_by_value: BTreeMap<ValueRef, CapacityType>,
 }
 
 /// Runtime context consumed by policy evaluation.
@@ -84,8 +88,10 @@ pub struct EndorseStateTransition {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeclassifyStateTransition {
     pub value_ref: ValueRef,
+    pub release_value_ref: ValueRef,
     pub sink: SinkKey,
-    pub sink_was_already_allowed: bool,
+    pub channel: SinkChannel,
+    pub release_value_existed: bool,
     pub approved_by: Option<ApprovalRequestId>,
 }
 
@@ -135,10 +141,25 @@ mod tests {
         control_refs.insert(ValueRef("v_control".to_string()));
 
         let mut allowed_sinks = BTreeSet::new();
-        allowed_sinks.insert(SinkKey("https://api.example.com/v1/upload".to_string()));
+        allowed_sinks.insert(SinkPermission {
+            sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+            channel: SinkChannel::Body,
+        });
 
         let mut sink_permissions = BTreeMap::new();
         sink_permissions.insert(ValueRef("v_payload".to_string()), allowed_sinks);
+        let mut released_sinks = BTreeMap::new();
+        released_sinks.insert(
+            ValueRef("v_source".to_string()),
+            BTreeSet::from([SinkPermission {
+                sink: SinkKey("https://api.example.com/v1/upload".to_string()),
+                channel: SinkChannel::Body,
+            }]),
+        );
+        let capacity_type_by_value = BTreeMap::from([
+            (ValueRef("v_payload".to_string()), CapacityType::Enum),
+            (ValueRef("v_source".to_string()), CapacityType::Enum),
+        ]);
 
         let context = RuntimePolicyContext {
             control: ControlContext {
@@ -148,6 +169,8 @@ mod tests {
             },
             sink_permissions: SinkPermissionContext {
                 allowed_sinks_by_value: sink_permissions,
+                released_sinks_by_source_value: released_sinks,
+                capacity_type_by_value,
             },
         };
 
@@ -166,8 +189,10 @@ mod tests {
         });
         let declassify = ExplicitToolStateTransition::Declassify(DeclassifyStateTransition {
             value_ref: ValueRef("v_payload".to_string()),
+            release_value_ref: ValueRef("v_release".to_string()),
             sink: SinkKey("https://api.example.com/v1/upload".to_string()),
-            sink_was_already_allowed: false,
+            channel: SinkChannel::Body,
+            release_value_existed: false,
             approved_by: Some(ApprovalRequestId("apr_201".to_string())),
         });
 

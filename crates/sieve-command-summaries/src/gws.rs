@@ -1,4 +1,6 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{
+    Action, Capability, CommandSummary, Resource, SinkChannel, SinkCheck, SinkKey, ValueRef,
+};
 
 use crate::{is_named_command, known_outcome, strip_sudo, unknown_outcome, unknown_with_flags};
 
@@ -430,6 +432,7 @@ fn net_sink_check(flag: FlagArg, sink: &str) -> SinkCheck {
     SinkCheck {
         argument_name: flag.argument_name,
         sink: SinkKey(sink.to_string()),
+        channel: SinkChannel::Body,
         value_refs: vec![ValueRef(format!("argv:{}", flag.value_index))],
     }
 }
