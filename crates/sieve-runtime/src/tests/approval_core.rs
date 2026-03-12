@@ -6,6 +6,8 @@ fn approval_requested_event_schema_shape_stable() {
         schema_version: 1,
         request_id: ApprovalRequestId("approval-1".to_string()),
         run_id: RunId("run-1".to_string()),
+        prompt_kind: sieve_types::ApprovalPromptKind::Command,
+        title: None,
         command_segments: vec![CommandSegment {
             argv: vec!["rm".to_string(), "-rf".to_string(), "tmp".to_string()],
             operator_before: None,
@@ -17,6 +19,9 @@ fn approval_requested_event_schema_shape_stable() {
         }],
         blocked_rule_id: "rule-1".to_string(),
         reason: "requires approval".to_string(),
+        preview: None,
+        reply_to_session_id: None,
+        allow_approve_always: true,
         created_at_ms: 1000,
     };
     let as_json = serde_json::to_value(&event).expect("serialize");
@@ -25,15 +30,20 @@ fn approval_requested_event_schema_shape_stable() {
         "schema_version",
         "request_id",
         "run_id",
+        "prompt_kind",
+        "title",
         "command_segments",
         "inferred_capabilities",
         "blocked_rule_id",
         "reason",
+        "preview",
+        "reply_to_session_id",
+        "allow_approve_always",
         "created_at_ms",
     ] {
         assert!(obj.contains_key(key), "missing key: {key}");
     }
-    assert_eq!(obj.len(), 8);
+    assert_eq!(obj.len(), 13);
     assert_eq!(obj.get("schema_version"), Some(&Value::from(1)));
     assert_eq!(obj.get("request_id"), Some(&Value::from("approval-1")));
     assert_eq!(obj.get("run_id"), Some(&Value::from("run-1")));

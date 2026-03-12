@@ -1,5 +1,6 @@
 use crate::config::AppConfig;
-use sieve_types::RunId;
+use sieve_runtime::CodexTool;
+use sieve_types::{CodexSandboxMode, CodexSessionRequest, RunId};
 use std::path::{Path, PathBuf};
 use tokio::process::Command as TokioCommand;
 
@@ -16,17 +17,15 @@ fn command_error_from_output(context: &str, output: &std::process::Output) -> St
     }
 }
 
-pub(crate) fn codex_image_ocr_args(input_path: &Path) -> Vec<std::ffi::OsString> {
-    vec![
-        "exec".into(),
-        "--sandbox".into(),
-        "read-only".into(),
-        "--ephemeral".into(),
-        "--image".into(),
-        input_path.as_os_str().to_owned(),
-        "--".into(),
-        CODEX_IMAGE_OCR_PROMPT.into(),
-    ]
+pub(crate) fn codex_image_ocr_task_request(input_path: &Path) -> CodexSessionRequest {
+    CodexSessionRequest {
+        session_id: None,
+        instruction: CODEX_IMAGE_OCR_PROMPT.to_string(),
+        sandbox: CodexSandboxMode::ReadOnly,
+        cwd: None,
+        writable_roots: Vec::new(),
+        local_images: vec![input_path.to_string_lossy().to_string()],
+    }
 }
 
 pub(crate) fn st_audio_stt_args(input_path: &Path) -> Vec<std::ffi::OsString> {
@@ -126,6 +125,7 @@ pub(crate) async fn transcribe_audio_prompt(
 }
 
 pub(crate) async fn extract_image_prompt(
+    codex: &dyn CodexTool,
     bot_token: &str,
     sieve_home: &Path,
     run_id: &RunId,
@@ -144,18 +144,16 @@ pub(crate) async fn extract_image_prompt(
     let input_path = media_dir.join(format!("image-input.{ext}"));
     download_telegram_file(bot_token, &file_path, &input_path).await?;
 
-    let mut command = TokioCommand::new("codex");
-    for arg in codex_image_ocr_args(&input_path) {
-        command.arg(arg);
-    }
-    let output = command
-        .output()
-        .await
-        .map_err(|err| format!("image OCR command spawn failed: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error_from_output("image OCR command", &output));
-    }
-    let extracted = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let result = codex
+        .run_task(codex_image_ocr_task_request(&input_path))
+        .await?;
+    let extracted = result
+        .result
+        .user_visible
+        .clone()
+        .unwrap_or(result.result.summary)
+        .trim()
+        .to_string();
     if extracted.is_empty() {
         return Err("image OCR command produced empty output".to_string());
     }

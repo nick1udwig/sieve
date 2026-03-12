@@ -31,6 +31,11 @@ Owned crate: `crates/sieve-command-summaries`
   - supports `--image` in both read-only and workspace-write modes.
 - Added codex-specific unit tests (crate total now 52 tests).
 
+## 2026-03-09 update
+
+- Removed `codex exec` command-summary/catalog guidance from this crate.
+- Sieve now routes Codex work through native `codex_exec` and `codex_session` tools backed by the Codex app-server instead of shelling out through `bash`.
+
 ## Implemented
 
 - Added pinned Codex snapshot dependency:

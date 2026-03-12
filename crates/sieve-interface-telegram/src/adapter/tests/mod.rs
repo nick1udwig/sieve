@@ -22,10 +22,11 @@ pub(super) use sieve_runtime::{
 pub(super) use sieve_shell::BasicShellAnalyzer;
 #[allow(unused_imports)]
 pub(super) use sieve_types::{
-    Action, ApprovalRequestId, AssistantMessageEvent, Capability, CommandSegment, LlmModelConfig,
-    LlmProvider, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, PolicyDecision,
-    PolicyDecisionKind, PolicyEvaluatedEvent, QuarantineCompletedEvent, QuarantineReport,
-    QuarantineRunRequest, Resource, RunId, UncertainMode, UnixMillis, UnknownMode,
+    Action, ApprovalRequestId, AssistantMessageEvent, Capability, CodexSessionLifecycleStatus,
+    CodexSessionStatusEvent, CommandSegment, LlmModelConfig, LlmProvider, PlannerToolCall,
+    PlannerTurnInput, PlannerTurnOutput, PolicyDecision, PolicyDecisionKind, PolicyEvaluatedEvent,
+    QuarantineCompletedEvent, QuarantineReport, QuarantineRunRequest, Resource, RunId,
+    UncertainMode, UnixMillis, UnknownMode,
 };
 #[allow(unused_imports)]
 pub(super) use std::collections::{BTreeMap, BTreeSet, VecDeque};

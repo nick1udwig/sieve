@@ -24,6 +24,7 @@ pub(crate) struct AppConfig {
     pub(crate) policy_path: PathBuf,
     pub(crate) event_log_path: PathBuf,
     pub(crate) automation_store_path: PathBuf,
+    pub(crate) codex_store_path: PathBuf,
     pub(crate) runtime_cwd: String,
     pub(crate) heartbeat_interval_ms: Option<u64>,
     pub(crate) heartbeat_prompt_override: Option<String>,
@@ -53,13 +54,14 @@ impl AppConfig {
         let event_log_path = runtime_event_log_path(&sieve_home);
         let runtime_cwd = env::var("SIEVE_RUNTIME_CWD").unwrap_or_else(|_| ".".to_string());
         let automation_store_path = automation_store_path(&sieve_home);
+        let codex_store_path = codex_store_path(&sieve_home);
         let heartbeat_interval_ms = parse_optional_duration_env("SIEVE_HEARTBEAT_EVERY")?;
         let heartbeat_prompt_override = optional_non_empty_env("SIEVE_HEARTBEAT_PROMPT");
         let heartbeat_file_path = PathBuf::from(&runtime_cwd).join(DEFAULT_HEARTBEAT_FILE_NAME);
-        let allowed_tools = parse_allowed_tools(
-            &env::var("SIEVE_ALLOWED_TOOLS")
-                .unwrap_or_else(|_| "bash,endorse,declassify".to_string()),
-        );
+        let allowed_tools =
+            parse_allowed_tools(&env::var("SIEVE_ALLOWED_TOOLS").unwrap_or_else(|_| {
+                "bash,codex_exec,codex_session,endorse,declassify".to_string()
+            }));
         if allowed_tools.is_empty() {
             return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
         }
@@ -87,6 +89,7 @@ impl AppConfig {
             event_log_path,
             runtime_cwd,
             automation_store_path,
+            codex_store_path,
             heartbeat_interval_ms,
             heartbeat_prompt_override,
             heartbeat_file_path,
@@ -138,6 +141,10 @@ pub(crate) fn runtime_event_log_path(sieve_home: &Path) -> PathBuf {
 
 pub(crate) fn automation_store_path(sieve_home: &Path) -> PathBuf {
     sieve_home.join("state/automation.json")
+}
+
+pub(crate) fn codex_store_path(sieve_home: &Path) -> PathBuf {
+    sieve_home.join("state/codex.db")
 }
 
 pub(crate) fn approval_allowances_path(sieve_home: &Path) -> PathBuf {

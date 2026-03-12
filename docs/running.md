@@ -37,9 +37,9 @@
      - repo: [`nick1udwig/st`](https://github.com/nick1udwig/st)
      - used for: `st stt`, `st tts`
      - optional: yes
-   - `codex` for Telegram image/photo OCR ingress
+   - `codex` for Codex app-server OCR and delegated coding sessions
      - repo: [`openai/codex`](https://github.com/openai/codex)
-     - used for: `codex exec --sandbox read-only --ephemeral --image ...`
+     - used for: `codex app-server` behind `codex_exec`, `codex_session`, and transient OCR turns
      - optional: yes
    - `sieve-lcm-cli` for LCM memory query/expand/ingest flows
      - repo: [`nick1udwig/sieve-lcm`](https://github.com/nick1udwig/sieve-lcm)
@@ -48,7 +48,12 @@
 5. Install system packages as needed:
    - `ffmpeg` recommended for audio conversion and delivery paths
 
-`.env.example` carries the fuller provider-level matrix (`SIEVE_*_PROVIDER`, `*_API_BASE`, scoped API keys, Codex auth-file overrides, runtime defaults, and Telegram polling config). `sieve-app` auto-loads `.env` from the current working directory when present. Codex auth defaults to `$SIEVE_HOME/state/auth.json`; `cargo run -p sieve-app -- auth path` prints the resolved file path.
+`.env.example` carries the fuller provider-level matrix (`SIEVE_*_PROVIDER`, `*_API_BASE`, scoped API keys, Codex auth-file overrides, runtime defaults, and Telegram polling config).
+`sieve-app` auto-loads `.env` from the current working directory when present.
+Codex auth defaults to `$SIEVE_HOME/state/auth.json`.
+Codex session metadata persists in `$SIEVE_HOME/state/codex.db`.
+See [Codex App Server](./codex-app-server.md) for tool semantics, persistence, approvals, and open follow-ups.
+`cargo run -p sieve-app -- auth path` prints the resolved auth file path.
 
 ### Start The Integrated App
 
@@ -63,6 +68,8 @@ Start long-running mode (stdin + Telegram ingress, no initial prompt):
 ```bash
 cargo run -p sieve-app -- run
 ```
+
+In Telegram, persistent Codex sessions now get one editable status card, and later session-related replies are sent as replies to that card.
 
 One-off smoke:
 
@@ -100,7 +107,7 @@ docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/
 Run long-lived mode:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local run
 ```
 
 If `bubblewrap` quarantine fails under Docker, allow unprivileged user namespaces on the host or add the extra container privileges your runtime requires.
@@ -196,7 +203,7 @@ Telegram voice notes:
 
 Telegram images:
 
-- photo/image input is converted to text by running `codex exec --sandbox read-only --ephemeral --image <path> ...`
+- photo/image input is converted to text through a transient Codex app-server turn with a read-only, no-network sandbox and a local image input
 - this ingress OCR path is treated as trusted user-input provenance
 - OCR done later inside planner `bash` tool flows remains untrusted tool output by default
 - when OCR extraction fails, the app replies with a text error message

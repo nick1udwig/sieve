@@ -5,8 +5,8 @@ mod validate;
 
 use serde::{Deserialize, Serialize};
 use sieve_types::{
-    AutomationRequest, DeclassifyRequest, EndorseRequest, Integrity, ToolContractErrorCode,
-    ToolContractValidationError, TOOL_CONTRACTS_VERSION_V1,
+    AutomationRequest, CodexExecRequest, CodexSessionRequest, DeclassifyRequest, EndorseRequest,
+    Integrity, ToolContractErrorCode, ToolContractValidationError, TOOL_CONTRACTS_VERSION_V1,
 };
 use thiserror::Error;
 
@@ -19,6 +19,8 @@ pub use validate::{validate, validate_at_index};
 pub const TOOL_CONTRACTS_VERSION: u16 = TOOL_CONTRACTS_VERSION_V1;
 pub const TOOL_AUTOMATION: &str = "automation";
 pub const TOOL_BASH: &str = "bash";
+pub const TOOL_CODEX_EXEC: &str = "codex_exec";
+pub const TOOL_CODEX_SESSION: &str = "codex_session";
 pub const TOOL_ENDORSE: &str = "endorse";
 pub const TOOL_DECLASSIFY: &str = "declassify";
 
@@ -26,6 +28,30 @@ pub const TOOL_DECLASSIFY: &str = "declassify";
 #[serde(deny_unknown_fields)]
 pub struct BashArgs {
     pub cmd: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodexExecArgs {
+    pub command: Vec<String>,
+    pub sandbox: String,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub writable_roots: Vec<String>,
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodexSessionArgs {
+    pub session_id: Option<String>,
+    pub instruction: String,
+    pub sandbox: String,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub writable_roots: Vec<String>,
+    #[serde(default)]
+    pub local_images: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +100,8 @@ impl From<ContractIntegrity> for Integrity {
 pub enum TypedCall {
     Automation(AutomationRequest),
     Bash(BashArgs),
+    CodexExec(CodexExecRequest),
+    CodexSession(CodexSessionRequest),
     Endorse(EndorseRequest),
     Declassify(DeclassifyRequest),
 }
@@ -113,7 +141,14 @@ impl ContractError {
 }
 
 pub fn supported_tools() -> &'static [&'static str] {
-    &[TOOL_AUTOMATION, TOOL_BASH, TOOL_ENDORSE, TOOL_DECLASSIFY]
+    &[
+        TOOL_AUTOMATION,
+        TOOL_BASH,
+        TOOL_CODEX_EXEC,
+        TOOL_CODEX_SESSION,
+        TOOL_ENDORSE,
+        TOOL_DECLASSIFY,
+    ]
 }
 
 pub(crate) fn make_error(

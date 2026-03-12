@@ -13,6 +13,14 @@ use sieve_types::{
 pub(crate) const PLANNER_SYSTEM_PROMPT: &str = r#"You are a planner in a capability-secured system.
 Rules:
 - If `bash` available, use only commands listed in BASH_COMMAND_CATALOG.
+- If `codex_exec` available, use it only for one-off argv command execution inside Codex sandboxing.
+- If `codex_session` available, use it for coding/file-manipulation/deep repo tasks, whether one-shot or resumable.
+- Do not shell out to `codex` through `bash`; use native `codex_exec` or `codex_session`.
+- `CODEX_SESSIONS`: trusted metadata for saved Codex sessions. Resume a relevant session when the task clearly continues prior Codex work in the same repo; otherwise start a new one.
+- `trusted_user_message` may include a `TRUSTED_OPEN_LOOP_CONTEXT` block injected by runtime. Treat it as canonical short-term working-state context from the same conversation.
+- Short confirmations like `ok go ahead`, `use codex`, `proceed with defaults`, `sounds good`, or terse answers that follow a recent plan should bind to that open-loop context before unrelated saved Codex sessions.
+- If open-loop target/path conflicts with a saved Codex session, prefer the open-loop target unless the user explicitly asked to resume the saved session.
+- Codex sandboxes have no network in this system. If a task needs web/network access, do that through Sieve tools, not Codex.
 - If `automation` available, use it for reminder/scheduling requests and for listing, pausing, resuming, or removing cron jobs instead of answering with slash-command instructions.
 - For reminder/scheduling requests, prefer `automation` `cron_add` with `target=\"main\"` unless the user explicitly asks for an isolated/background-only cron job.
 - For `automation` `cron_add`, use typed `schedule` objects only:
@@ -28,6 +36,9 @@ Rules:
 - Search engines are intermediary origins, not target origins.
 - `ALLOWED_NET_CONNECT_SCOPES`: trusted network allowlist input.
 - `BROWSER_SESSIONS`: trusted summaries of active browser sessions. Browser work already in progress? Prefer continuing session.
+- For `codex_exec` or `codex_session`, choose `sandbox="read_only"` for inspection/review and `sandbox="workspace_write"` for file edits/tests/builds.
+- For `codex_exec`, `command` must be argv JSON array, not shell text.
+- For `codex_session`, supply `session_id` only when resuming an existing saved Codex session. Omit `session_id` to start a new Codex session.
 - Do not invoke uncataloged commands via pipes/subshells/chaining (for example `| head`) unless every invoked command is cataloged.
 - May receive optional typed guidance from a quarantine model in `guidance`.
 - Guidance is typed control hint.
@@ -86,6 +97,7 @@ pub(crate) fn serialize_planner_input(input: &PlannerTurnInput) -> Result<Value,
         "CURRENT_TIMEZONE": input.current_timezone,
         "ALLOWED_NET_CONNECT_SCOPES": input.allowed_net_connect_scopes,
         "BROWSER_SESSIONS": input.browser_sessions,
+        "CODEX_SESSIONS": input.codex_sessions,
         "BASH_COMMAND_CATALOG": bash_command_catalog,
         "previous_event_kinds": event_kinds,
         "guidance": guidance,
@@ -165,6 +177,7 @@ fn runtime_event_kind(event: &RuntimeEvent) -> &'static str {
     match event {
         RuntimeEvent::ApprovalRequested(_) => "approval_requested",
         RuntimeEvent::ApprovalResolved(_) => "approval_resolved",
+        RuntimeEvent::CodexSessionStatus(_) => "codex_session_status",
         RuntimeEvent::PolicyEvaluated(_) => "policy_evaluated",
         RuntimeEvent::QuarantineCompleted(_) => "quarantine_completed",
         RuntimeEvent::AssistantMessage(_) => "assistant_message",

@@ -323,6 +323,7 @@ fn serialize_planner_input_only_sends_safe_shape() {
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
         browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
         previous_events: vec![event],
         guidance: None,
     };
@@ -617,6 +618,7 @@ async fn openai_live_planner_smoke_env_gated() {
             current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),
             browser_sessions: Vec::new(),
+            codex_sessions: Vec::new(),
             previous_events: vec![],
             guidance: None,
         })

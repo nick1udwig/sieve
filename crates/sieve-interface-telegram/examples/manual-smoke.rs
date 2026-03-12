@@ -47,6 +47,8 @@ fn main() {
         schema_version: 1,
         request_id: ApprovalRequestId("apr_manual_smoke".to_string()),
         run_id: RunId("run_manual_smoke".to_string()),
+        prompt_kind: sieve_types::ApprovalPromptKind::Command,
+        title: None,
         command_segments: vec![CommandSegment {
             argv: vec!["rm".to_string(), "-rf".to_string(), "/tmp/demo".to_string()],
             operator_before: None,
@@ -58,6 +60,9 @@ fn main() {
         }],
         blocked_rule_id: "deny-rm-rf".to_string(),
         reason: "manual-smoke".to_string(),
+        preview: None,
+        reply_to_session_id: None,
+        allow_approve_always: true,
         created_at_ms: 0,
     };
 

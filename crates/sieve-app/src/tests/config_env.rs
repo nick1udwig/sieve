@@ -105,19 +105,21 @@ fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() 
     let configured = vec![
         "bash".to_string(),
         "automation".to_string(),
+        "codex_exec".to_string(),
+        "codex_session".to_string(),
         "endorse".to_string(),
         "declassify".to_string(),
     ];
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, false, false),
+        planner_allowed_tools_for_turn(&configured, false, false, false),
         vec!["bash".to_string()]
     );
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, false, true),
+        planner_allowed_tools_for_turn(&configured, false, true, false),
         vec!["bash".to_string(), "automation".to_string()]
     );
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, true, false),
+        planner_allowed_tools_for_turn(&configured, true, false, false),
         vec![
             "bash".to_string(),
             "endorse".to_string(),
@@ -125,7 +127,7 @@ fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() 
         ]
     );
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, true, true),
+        planner_allowed_tools_for_turn(&configured, true, true, true),
         configured
     );
 }

@@ -13,12 +13,15 @@ pub(crate) fn planner_allowed_tools_for_turn(
     configured_tools: &[String],
     has_known_value_refs: bool,
     automation_available: bool,
+    codex_available: bool,
 ) -> Vec<String> {
     configured_tools
         .iter()
         .filter(|tool| {
             (has_known_value_refs || (tool.as_str() != "endorse" && tool.as_str() != "declassify"))
                 && (automation_available || tool.as_str() != "automation")
+                && (codex_available
+                    || (tool.as_str() != "codex_exec" && tool.as_str() != "codex_session"))
         })
         .cloned()
         .collect()
@@ -409,6 +412,62 @@ fn summarize_tool_result(
                 refs: Vec::new(),
             },
         },
+        PlannerToolResult::CodexExec {
+            request,
+            result,
+            failure_reason,
+        } => {
+            let outcome = match result {
+                Some(result) => format!(
+                    "codex exec exit {} (stdout {}B, stderr {}B)",
+                    result.exit_code,
+                    result.stdout.len(),
+                    result.stderr.len()
+                ),
+                None => "codex exec failed".to_string(),
+            };
+            ResponseToolOutcome {
+                tool_name: "codex_exec".to_string(),
+                outcome,
+                attempted_command: Some(request.command.join(" ")),
+                failure_reason: failure_reason.clone(),
+                refs: Vec::new(),
+            }
+        }
+        PlannerToolResult::CodexSession {
+            request,
+            result,
+            failure_reason,
+        } => {
+            let outcome = match result {
+                Some(result) => format!(
+                    "codex session {} [{}{}]: {}",
+                    result.status.as_str(),
+                    result.session_name,
+                    result
+                        .session_id
+                        .as_ref()
+                        .map(|value| format!(":{value}"))
+                        .unwrap_or_default(),
+                    result.summary
+                ),
+                None => format!(
+                    "codex session failed{}",
+                    request
+                        .session_id
+                        .as_ref()
+                        .map(|value| format!(" ({value})"))
+                        .unwrap_or_default()
+                ),
+            };
+            ResponseToolOutcome {
+                tool_name: "codex_session".to_string(),
+                outcome,
+                attempted_command: None,
+                failure_reason: failure_reason.clone(),
+                refs: Vec::new(),
+            }
+        }
         PlannerToolResult::Endorse {
             request,
             transition,

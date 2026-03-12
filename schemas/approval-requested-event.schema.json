@@ -7,10 +7,12 @@
     "schema_version",
     "request_id",
     "run_id",
+    "prompt_kind",
     "command_segments",
     "inferred_capabilities",
     "blocked_rule_id",
     "reason",
+    "allow_approve_always",
     "created_at_ms"
   ],
   "properties": {
@@ -23,6 +25,13 @@
     },
     "run_id": {
       "type": "string"
+    },
+    "prompt_kind": {
+      "type": "string",
+      "enum": ["command", "file_change"]
+    },
+    "title": {
+      "type": ["string", "null"]
     },
     "command_segments": {
       "type": "array",
@@ -66,6 +75,15 @@
     },
     "reason": {
       "type": "string"
+    },
+    "preview": {
+      "type": ["string", "null"]
+    },
+    "reply_to_session_id": {
+      "type": ["string", "null"]
+    },
+    "allow_approve_always": {
+      "type": "boolean"
     },
     "created_at_ms": {
       "type": "integer",

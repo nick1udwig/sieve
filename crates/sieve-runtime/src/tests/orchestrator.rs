@@ -49,6 +49,7 @@ async fn orchestrate_shell_passes_runtime_context_to_policy() {
             },
         }),
         automation: None,
+        codex: None,
         approval_bus,
         event_log,
         clock: Arc::new(DeterministicClock::new(1000)),

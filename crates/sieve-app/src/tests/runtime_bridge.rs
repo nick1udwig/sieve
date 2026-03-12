@@ -40,6 +40,8 @@ async fn runtime_bridge_submit_approval_resolves_pending_request() {
             schema_version: 1,
             request_id: request_id.clone(),
             run_id: RunId("run-test".to_string()),
+            prompt_kind: sieve_types::ApprovalPromptKind::Command,
+            title: None,
             command_segments: vec![CommandSegment {
                 argv: vec!["rm".to_string(), "-rf".to_string(), "/tmp/x".to_string()],
                 operator_before: None,
@@ -51,6 +53,9 @@ async fn runtime_bridge_submit_approval_resolves_pending_request() {
             }],
             blocked_rule_id: "rule".to_string(),
             reason: "reason".to_string(),
+            preview: None,
+            reply_to_session_id: None,
+            allow_approve_always: true,
             created_at_ms: 1,
         })
         .await

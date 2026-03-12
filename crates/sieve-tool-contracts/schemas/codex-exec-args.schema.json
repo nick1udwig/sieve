@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "command": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sandbox": {
+      "enum": [
+        "read_only",
+        "workspace_write"
+      ],
+      "type": "string"
+    },
+    "timeout_ms": {
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "writable_roots": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "command",
+    "sandbox"
+  ],
+  "type": "object"
+}

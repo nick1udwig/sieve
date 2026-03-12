@@ -347,6 +347,7 @@ fn summarize_tool_progress(tool_results: &[PlannerToolResult]) -> ToolProgressSu
     for result in tool_results {
         match result {
             PlannerToolResult::Automation { .. } => {}
+            PlannerToolResult::CodexExec { .. } | PlannerToolResult::CodexSession { .. } => {}
             PlannerToolResult::Bash {
                 command,
                 disposition,
@@ -530,6 +531,45 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
                 })
             }
         },
+        PlannerToolResult::CodexExec {
+            request,
+            result,
+            failure_reason,
+        } => serde_json::json!({
+            "tool": "codex_exec",
+            "command_argv_len": request.command.len(),
+            "sandbox": request.sandbox.as_str(),
+            "has_cwd": request.cwd.as_ref().map(|value| !value.trim().is_empty()).unwrap_or(false),
+            "writable_roots_count": request.writable_roots.len(),
+            "timeout_ms": request.timeout_ms,
+            "disposition": if failure_reason.is_some() { "failed" } else { "succeeded" },
+            "exit_code": result.as_ref().map(|value| value.exit_code),
+            "stdout_len": result.as_ref().map(|value| value.stdout.len()).unwrap_or(0),
+            "stderr_len": result.as_ref().map(|value| value.stderr.len()).unwrap_or(0),
+            "command_failure_kind": failure_reason.as_ref().map(|_| "runtime_failure"),
+        }),
+        PlannerToolResult::CodexSession {
+            request,
+            result,
+            failure_reason,
+        } => serde_json::json!({
+            "tool": "codex_session",
+            "sandbox": request.sandbox.as_str(),
+            "session_id": request.session_id.clone(),
+            "has_cwd": request.cwd.as_ref().map(|value| !value.trim().is_empty()).unwrap_or(false),
+            "writable_roots_count": request.writable_roots.len(),
+            "local_images_count": request.local_images.len(),
+            "disposition": if failure_reason.is_some() { "failed" } else { "succeeded" },
+            "status": result.as_ref().map(|value| value.status.as_str()),
+            "session_name": result.as_ref().map(|value| value.session_name.clone()),
+            "summary_len": result.as_ref().map(|value| value.summary.len()).unwrap_or(0),
+            "user_visible_len": result
+                .as_ref()
+                .and_then(|value| value.user_visible.as_ref())
+                .map(|value| value.len())
+                .unwrap_or(0),
+            "command_failure_kind": failure_reason.as_ref().map(|_| "runtime_failure"),
+        }),
         PlannerToolResult::Endorse {
             request,
             transition,

@@ -93,7 +93,7 @@ async fn runtime_approval_roundtrip_works_with_telegram_adapter() {
     let sent_messages = poller.sent_messages();
     assert!(sent_messages
         .iter()
-        .any(|(_, text)| text.contains("approval needed")));
+        .any(|(_, text, _)| text.contains("approval needed")));
     assert!(adapter
         .bridge
         .runtime_events()
@@ -134,6 +134,7 @@ async fn tool_contract_failure_stays_internal_not_chat_visible() {
             current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),
             browser_sessions: Vec::new(),
+            codex_sessions: Vec::new(),
             previous_events: Vec::new(),
             guidance: None,
             control_value_refs: BTreeSet::new(),

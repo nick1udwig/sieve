@@ -53,26 +53,6 @@ fn planner_command_catalog_includes_agent_browser_entry() {
 }
 
 #[test]
-fn planner_command_catalog_includes_codex_exec_entry() {
-    let entry = planner_command_catalog()
-        .iter()
-        .find(|entry| entry.command == "codex")
-        .expect("codex catalog entry");
-    assert!(entry.description.contains("codex exec"));
-}
-
-#[test]
-fn planner_command_catalog_codex_mentions_read_only_and_workspace_write() {
-    let entry = planner_command_catalog()
-        .iter()
-        .find(|entry| entry.command == "codex")
-        .expect("codex catalog entry");
-    assert!(entry.description.contains("--sandbox read-only"));
-    assert!(entry.description.contains("--sandbox workspace-write"));
-    assert!(entry.description.contains("--ephemeral"));
-}
-
-#[test]
 fn planner_command_catalog_includes_sieve_lcm_cli_entry() {
     let entry = planner_command_catalog()
         .iter()

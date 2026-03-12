@@ -320,7 +320,7 @@ async fn telegram_full_flow_greeting_polls_ingress_and_sends_chat_reply() {
     assert!(
         flow.sent_messages
             .iter()
-            .any(|(chat_id, message)| *chat_id == 42
+            .any(|(chat_id, message, _)| *chat_id == 42
                 && message.contains("I'm doing well, thank you!")),
         "assistant message should be sent via telegram sendMessage"
     );
@@ -518,7 +518,7 @@ async fn telegram_full_flow_weather_runs_bash_and_sends_weather_text() {
         .expect("telegram full-flow weather should succeed");
 
     assert!(
-        flow.sent_messages.iter().any(|(_, message)| {
+        flow.sent_messages.iter().any(|(_, message, _)| {
             let lower = message.to_ascii_lowercase();
             lower.contains("dublin weather today")
                 && lower.contains("12c")

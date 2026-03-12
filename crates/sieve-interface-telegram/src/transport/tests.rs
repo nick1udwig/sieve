@@ -96,7 +96,7 @@ fn send_message_posts_json_payload() {
     );
 
     let message_id = poller
-        .send_message(42, "hi")
+        .send_message(42, "hi", None)
         .expect("send message must succeed");
     assert_eq!(message_id, Some(123));
 
@@ -110,6 +110,50 @@ fn send_message_posts_json_payload() {
     assert_eq!(commands[0].1[6], "-d");
     assert!(commands[0].1[7].contains("\"chat_id\":42"));
     assert!(commands[0].1[8].contains("/bottoken_abc/sendMessage"));
+}
+
+#[test]
+fn send_message_can_reply_to_existing_message() {
+    let mut poller = TelegramBotApiLongPoll::with_executor(
+        "token_abc",
+        "https://example.test",
+        TestExecutor::new(vec![Ok(
+            "{\"ok\":true,\"result\":{\"message_id\":124}}".to_string()
+        )]),
+    );
+
+    let _ = poller
+        .send_message(42, "status reply", Some(77))
+        .expect("send reply message must succeed");
+
+    let commands = &poller.executor.commands;
+    assert_eq!(commands.len(), 1);
+    assert!(commands[0].1[7].contains("\"reply_parameters\":{\"message_id\":77}"));
+}
+
+#[test]
+fn edit_message_posts_json_payload() {
+    let mut poller = TelegramBotApiLongPoll::with_executor(
+        "token_abc",
+        "https://example.test",
+        TestExecutor::new(vec![Ok(
+            "{\"ok\":true,\"result\":{\"message_id\":123}}".to_string()
+        )]),
+    );
+
+    poller
+        .edit_message(42, 123, "updated")
+        .expect("edit message must succeed");
+
+    let commands = &poller.executor.commands;
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].0, "curl");
+    assert_eq!(commands[0].1[2], "-X");
+    assert_eq!(commands[0].1[3], "POST");
+    assert!(commands[0].1[7].contains("\"chat_id\":42"));
+    assert!(commands[0].1[7].contains("\"message_id\":123"));
+    assert!(commands[0].1[7].contains("\"text\":\"updated\""));
+    assert!(commands[0].1[8].contains("/bottoken_abc/editMessageText"));
 }
 
 #[test]

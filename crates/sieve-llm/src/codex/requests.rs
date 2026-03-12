@@ -436,7 +436,8 @@ fn codex_require_all_object_properties(map: &mut serde_json::Map<String, Value>)
         .get("required")
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(Value::as_str)
                 .map(str::to_string)
                 .collect::<Vec<_>>()
