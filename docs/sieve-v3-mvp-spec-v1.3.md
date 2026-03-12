@@ -78,6 +78,7 @@ Rules:
 - `declassify` must mint a derived release value for sink use; do not mutate the source label in place.
 - Runtime policy must deny sink flow for runtime-labeled `trusted_string` values.
 - Runtime policy must treat `trusted_string` control refs as untrusted for consequential actions.
+- Planner should expose `endorse`/`declassify` only when at least one eligible bounded value exists for that action.
 
 ## 4. Enforcement semantics
 

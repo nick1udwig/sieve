@@ -1,6 +1,6 @@
 use sieve_types::{
-    ApprovalRequestId, ControlContext, DeclassifyStateTransition, EndorseStateTransition,
-    CapacityType, Integrity, RuntimePolicyContext, SinkChannel, SinkKey, SinkPermission,
+    ApprovalRequestId, CapacityType, ControlContext, DeclassifyStateTransition,
+    EndorseStateTransition, Integrity, RuntimePolicyContext, SinkChannel, SinkKey, SinkPermission,
     SinkPermissionContext, Source, ValueLabel, ValueRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +41,19 @@ impl RuntimeValueState {
         !self.labels_by_value.is_empty()
     }
 
+    pub(crate) fn has_endorseable_values(&self) -> bool {
+        self.labels_by_value.values().any(|label| {
+            label.integrity == Integrity::Untrusted
+                && label.capacity_type != CapacityType::TrustedString
+        })
+    }
+
+    pub(crate) fn has_declassifiable_values(&self) -> bool {
+        self.labels_by_value
+            .values()
+            .any(|label| label.capacity_type != CapacityType::TrustedString)
+    }
+
     pub(crate) fn runtime_policy_context_for_control(
         &self,
         control_value_refs: BTreeSet<ValueRef>,
@@ -49,12 +62,10 @@ impl RuntimeValueState {
         let control_integrity = if control_value_refs.is_empty() {
             Integrity::Trusted
         } else if control_value_refs.iter().all(|value_ref| {
-            self.labels_by_value
-                .get(value_ref)
-                .is_some_and(|label| {
-                    label.integrity == Integrity::Trusted
-                        && label.capacity_type != CapacityType::TrustedString
-                })
+            self.labels_by_value.get(value_ref).is_some_and(|label| {
+                label.integrity == Integrity::Trusted
+                    && label.capacity_type != CapacityType::TrustedString
+            })
         }) {
             Integrity::Trusted
         } else {

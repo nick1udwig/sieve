@@ -37,6 +37,7 @@ Shipped here: `trusted_string` values cannot be endorsed to `trusted` and cannot
 Shipped here: explicit-tool requests for unknown `value_ref` fail before approval.
 Shipped here: policy denies sink flow for runtime-labeled `trusted_string` values even if ambient sink grants exist.
 Shipped here: `trusted_string` values do not count as trusted control context.
+Shipped here: planner hides `endorse`/`declassify` unless eligible bounded refs actually exist.
 
 ### Phase 3
 

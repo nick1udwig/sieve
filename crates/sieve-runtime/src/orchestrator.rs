@@ -147,6 +147,22 @@ impl RuntimeOrchestrator {
         Ok(state.has_any_labels())
     }
 
+    pub fn has_endorseable_value_refs(&self) -> Result<bool, RuntimeError> {
+        let state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(state.has_endorseable_values())
+    }
+
+    pub fn has_declassifiable_value_refs(&self) -> Result<bool, RuntimeError> {
+        let state = self
+            .value_state
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        Ok(state.has_declassifiable_values())
+    }
+
     pub fn persistent_approval_allowances(&self) -> Result<Vec<Capability>, RuntimeError> {
         let allowances = self
             .persistent_approval_allowances

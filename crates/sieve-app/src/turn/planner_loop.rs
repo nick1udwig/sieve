@@ -122,10 +122,12 @@ pub(super) async fn generate_assistant_message(
                 planner_turn_parts.push(memory);
             }
             let planner_turn_user_message = planner_turn_parts.join("\n\n");
-            let has_known_value_refs = runtime.has_known_value_refs()?;
+            let endorse_available = runtime.has_endorseable_value_refs()?;
+            let declassify_available = runtime.has_declassifiable_value_refs()?;
             let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
                 &cfg.allowed_tools,
-                has_known_value_refs,
+                endorse_available,
+                declassify_available,
                 runtime.has_automation_tool(),
             );
             let browser_sessions = runtime.planner_browser_sessions()?;

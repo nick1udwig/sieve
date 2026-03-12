@@ -11,13 +11,15 @@ use std::path::PathBuf;
 
 pub(crate) fn planner_allowed_tools_for_turn(
     configured_tools: &[String],
-    has_known_value_refs: bool,
+    endorse_available: bool,
+    declassify_available: bool,
     automation_available: bool,
 ) -> Vec<String> {
     configured_tools
         .iter()
         .filter(|tool| {
-            (has_known_value_refs || (tool.as_str() != "endorse" && tool.as_str() != "declassify"))
+            ((endorse_available || tool.as_str() != "endorse")
+                && (declassify_available || tool.as_str() != "declassify"))
                 && (automation_available || tool.as_str() != "automation")
         })
         .cloned()

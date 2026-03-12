@@ -240,7 +240,10 @@ async fn orchestrate_shell_marks_trusted_string_control_as_untrusted() {
         .expect("runtime ok");
     match disposition {
         RuntimeDisposition::ExecuteMainline(report) => {
-            assert_eq!(report.run_id, RunId("run-trusted-string-control".to_string()));
+            assert_eq!(
+                report.run_id,
+                RunId("run-trusted-string-control".to_string())
+            );
         }
         other => panic!("expected mainline execution, got {other:?}"),
     }
@@ -250,4 +253,63 @@ async fn orchestrate_shell_marks_trusted_string_control_as_untrusted() {
         captured.runtime_context.control.integrity,
         Integrity::Untrusted
     );
+}
+
+#[test]
+fn runtime_value_availability_ignores_trusted_string_only_state() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime(
+        CommandKnowledge::Known,
+        vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }],
+        CommandKnowledge::Known,
+        PolicyDecisionKind::Allow,
+    );
+    runtime
+        .upsert_value_label(
+            ValueRef("v_string_only".to_string()),
+            ValueLabel {
+                integrity: Integrity::Trusted,
+                provenance: BTreeSet::from([Source::User]),
+                allowed_sinks: BTreeSet::new(),
+                capacity_type: CapacityType::TrustedString,
+            },
+        )
+        .expect("insert trusted_string value");
+
+    assert!(runtime.has_known_value_refs().expect("has labels"));
+    assert!(!runtime
+        .has_endorseable_value_refs()
+        .expect("endorseable check"));
+    assert!(!runtime
+        .has_declassifiable_value_refs()
+        .expect("declassifiable check"));
+}
+
+#[test]
+fn runtime_value_availability_exposes_bounded_refs() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime(
+        CommandKnowledge::Known,
+        vec![CommandSegment {
+            argv: vec!["echo".to_string()],
+            operator_before: None,
+        }],
+        CommandKnowledge::Known,
+        PolicyDecisionKind::Allow,
+    );
+    runtime
+        .upsert_value_label(
+            ValueRef("v_enum_untrusted".to_string()),
+            label_with_sinks(Integrity::Untrusted, &[]),
+        )
+        .expect("insert bounded value");
+
+    assert!(runtime.has_known_value_refs().expect("has labels"));
+    assert!(runtime
+        .has_endorseable_value_refs()
+        .expect("endorseable check"));
+    assert!(runtime
+        .has_declassifiable_value_refs()
+        .expect("declassifiable check"));
 }
