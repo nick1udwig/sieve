@@ -18,13 +18,22 @@ pub(crate) fn planner_allowed_tools_for_turn(
     configured_tools
         .iter()
         .filter(|tool| {
-            (has_known_value_refs || (tool.as_str() != "endorse" && tool.as_str() != "declassify"))
+            is_native_planner_tool(tool)
+                && (has_known_value_refs
+                    || (tool.as_str() != "endorse" && tool.as_str() != "declassify"))
                 && (automation_available || tool.as_str() != "automation")
                 && (codex_available
                     || (tool.as_str() != "codex_exec" && tool.as_str() != "codex_session"))
         })
         .cloned()
         .collect()
+}
+
+fn is_native_planner_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "automation" | "bash" | "codex_exec" | "codex_session" | "endorse" | "declassify"
+    )
 }
 
 pub(crate) fn build_response_turn_input(

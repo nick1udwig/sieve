@@ -104,6 +104,7 @@ fn parse_policy_path_honors_explicit_env_override() {
 fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() {
     let configured = vec![
         "bash".to_string(),
+        "gws".to_string(),
         "automation".to_string(),
         "codex_exec".to_string(),
         "codex_session".to_string(),
@@ -128,7 +129,14 @@ fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() 
     );
     assert_eq!(
         planner_allowed_tools_for_turn(&configured, true, true, true),
-        configured
+        vec![
+            "bash".to_string(),
+            "automation".to_string(),
+            "codex_exec".to_string(),
+            "codex_session".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]
     );
 }
 
