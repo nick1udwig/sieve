@@ -34,6 +34,7 @@ fn planner_step_trace_redacts_raw_artifact_contents() {
             source_hit_index: None,
             evidence_ref_index: None,
         },
+        &[],
     );
 
     assert_eq!(trace.len(), 2);

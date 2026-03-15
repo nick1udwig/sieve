@@ -101,12 +101,11 @@ fn summarize_service(argv: &[String]) -> crate::SummaryOutcome {
         GWS_API_ORIGIN
     };
 
-    let primary_action =
-        if parsed.upload_path.is_some() || parsed.json.is_some() || method_is_mutating(&method) {
-            Action::Write
-        } else {
-            Action::Connect
-        };
+    let primary_action = if parsed.upload_path.is_some() || method_is_mutating(&method) {
+        Action::Write
+    } else {
+        Action::Connect
+    };
 
     let mut required_capabilities = vec![Capability {
         resource: Resource::Net,
@@ -139,11 +138,13 @@ fn summarize_service(argv: &[String]) -> crate::SummaryOutcome {
     }
 
     let mut sink_checks = Vec::new();
-    if let Some(flag) = parsed.params {
-        sink_checks.push(net_sink_check(flag, primary_origin));
-    }
-    if let Some(flag) = parsed.json {
-        sink_checks.push(net_sink_check(flag, primary_origin));
+    if primary_action == Action::Write {
+        if let Some(flag) = parsed.params {
+            sink_checks.push(net_sink_check(flag, primary_origin));
+        }
+        if let Some(flag) = parsed.json {
+            sink_checks.push(net_sink_check(flag, primary_origin));
+        }
     }
 
     known_outcome(CommandSummary {

@@ -116,11 +116,33 @@ impl RuntimeOrchestrator {
                     }
                 }
                 TypedCall::Bash(args) => {
+                    let expanded_command =
+                        match self.expand_bash_placeholders(&request.run_id, &args.cmd) {
+                            Ok(command) if command.contains("[[handle:") => {
+                                tool_results.push(PlannerToolResult::Bash {
+                                    command: args.cmd,
+                                    disposition: RuntimeDisposition::Denied {
+                                        reason: "unknown opaque handle placeholder".to_string(),
+                                    },
+                                });
+                                continue;
+                            }
+                            Ok(command) => command,
+                            Err(err) => {
+                                tool_results.push(PlannerToolResult::Bash {
+                                    command: args.cmd,
+                                    disposition: RuntimeDisposition::Denied {
+                                        reason: err.to_string(),
+                                    },
+                                });
+                                continue;
+                            }
+                        };
                     let disposition = self
                         .orchestrate_shell(ShellRunRequest {
                             run_id: request.run_id.clone(),
                             cwd: request.cwd.clone(),
-                            script: args.cmd.clone(),
+                            script: expanded_command,
                             control_value_refs: request.control_value_refs.clone(),
                             control_endorsed_by: request.control_endorsed_by.clone(),
                             unknown_mode: request.unknown_mode,

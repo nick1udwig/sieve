@@ -103,3 +103,41 @@ require_trusted_control_for_mutating = true
         }
     );
 }
+
+#[tokio::test]
+async fn gws_read_params_with_allowed_connect_executes_without_sink_approval() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://www.googleapis.com/"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+    );
+
+    let disposition = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-gws-read".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "gws drive files list --params '{\"pageSize\":10}'".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+
+    match disposition {
+        RuntimeDisposition::ExecuteMainline(report) => {
+            assert_eq!(report.run_id, RunId("run-gws-read".to_string()));
+            assert_eq!(report.exit_code, Some(0));
+        }
+        other => panic!("expected mainline execution, got {other:?}"),
+    }
+}

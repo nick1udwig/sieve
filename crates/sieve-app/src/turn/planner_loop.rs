@@ -13,6 +13,7 @@ use crate::logging::{
 };
 use crate::planner_conversation::{build_planner_conversation, planner_step_trace_messages};
 use crate::planner_feedback::{planner_memory_feedback, planner_policy_feedback};
+use crate::planner_products::PlannerOpaqueHandleStore;
 use crate::planner_progress::{
     build_guidance_prompt, guidance_continue_decision, has_repeated_bash_outcome,
     progress_contract_override_signal,
@@ -148,6 +149,7 @@ pub(super) async fn generate_assistant_message(
         None
     };
     let mut planner_trace_messages: Vec<PlannerConversationMessage> = Vec::new();
+    let mut opaque_handle_store = PlannerOpaqueHandleStore::default();
 
     loop {
         while planner_steps_taken < planner_step_limit {
@@ -174,6 +176,8 @@ pub(super) async fn generate_assistant_message(
                 .timestamp_millis_opt(now_ms() as i64)
                 .single()
                 .map(|value| value.to_rfc3339_opts(SecondsFormat::Secs, true));
+            runtime
+                .set_bash_placeholder_values(run_id, opaque_handle_store.placeholder_values())?;
             let step_result = match runtime
                 .orchestrate_planner_turn(PlannerRunRequest {
                     run_id: run_id.clone(),
@@ -218,6 +222,7 @@ pub(super) async fn generate_assistant_message(
                 aggregated_result.thoughts = Some(thoughts);
             }
             let step_results = step_result.tool_results;
+            let step_products = opaque_handle_store.record_step_products(&step_results);
             aggregated_result.tool_results.extend(step_results.clone());
             if let Err(err) = persist_runtime_approval_allowances(runtime, &cfg.sieve_home) {
                 eprintln!(
@@ -252,6 +257,7 @@ pub(super) async fn generate_assistant_message(
                     step_number,
                     &step_results,
                     &guidance_frame,
+                    &step_products,
                 ));
                 if can_retry {
                     planner_guidance = Some(guidance_frame);
@@ -363,6 +369,7 @@ pub(super) async fn generate_assistant_message(
                 step_number,
                 &step_results,
                 &guidance_frame,
+                &step_products,
             ));
             planner_guidance = Some(guidance_frame);
             if !should_continue {

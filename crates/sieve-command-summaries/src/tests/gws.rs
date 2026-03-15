@@ -9,6 +9,7 @@ fn planner_command_catalog_includes_gws_entry() {
         .find(|entry| entry.command == "gws")
         .expect("gws catalog entry");
     assert!(entry.description.contains("gws schema"));
+    assert!(entry.description.contains("gws gmail users messages list"));
     assert!(entry.description.contains("--dry-run"));
 }
 
@@ -30,7 +31,7 @@ fn gws_schema_requires_google_api_connect() {
 }
 
 #[test]
-fn gws_read_method_with_params_requires_connect_and_sink_check() {
+fn gws_read_method_with_params_requires_connect_without_sink_check() {
     let out = summarize_argv(&argv(&[
         "gws",
         "drive",
@@ -50,14 +51,7 @@ fn gws_read_method_with_params_requires_connect_and_sink_check() {
             scope: "https://www.googleapis.com/".to_string(),
         }]
     );
-    assert_eq!(
-        summary.sink_checks,
-        vec![SinkCheck {
-            argument_name: "--params".to_string(),
-            sink: SinkKey("https://www.googleapis.com/".to_string()),
-            value_refs: vec![ValueRef("argv:5".to_string())],
-        }]
-    );
+    assert!(summary.sink_checks.is_empty());
 }
 
 #[test]

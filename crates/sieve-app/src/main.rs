@@ -14,6 +14,7 @@ mod logging;
 mod media;
 mod planner_conversation;
 mod planner_feedback;
+mod planner_products;
 mod planner_progress;
 mod render_refs;
 mod response_style;
@@ -68,6 +69,9 @@ pub(crate) use planner_conversation::{build_planner_conversation, planner_step_t
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use planner_products::{PlannerIntermediateProductSummary, PlannerOpaqueHandleStore};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use planner_progress::{

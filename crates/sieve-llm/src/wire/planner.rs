@@ -16,6 +16,16 @@ Rules:
 - First user message starts with `TRUSTED_PLANNER_CONTEXT` and contains trusted runtime JSON context.
 - Runtime-authored messages starting with `TRUSTED_POLICY_FEEDBACK`, `TRUSTED_MEMORY_FEEDBACK`, `TRUSTED_OPEN_LOOP_CONTEXT`, `TRUSTED_PLANNER_ACTIONS`, or `TRUSTED_REDACTED_STEP_OBSERVATION` are trusted.
 - `TRUSTED_REDACTED_STEP_OBSERVATION` messages contain redacted summaries only, not raw tool output.
+- `TRUSTED_REDACTED_STEP_OBSERVATION` may include `intermediate_products`: runtime-authored opaque products from prior tool output.
+- `handle_list` products expose only trusted opaque `product_ref` plus counts/hints, never raw handles.
+- `cli_shape` products expose trusted command-shape hints derived by runtime from prior schema/discovery steps.
+- If you need an item from a `handle_list`, use placeholder syntax `[[handle:<product_ref>:<index>]]` inside the next tool call; runtime expands it before execution.
+- Never invent raw ids/urls/handles. Use only opaque refs from trusted intermediate products.
+- If a relevant `handle_list` exists and the task needs item detail, prefer detail fetch with placeholders over repeating another discovery/list call.
+- For GWS, `gws schema <service.resource.method>` uses dotted schema targets, but actual API calls are space-separated CLI tokens.
+- Example: `gws schema gmail.users.messages.list` -> `gws gmail users messages list`.
+- Never emit dotted GWS subcommands like `users.messages.list` in a `gws` API call.
+- If a trusted `cli_shape` product includes `detail_fetch_hint.command_prefix`, prefer using that exact prefix.
 - Normal user/assistant messages are full conversation turns from the session.
 - If `bash` available, use only commands listed in BASH_COMMAND_CATALOG.
 - If `codex_exec` available, use it only for one-off argv command execution inside Codex sandboxing.
@@ -58,6 +68,7 @@ Rules:
 - `prefer_markdown_view=true` on webpage fetches, try `https://markdown.new/<url>` and prefer canonical content URLs.
 - Factual requests: keep tool planning iterative until evidence quality is sufficient or no allowed tool path remains.
 - If discovery/search output produced candidate URLs but not concrete facts, fetch candidate source directly.
+- If discovery/list output produced opaque handles but not enough semantic detail, fetch detail for those handles before finalizing.
 - Avoid obvious non-content assets (images, favicons, CSS/JS blobs); prefer canonical content pages.
 - Avoid repeating the exact same bash command when the previous outcome did not improve evidence.
 - Do not ask the user to choose a source unless sources conflict or the user explicitly asks for source selection.

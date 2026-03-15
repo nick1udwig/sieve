@@ -54,6 +54,13 @@ fn planner_prompt_mentions_markdown_new_fetch_strategy() {
 }
 
 #[test]
+fn planner_prompt_mentions_gws_schema_to_cli_mapping() {
+    assert!(PLANNER_SYSTEM_PROMPT.contains("gws schema gmail.users.messages.list"));
+    assert!(PLANNER_SYSTEM_PROMPT.contains("gws gmail users messages list"));
+    assert!(PLANNER_SYSTEM_PROMPT.contains("Never emit dotted GWS subcommands"));
+}
+
+#[test]
 fn guidance_prompt_prefers_continue_for_discovery_only_evidence() {
     assert!(GUIDANCE_SYSTEM_PROMPT.contains("discovery/search snippets"));
     assert!(GUIDANCE_SYSTEM_PROMPT.contains("prefer continue"));

@@ -31,6 +31,7 @@ mod models;
 mod open_loops;
 mod planner_conversation;
 mod planner_core;
+mod planner_products;
 mod render_response;
 mod response_style;
 mod runtime_bridge;

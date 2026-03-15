@@ -1,4 +1,5 @@
 use crate::logging::{ConversationHistoryEntry, ConversationRole};
+use crate::planner_products::PlannerIntermediateProductSummary;
 use crate::planner_progress::summarize_redacted_tool_result;
 use crate::working_state::{format_open_loop_context_message, StoredOpenLoop};
 use serde_json::json;
@@ -40,6 +41,7 @@ pub(crate) fn planner_step_trace_messages(
     step_index: usize,
     step_results: &[PlannerToolResult],
     guidance: &PlannerGuidanceFrame,
+    intermediate_products: &[PlannerIntermediateProductSummary],
 ) -> Vec<PlannerConversationMessage> {
     if step_results.is_empty() {
         return Vec::new();
@@ -65,6 +67,7 @@ pub(crate) fn planner_step_trace_messages(
                     .iter()
                     .map(summarize_redacted_tool_result)
                     .collect::<Vec<_>>(),
+                "intermediate_products": intermediate_products,
                 "guidance": {
                     "code": guidance.code,
                     "signal_name": PlannerGuidanceSignal::try_from(guidance.code)
