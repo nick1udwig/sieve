@@ -154,11 +154,15 @@ fn split_messages(messages: Vec<Value>) -> Result<(Option<String>, Vec<Value>), 
             continue;
         }
 
+        let content_type = match role {
+            "assistant" => "output_text",
+            _ => "input_text",
+        };
         input.push(json!({
             "role": role,
             "content": [
                 {
-                    "type":"input_text",
+                    "type": content_type,
                     "text": content
                 }
             ]
@@ -506,6 +510,18 @@ mod tests {
         .expect("split");
         assert_eq!(instructions.as_deref(), Some(GUIDANCE_SYSTEM_PROMPT));
         assert_eq!(input.len(), 1);
+    }
+
+    #[test]
+    fn split_messages_encodes_assistant_history_as_output_text() {
+        let (_, input) = split_messages(vec![
+            json!({"role":"system","content":"planner"}),
+            json!({"role":"user","content":"hello"}),
+            json!({"role":"assistant","content":"previous reply"}),
+        ])
+        .expect("split");
+        assert_eq!(input[0].pointer("/content/0/type"), Some(&json!("input_text")));
+        assert_eq!(input[1].pointer("/content/0/type"), Some(&json!("output_text")));
     }
 
     #[test]
