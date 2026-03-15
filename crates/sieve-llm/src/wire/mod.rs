@@ -6,10 +6,11 @@ mod summary;
 
 pub(crate) use guidance::{decode_guidance_output, guidance_output_schema, GUIDANCE_SYSTEM_PROMPT};
 pub(crate) use openai_envelope::extract_openai_message_content_json;
+#[cfg(test)]
+pub(crate) use planner::serialize_planner_input;
 pub(crate) use planner::{
-    decode_planner_output, extract_openai_planner_output_json,
-    planner_regeneration_diagnostic_prompt, serialize_planner_input, PlannerDecodeOutcome,
-    PLANNER_SYSTEM_PROMPT,
+    build_planner_messages, decode_planner_output, extract_openai_planner_output_json,
+    planner_regeneration_diagnostic_prompt, PlannerDecodeOutcome, PLANNER_SYSTEM_PROMPT,
 };
 pub(crate) use response::{
     decode_response_output, response_output_schema, serialize_response_input,

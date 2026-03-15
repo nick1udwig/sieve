@@ -591,6 +591,29 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
     }
 }
 
+pub(crate) fn summarize_redacted_tool_result(result: &PlannerToolResult) -> serde_json::Value {
+    let mut summary = summarize_observed_tool_result(result);
+    strip_raw_artifact_fields(&mut summary);
+    summary
+}
+
+fn strip_raw_artifact_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("raw_artifacts");
+            for nested in map.values_mut() {
+                strip_raw_artifact_fields(nested);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_raw_artifact_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn normalize_bash_command_for_repeat_guard(command: &str) -> String {
     command
         .split_whitespace()

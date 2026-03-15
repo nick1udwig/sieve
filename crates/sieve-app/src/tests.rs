@@ -29,6 +29,7 @@ mod guidance_progress;
 mod media;
 mod models;
 mod open_loops;
+mod planner_conversation;
 mod planner_core;
 mod render_response;
 mod response_style;

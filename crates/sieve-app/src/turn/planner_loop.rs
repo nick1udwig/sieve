@@ -11,6 +11,7 @@ use crate::logging::{
     append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
     FanoutRuntimeEventLog,
 };
+use crate::planner_conversation::{build_planner_conversation, planner_step_trace_messages};
 use crate::planner_feedback::{planner_memory_feedback, planner_policy_feedback};
 use crate::planner_progress::{
     build_guidance_prompt, guidance_continue_decision, has_repeated_bash_outcome,
@@ -19,9 +20,8 @@ use crate::planner_progress::{
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
 use crate::working_state::{
-    augment_user_message_with_open_loop_context, build_open_loop_from_preference_turn,
-    format_open_loop_status_reply, linked_session_for_loop, looks_like_open_loop_confirmation,
-    OpenLoopStore,
+    build_open_loop_from_preference_turn, format_open_loop_status_reply, linked_session_for_loop,
+    looks_like_open_loop_confirmation, OpenLoopStore,
 };
 use chrono::{SecondsFormat, TimeZone, Utc};
 use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
@@ -31,8 +31,8 @@ use sieve_runtime::{
 };
 use sieve_types::PlannerCodexSession;
 use sieve_types::{
-    AssistantMessageEvent, InteractionModality, PlannerGuidanceFrame, PlannerGuidanceInput,
-    PlannerGuidanceSignal, RunId, RuntimeEvent,
+    AssistantMessageEvent, InteractionModality, PlannerConversationMessage, PlannerGuidanceFrame,
+    PlannerGuidanceInput, PlannerGuidanceSignal, RunId, RuntimeEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -142,35 +142,18 @@ pub(super) async fn generate_assistant_message(
         .max_planner_steps
         .saturating_add(max_compose_followup_cycles);
     let mut planner_step_limit = cfg.max_planner_steps.max(1);
-    let planner_user_message = trusted_user_message.to_string();
     let active_open_loop = if matches!(turn_kind, TurnKind::User) {
         open_loop_store.active_loop_for_followup(session_key, trusted_user_message)?
     } else {
         None
     };
+    let mut planner_trace_messages: Vec<PlannerConversationMessage> = Vec::new();
 
     loop {
         while planner_steps_taken < planner_step_limit {
             let step_number = planner_steps_taken + 1;
             let policy_feedback = planner_policy_feedback(&aggregated_result.tool_results);
             let memory_feedback = planner_memory_feedback(&aggregated_result.tool_results).await;
-            let planner_turn_user_message = match (policy_feedback, memory_feedback) {
-                (Some(policy), Some(memory)) => {
-                    format!("{planner_user_message}\n\n{policy}\n\n{memory}")
-                }
-                (Some(policy), None) => format!("{planner_user_message}\n\n{policy}"),
-                (None, Some(memory)) => format!("{planner_user_message}\n\n{memory}"),
-                (None, None) => planner_user_message.clone(),
-            };
-            let planner_turn_user_message = active_open_loop
-                .as_ref()
-                .map(|loop_record| {
-                    augment_user_message_with_open_loop_context(
-                        &planner_turn_user_message,
-                        loop_record,
-                    )
-                })
-                .unwrap_or(planner_turn_user_message);
             let has_known_value_refs = runtime.has_known_value_refs()?;
             let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
                 &cfg.allowed_tools,
@@ -180,6 +163,13 @@ pub(super) async fn generate_assistant_message(
             );
             let browser_sessions = runtime.planner_browser_sessions()?;
             let codex_sessions = runtime.planner_codex_sessions().await?;
+            let planner_conversation = build_planner_conversation(
+                &event_log.snapshot_conversation(session_key),
+                policy_feedback.as_deref(),
+                memory_feedback.as_deref(),
+                active_open_loop.as_ref(),
+                &planner_trace_messages,
+            );
             let current_time_utc = Utc
                 .timestamp_millis_opt(now_ms() as i64)
                 .single()
@@ -188,7 +178,8 @@ pub(super) async fn generate_assistant_message(
                 .orchestrate_planner_turn(PlannerRunRequest {
                     run_id: run_id.clone(),
                     cwd: cfg.runtime_cwd.clone(),
-                    user_message: planner_turn_user_message,
+                    user_message: trusted_user_message.to_string(),
+                    conversation: planner_conversation,
                     allowed_tools: allowed_tools_for_turn,
                     current_time_utc,
                     current_timezone: Some("UTC".to_string()),
@@ -251,13 +242,19 @@ pub(super) async fn generate_assistant_message(
                     }),
                 )
                 .await;
+                let guidance_frame = PlannerGuidanceFrame {
+                    code: PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction.code(),
+                    confidence_bps: 9_000,
+                    source_hit_index: None,
+                    evidence_ref_index: None,
+                };
+                planner_trace_messages.extend(planner_step_trace_messages(
+                    step_number,
+                    &step_results,
+                    &guidance_frame,
+                ));
                 if can_retry {
-                    planner_guidance = Some(PlannerGuidanceFrame {
-                        code: PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction.code(),
-                        confidence_bps: 9_000,
-                        source_hit_index: None,
-                        evidence_ref_index: None,
-                    });
+                    planner_guidance = Some(guidance_frame);
                     continue;
                 }
                 break;
@@ -362,6 +359,11 @@ pub(super) async fn generate_assistant_message(
             .await;
             let mut guidance_frame = guidance_output.guidance;
             guidance_frame.code = effective_signal.code();
+            planner_trace_messages.extend(planner_step_trace_messages(
+                step_number,
+                &step_results,
+                &guidance_frame,
+            ));
             planner_guidance = Some(guidance_frame);
             if !should_continue {
                 break;

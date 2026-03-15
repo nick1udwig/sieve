@@ -281,10 +281,7 @@ pub(crate) fn build_open_loop_from_preference_turn(
     }
 }
 
-pub(crate) fn augment_user_message_with_open_loop_context(
-    user_message: &str,
-    loop_record: &StoredOpenLoop,
-) -> String {
+pub(crate) fn format_open_loop_context_message(loop_record: &StoredOpenLoop) -> String {
     let subject_names = if loop_record.subject_names.is_empty() {
         "[]".to_string()
     } else {
@@ -296,7 +293,7 @@ pub(crate) fn augment_user_message_with_open_loop_context(
         format!("{:?}", loop_record.target_paths)
     };
     format!(
-        "{user_message}\n\nTRUSTED_OPEN_LOOP_CONTEXT:\n- loop_id: {}\n- kind: {}\n- status: {}\n- goal_summary: {}\n- subject_names: {}\n- target_paths: {}\n- next_expected_user_act: {}\n- ready_for_execution: {}\n- Preserve this target unless the user explicitly redirects.\n- Do not resume an unrelated saved Codex session just because one exists.\n- Prior assistant context:\n{}",
+        "TRUSTED_OPEN_LOOP_CONTEXT:\n- loop_id: {}\n- kind: {}\n- status: {}\n- goal_summary: {}\n- subject_names: {}\n- target_paths: {}\n- next_expected_user_act: {}\n- ready_for_execution: {}\n- Preserve this target unless the user explicitly redirects.\n- Do not resume an unrelated saved Codex session just because one exists.\n- Prior assistant context:\n{}",
         loop_record.loop_id,
         loop_record.kind,
         loop_record.status,

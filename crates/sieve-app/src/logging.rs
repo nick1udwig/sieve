@@ -37,6 +37,15 @@ pub(crate) struct ConversationLogRecord {
     created_at_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConversationHistoryEntry {
+    pub(crate) run_id: RunId,
+    pub(crate) session_key: String,
+    pub(crate) role: ConversationRole,
+    pub(crate) message: String,
+    pub(crate) created_at_ms: u64,
+}
+
 impl ConversationLogRecord {
     pub(crate) fn new(
         run_id: RunId,
@@ -82,6 +91,7 @@ pub(crate) struct FanoutRuntimeEventLog {
     next_turn_seq: AtomicU64,
     turn_contexts: Mutex<BTreeMap<RunId, TurnLogContext>>,
     history: Mutex<Vec<RuntimeEvent>>,
+    conversation_history: Mutex<Vec<ConversationHistoryEntry>>,
     telegram_tx: Mutex<Sender<TelegramLoopEvent>>,
 }
 
@@ -104,6 +114,7 @@ impl FanoutRuntimeEventLog {
             next_turn_seq: AtomicU64::new(1),
             turn_contexts: Mutex::new(BTreeMap::new()),
             history: Mutex::new(Vec::new()),
+            conversation_history: Mutex::new(Vec::new()),
             telegram_tx: Mutex::new(telegram_tx),
         })
     }
@@ -143,6 +154,16 @@ impl FanoutRuntimeEventLog {
             .clone()
     }
 
+    pub(crate) fn snapshot_conversation(&self, session_key: &str) -> Vec<ConversationHistoryEntry> {
+        self.conversation_history
+            .lock()
+            .expect("conversation history lock poisoned")
+            .iter()
+            .filter(|entry| entry.session_key == session_key)
+            .cloned()
+            .collect()
+    }
+
     pub(crate) async fn append_conversation(
         &self,
         record: ConversationLogRecord,
@@ -159,7 +180,25 @@ impl FanoutRuntimeEventLog {
             record.created_at_ms,
             payload,
         )?;
-        self.jsonl.append_json_value(&value).await
+        self.jsonl.append_json_value(&value).await?;
+        let session_key = self
+            .turn_contexts
+            .lock()
+            .map_err(|_| EventLogError::Append("turn log contexts lock poisoned".to_string()))?
+            .get(&record.run_id)
+            .map(|context| context.session_key.clone())
+            .unwrap_or_else(|| "main".to_string());
+        self.conversation_history
+            .lock()
+            .map_err(|_| EventLogError::Append("conversation history lock poisoned".to_string()))?
+            .push(ConversationHistoryEntry {
+                run_id: record.run_id,
+                session_key,
+                role: record.role,
+                message: record.message,
+                created_at_ms: record.created_at_ms,
+            });
+        Ok(())
     }
 
     pub(crate) async fn append_app_event(

@@ -45,6 +45,7 @@ impl CaseGenerator for PlannerCaseGenerator {
             .plan_turn(PlannerTurnInput {
                 run_id: RunId(format!("captrace-llm-{}", now_ms())),
                 user_message,
+                conversation: Vec::new(),
                 allowed_tools: vec!["bash".to_string()],
                 current_time_utc: None,
                 current_timezone: None,

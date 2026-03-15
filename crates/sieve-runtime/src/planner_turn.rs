@@ -2,9 +2,9 @@ use super::{RuntimeDisposition, RuntimeError, RuntimeOrchestrator, ShellRunReque
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
     ApprovalRequestId, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
-    EndorseStateTransition, PlannerBrowserSession, PlannerCodexSession, PlannerGuidanceFrame,
-    PlannerToolCall, PlannerTurnInput, RunId, RuntimeEvent, ToolContractValidationReport,
-    TrustedToolEffect, UncertainMode, UnknownMode, ValueRef,
+    EndorseStateTransition, PlannerBrowserSession, PlannerCodexSession, PlannerConversationMessage,
+    PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, RunId, RuntimeEvent,
+    ToolContractValidationReport, TrustedToolEffect, UncertainMode, UnknownMode, ValueRef,
 };
 use std::collections::BTreeSet;
 
@@ -13,6 +13,7 @@ pub struct PlannerRunRequest {
     pub run_id: RunId,
     pub cwd: String,
     pub user_message: String,
+    pub conversation: Vec<PlannerConversationMessage>,
     pub allowed_tools: Vec<String>,
     pub current_time_utc: Option<String>,
     pub current_timezone: Option<String>,
@@ -76,6 +77,7 @@ impl RuntimeOrchestrator {
             .plan_turn(PlannerTurnInput {
                 run_id: request.run_id.clone(),
                 user_message: request.user_message.clone(),
+                conversation: request.conversation.clone(),
                 allowed_tools: request.allowed_tools.clone(),
                 current_time_utc: request.current_time_utc.clone(),
                 current_timezone: request.current_timezone.clone(),

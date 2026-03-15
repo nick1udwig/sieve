@@ -2,11 +2,55 @@ use super::*;
 use sieve_types::RunId;
 
 #[test]
+fn build_planner_messages_uses_context_and_conversation() {
+    let messages = build_planner_messages(&PlannerTurnInput {
+        run_id: RunId("run-1".to_string()),
+        user_message: "current question".to_string(),
+        conversation: vec![
+            sieve_types::PlannerConversationMessage {
+                role: sieve_types::PlannerConversationRole::User,
+                kind: sieve_types::PlannerConversationMessageKind::FullText,
+                content: "earlier user turn".to_string(),
+            },
+            sieve_types::PlannerConversationMessage {
+                role: sieve_types::PlannerConversationRole::Assistant,
+                kind: sieve_types::PlannerConversationMessageKind::RedactedInfo,
+                content: "TRUSTED_REDACTED_STEP_OBSERVATION\n{\"step_index\":1}".to_string(),
+            },
+        ],
+        allowed_tools: vec!["bash".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
+        allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
+        previous_events: Vec::new(),
+        guidance: None,
+    })
+    .expect("build planner messages");
+
+    assert_eq!(messages[0]["role"], "system");
+    assert_eq!(messages[1]["role"], "user");
+    assert!(messages[1]["content"]
+        .as_str()
+        .expect("context string")
+        .contains("TRUSTED_PLANNER_CONTEXT"));
+    assert_eq!(messages[2]["role"], "user");
+    assert_eq!(messages[2]["content"], "earlier user turn");
+    assert_eq!(messages[3]["role"], "assistant");
+    assert!(messages[3]["content"]
+        .as_str()
+        .expect("redacted string")
+        .contains("TRUSTED_REDACTED_STEP_OBSERVATION"));
+}
+
+#[test]
 fn planner_prompt_mentions_markdown_new_fetch_strategy() {
     assert!(PLANNER_SYSTEM_PROMPT.contains("markdown.new"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("discovery/search output"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("BROWSER_SESSIONS"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("CODEX_SESSIONS"));
+    assert!(PLANNER_SYSTEM_PROMPT.contains("TRUSTED_PLANNER_CONTEXT"));
 }
 
 #[test]
@@ -24,6 +68,7 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "search for rust async docs".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
         current_time_utc: Some("2026-03-08T06:30:00Z".to_string()),
         current_timezone: Some("UTC".to_string()),
@@ -74,6 +119,7 @@ fn serialize_planner_input_omits_bash_command_catalog_when_bash_disallowed() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "mark value trusted".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["endorse".to_string(), "declassify".to_string()],
         current_time_utc: None,
         current_timezone: None,
@@ -97,6 +143,7 @@ fn serialize_planner_input_includes_browser_sessions() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "inspect the page".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
         current_time_utc: None,
         current_timezone: None,
@@ -125,6 +172,7 @@ fn serialize_planner_input_includes_guidance_contract_for_fetch_signal() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "latest weather".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
         current_time_utc: None,
         current_timezone: None,
@@ -166,6 +214,7 @@ fn serialize_planner_input_includes_action_change_contract_for_denied_tool_signa
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "status".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
         current_time_utc: None,
         current_timezone: None,
@@ -195,6 +244,7 @@ fn serialize_planner_input_includes_fetch_contract_for_higher_quality_signal() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "status".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
         current_time_utc: None,
         current_timezone: None,
@@ -236,6 +286,7 @@ fn serialize_planner_input_includes_browser_inspection_contract() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "what is the top video".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
         current_time_utc: None,
         current_timezone: None,
@@ -275,6 +326,7 @@ fn serialize_planner_input_includes_codex_sessions() {
     let payload = serialize_planner_input(&PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "continue the implementation".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["codex_session".to_string()],
         current_time_utc: None,
         current_timezone: None,

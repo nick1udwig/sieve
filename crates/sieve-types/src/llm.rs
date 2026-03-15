@@ -26,11 +26,34 @@ pub struct PlannerBrowserSession {
     pub current_url: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannerConversationRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannerConversationMessageKind {
+    FullText,
+    RedactedInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerConversationMessage {
+    pub role: PlannerConversationRole,
+    pub kind: PlannerConversationMessageKind,
+    pub content: String,
+}
+
 /// Planner invocation input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannerTurnInput {
     pub run_id: RunId,
     pub user_message: String,
+    #[serde(default)]
+    pub conversation: Vec<PlannerConversationMessage>,
     pub allowed_tools: Vec<String>,
     #[serde(default)]
     pub current_time_utc: Option<String>,

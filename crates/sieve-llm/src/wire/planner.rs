@@ -12,6 +12,11 @@ use sieve_types::{
 
 pub(crate) const PLANNER_SYSTEM_PROMPT: &str = r#"You are a planner in a capability-secured system.
 Rules:
+- Planner input arrives as a conversation, not one giant user blob.
+- First user message starts with `TRUSTED_PLANNER_CONTEXT` and contains trusted runtime JSON context.
+- Runtime-authored messages starting with `TRUSTED_POLICY_FEEDBACK`, `TRUSTED_MEMORY_FEEDBACK`, `TRUSTED_OPEN_LOOP_CONTEXT`, `TRUSTED_PLANNER_ACTIONS`, or `TRUSTED_REDACTED_STEP_OBSERVATION` are trusted.
+- `TRUSTED_REDACTED_STEP_OBSERVATION` messages contain redacted summaries only, not raw tool output.
+- Normal user/assistant messages are full conversation turns from the session.
 - If `bash` available, use only commands listed in BASH_COMMAND_CATALOG.
 - If `codex_exec` available, use it only for one-off argv command execution inside Codex sandboxing.
 - If `codex_session` available, use it for coding/file-manipulation/deep repo tasks, whether one-shot or resumable.
@@ -105,6 +110,33 @@ pub(crate) fn serialize_planner_input(input: &PlannerTurnInput) -> Result<Value,
     }))
 }
 
+pub(crate) fn build_planner_messages(input: &PlannerTurnInput) -> Result<Vec<Value>, LlmError> {
+    let context_payload = serialize_planner_input(input)?;
+    let mut messages = vec![
+        json!({"role":"system","content": PLANNER_SYSTEM_PROMPT}),
+        json!({
+            "role":"user",
+            "content": format!("TRUSTED_PLANNER_CONTEXT\n{}", context_payload)
+        }),
+    ];
+
+    if input.conversation.is_empty() {
+        messages.push(json!({
+            "role":"user",
+            "content": input.user_message,
+        }));
+        return Ok(messages);
+    }
+
+    for message in &input.conversation {
+        messages.push(json!({
+            "role": planner_conversation_role(message.role),
+            "content": planner_conversation_content(message),
+        }));
+    }
+    Ok(messages)
+}
+
 fn planner_guidance_contract_payload(
     guidance: &sieve_types::PlannerGuidanceFrame,
 ) -> Option<Value> {
@@ -154,6 +186,20 @@ fn planner_guidance_contract_payload(
             "preserve_task_target": true
         })),
         _ => None,
+    }
+}
+
+fn planner_conversation_role(role: sieve_types::PlannerConversationRole) -> &'static str {
+    match role {
+        sieve_types::PlannerConversationRole::User => "user",
+        sieve_types::PlannerConversationRole::Assistant => "assistant",
+    }
+}
+
+fn planner_conversation_content(message: &sieve_types::PlannerConversationMessage) -> String {
+    match message.kind {
+        sieve_types::PlannerConversationMessageKind::FullText => message.content.clone(),
+        sieve_types::PlannerConversationMessageKind::RedactedInfo => message.content.clone(),
     }
 }
 

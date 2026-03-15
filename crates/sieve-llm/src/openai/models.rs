@@ -10,15 +10,14 @@ use crate::codex::{
 };
 use crate::config::{ensure_provider_openai, env_getter, load_model_config_from_env};
 use crate::wire::{
-    decode_guidance_output, decode_response_output, extract_openai_message_content_json,
-    serialize_planner_input, PLANNER_SYSTEM_PROMPT,
+    build_planner_messages, decode_guidance_output, decode_response_output,
+    extract_openai_message_content_json,
 };
 use crate::{
     GuidanceModel, LlmError, PlannerModel, ResponseModel, ResponseTurnInput, ResponseTurnOutput,
     SummaryModel, SummaryRequest,
 };
 use async_trait::async_trait;
-use serde_json::json;
 use sieve_types::{
     LlmModelConfig, LlmProvider, PlannerGuidanceInput, PlannerGuidanceOutput, PlannerTurnInput,
     PlannerTurnOutput,
@@ -57,11 +56,7 @@ impl PlannerModel for OpenAiPlannerModel {
     }
 
     async fn plan_turn(&self, input: PlannerTurnInput) -> Result<PlannerTurnOutput, LlmError> {
-        let planner_payload = serialize_planner_input(&input)?;
-        let messages = vec![
-            json!({"role":"system","content": PLANNER_SYSTEM_PROMPT}),
-            json!({"role":"user","content": planner_payload.to_string()}),
-        ];
+        let messages = build_planner_messages(&input)?;
 
         match &self.client {
             ProviderClient::OpenAi(client) => {
