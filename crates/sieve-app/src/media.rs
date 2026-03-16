@@ -4,8 +4,7 @@ use sieve_types::{CodexSandboxMode, CodexSessionRequest, RunId};
 use std::path::{Path, PathBuf};
 use tokio::process::Command as TokioCommand;
 
-pub(crate) const CODEX_IMAGE_OCR_PROMPT: &str =
-    "Extract the user's request and any relevant visible text from this image. Return plain text only.";
+pub(crate) const CODEX_IMAGE_OCR_PROMPT: &str = include_str!("prompts/codex_image_ocr.md");
 const ST_TTS_OUTPUT_FORMAT: &str = "opus";
 
 fn command_error_from_output(context: &str, output: &std::process::Output) -> String {
