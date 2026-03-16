@@ -520,8 +520,14 @@ mod tests {
             json!({"role":"assistant","content":"previous reply"}),
         ])
         .expect("split");
-        assert_eq!(input[0].pointer("/content/0/type"), Some(&json!("input_text")));
-        assert_eq!(input[1].pointer("/content/0/type"), Some(&json!("output_text")));
+        assert_eq!(
+            input[0].pointer("/content/0/type"),
+            Some(&json!("input_text"))
+        );
+        assert_eq!(
+            input[1].pointer("/content/0/type"),
+            Some(&json!("output_text"))
+        );
     }
 
     #[test]
