@@ -4,11 +4,48 @@ use crate::wire::{
 };
 use crate::LlmError;
 use reqwest::StatusCode;
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 use sieve_tool_contracts::tool_args_schema;
 use sieve_types::{PlannerTurnOutput, ToolContractValidationReport};
 use std::future::Future;
 use std::time::Duration;
+
+#[derive(Serialize)]
+struct PlannerChatCompletionRequest {
+    model: String,
+    temperature: u8,
+    messages: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<PlannerToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct PlannerToolDefinition {
+    #[serde(rename = "type")]
+    tool_type: &'static str,
+    function: PlannerToolFunction,
+}
+
+#[derive(Serialize)]
+struct PlannerToolFunction {
+    name: String,
+    description: &'static str,
+    parameters: Value,
+}
+
+#[derive(Serialize)]
+struct PlannerTextMessage {
+    role: &'static str,
+    content: String,
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
+    serde_json::to_value(value)
+        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+}
 
 pub(super) async fn run_planner_with_one_regeneration<F, Fut>(
     model: &str,
@@ -60,7 +97,13 @@ where
                 }
                 regenerated = true;
                 let prompt = planner_regeneration_diagnostic_prompt(&report)?;
-                messages.push(json!({"role":"user","content": prompt}));
+                messages.push(to_json_value(
+                    PlannerTextMessage {
+                        role: "user",
+                        content: prompt,
+                    },
+                    "planner regeneration message",
+                ));
             }
         }
     }
@@ -72,24 +115,20 @@ fn planner_chat_completion_request(
     allowed_tools: &[String],
 ) -> Result<Value, LlmError> {
     let tools = planner_tool_definitions(allowed_tools)?;
-    if tools.is_empty() {
-        return Ok(json!({
-            "model": model,
-            "temperature": 0,
-            "messages": messages
-        }));
-    }
-
-    Ok(json!({
-        "model": model,
-        "temperature": 0,
-        "messages": messages,
-        "tools": tools,
-        "tool_choice": "auto"
-    }))
+    let has_tools = !tools.is_empty();
+    Ok(to_json_value(
+        PlannerChatCompletionRequest {
+            model: model.to_string(),
+            temperature: 0,
+            messages,
+            tools: has_tools.then_some(tools),
+            tool_choice: has_tools.then_some("auto"),
+        },
+        "planner chat completion request",
+    ))
 }
 
-fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmError> {
+fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<PlannerToolDefinition>, LlmError> {
     let mut tools = Vec::with_capacity(allowed_tools.len());
     for tool_name in allowed_tools {
         let schema = tool_args_schema(tool_name).ok_or_else(|| {
@@ -97,14 +136,14 @@ fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmE
                 "allowed tool `{tool_name}` is missing a contract schema"
             ))
         })?;
-        tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": tool_name,
-                "description": tool_description(tool_name),
-                "parameters": schema
-            }
-        }));
+        tools.push(PlannerToolDefinition {
+            tool_type: "function",
+            function: PlannerToolFunction {
+                name: tool_name.clone(),
+                description: tool_description(tool_name),
+                parameters: schema,
+            },
+        });
     }
 
     Ok(tools)
