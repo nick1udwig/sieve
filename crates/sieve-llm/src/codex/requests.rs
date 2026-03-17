@@ -79,8 +79,7 @@ struct SummaryPayload {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 pub(crate) fn build_planner_request(
@@ -214,7 +213,9 @@ fn build_structured_request(
     )
 }
 
-fn split_messages(messages: Vec<Value>) -> Result<(Option<String>, Vec<CodexInputMessage>), LlmError> {
+fn split_messages(
+    messages: Vec<Value>,
+) -> Result<(Option<String>, Vec<CodexInputMessage>), LlmError> {
     let mut instructions = None;
     let mut input = Vec::new();
 
@@ -251,7 +252,9 @@ fn split_messages(messages: Vec<Value>) -> Result<(Option<String>, Vec<CodexInpu
     Ok((instructions, input))
 }
 
-fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<CodexToolDefinition>, LlmError> {
+fn planner_tool_definitions(
+    allowed_tools: &[String],
+) -> Result<Vec<CodexToolDefinition>, LlmError> {
     let mut tools = Vec::with_capacity(allowed_tools.len());
     for tool_name in allowed_tools {
         let schema = tool_args_schema(tool_name).ok_or_else(|| {

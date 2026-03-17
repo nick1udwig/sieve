@@ -43,8 +43,7 @@ struct PlannerTextMessage {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 pub(super) async fn run_planner_with_one_regeneration<F, Fut>(
@@ -128,7 +127,9 @@ fn planner_chat_completion_request(
     ))
 }
 
-fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<PlannerToolDefinition>, LlmError> {
+fn planner_tool_definitions(
+    allowed_tools: &[String],
+) -> Result<Vec<PlannerToolDefinition>, LlmError> {
     let mut tools = Vec::with_capacity(allowed_tools.len());
     for tool_name in allowed_tools {
         let schema = tool_args_schema(tool_name).ok_or_else(|| {

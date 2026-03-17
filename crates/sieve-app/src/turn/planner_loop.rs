@@ -117,8 +117,7 @@ struct ComposeDecisionPayload {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn finalize_heartbeat_message(thoughts: Option<&str>) -> GeneratedAssistantMessage {
@@ -437,8 +436,7 @@ pub(super) async fn generate_assistant_message(
                         step_number,
                         signal_code: signal.code(),
                         effective_signal_code: effective_signal.code(),
-                        override_reason: override_applied
-                            .map(|(_, reason)| reason.to_string()),
+                        override_reason: override_applied.map(|(_, reason)| reason.to_string()),
                         should_continue,
                         step_tool_count,
                         planner_steps_taken,
@@ -478,7 +476,10 @@ pub(super) async fn generate_assistant_message(
                         planner_step_limit,
                         planner_step_hard_limit,
                         compose_followup_cycles,
-                        delivered: matches!(heartbeat_message, GeneratedAssistantMessage::Deliver { .. }),
+                        delivered: matches!(
+                            heartbeat_message,
+                            GeneratedAssistantMessage::Deliver { .. }
+                        ),
                     },
                     "heartbeat finalize payload",
                 ),
@@ -725,7 +726,11 @@ pub(super) async fn generate_assistant_message(
                 to_json_value(
                     ComposeDecisionPayload {
                         planner_decision_code: signal.code(),
-                        quality_gate_len: composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
+                        quality_gate_len: composed
+                            .quality_gate
+                            .as_deref()
+                            .map(str::len)
+                            .unwrap_or(0),
                         planner_steps_taken,
                         planner_step_limit,
                         planner_step_hard_limit,

@@ -3,6 +3,7 @@ use super::{
     session_name_from_instruction, summarize_instruction, CodexSessionStore, StoredCodexSession,
 };
 use async_trait::async_trait;
+use serde::Serialize;
 use sieve_runtime::{CodexExecToolResult, CodexSessionToolResult, CodexTool, RuntimeEventLog};
 use sieve_types::{
     ApprovalAction, ApprovalPromptKind, ApprovalRequestId, ApprovalRequestedEvent,
@@ -10,7 +11,6 @@ use sieve_types::{
     CodexSessionLifecycleStatus, CodexSessionRequest, CodexSessionStatusEvent, CodexTurnResult,
     CodexTurnStatus, CommandSegment, PlannerCodexSession, RunId, RuntimeEvent,
 };
-use serde::Serialize;
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
@@ -148,8 +148,7 @@ enum SandboxPolicy {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 impl CodexManager {
@@ -397,9 +396,7 @@ impl CodexManager {
                     client.request(
                         "thread/resume",
                         to_json_value(
-                            ThreadResumeParams {
-                                thread_id,
-                            },
+                            ThreadResumeParams { thread_id },
                             "codex thread resume params",
                         ),
                     ),
@@ -479,23 +476,23 @@ impl CodexManager {
             .call_with_timeout(
                 "turn/start",
                 client.request(
-                "turn/start",
-                to_json_value(
-                    TurnStartParams {
-                        thread_id: &thread_id,
-                        input: build_turn_input(&run_ctx.instruction, &run_ctx.local_images),
-                        cwd: run_ctx.cwd.as_deref(),
-                        approval_policy: "on-request",
-                        sandbox_policy: sandbox_policy_json(
-                            run_ctx.sandbox,
-                            run_ctx.cwd.as_deref(),
-                            &run_ctx.writable_roots,
-                        ),
-                        model: &self.config.model,
-                        output_schema: structured_turn_output_schema(),
-                    },
-                    "codex turn start params",
-                ),
+                    "turn/start",
+                    to_json_value(
+                        TurnStartParams {
+                            thread_id: &thread_id,
+                            input: build_turn_input(&run_ctx.instruction, &run_ctx.local_images),
+                            cwd: run_ctx.cwd.as_deref(),
+                            approval_policy: "on-request",
+                            sandbox_policy: sandbox_policy_json(
+                                run_ctx.sandbox,
+                                run_ctx.cwd.as_deref(),
+                                &run_ctx.writable_roots,
+                            ),
+                            model: &self.config.model,
+                            output_schema: structured_turn_output_schema(),
+                        },
+                        "codex turn start params",
+                    ),
                 ),
             )
             .await?;
