@@ -85,6 +85,78 @@ struct TurnLogContext {
     turn_kind: String,
 }
 
+#[derive(Serialize)]
+struct TurnScopedRecord<'a, T: Serialize> {
+    schema_version: u16,
+    event: &'a str,
+    component: &'a str,
+    level: &'a str,
+    created_at_ms: u64,
+    session_id: &'a str,
+    turn_id: &'a str,
+    payload: T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "logical_session_key")]
+    session_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_kind: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ConversationPayload<'a> {
+    role: ConversationRole,
+    message: &'a str,
+}
+
+#[derive(Serialize)]
+struct ApprovalRequestedPayload<'a> {
+    request_id: &'a str,
+    command_segments: &'a [sieve_types::CommandSegment],
+    inferred_capabilities: &'a [sieve_types::Capability],
+    blocked_rule_id: &'a str,
+    reason: &'a str,
+    reply_to_session_id: &'a Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApprovalResolvedPayload<'a> {
+    request_id: &'a str,
+    action: &'a sieve_types::ApprovalAction,
+}
+
+#[derive(Serialize)]
+struct PolicyEvaluatedPayload<'a> {
+    decision: &'a sieve_types::PolicyDecision,
+    inferred_capabilities: &'a [sieve_types::Capability],
+    trace_path: &'a Option<String>,
+}
+
+#[derive(Serialize)]
+struct QuarantineCompletedPayload<'a> {
+    report: &'a sieve_types::QuarantineReport,
+}
+
+#[derive(Serialize)]
+struct CodexSessionStatusPayload<'a> {
+    session_id: &'a str,
+    session_name: &'a str,
+    cwd: &'a Option<String>,
+    status: &'a sieve_types::CodexSessionLifecycleStatus,
+    started_at_ms: u64,
+    updated_at_ms: u64,
+    last_step: &'a str,
+    summary: &'a Option<String>,
+}
+
+#[derive(Serialize)]
+struct AssistantMessagePayload<'a> {
+    message: &'a str,
+    reply_to_session_id: &'a Option<String>,
+}
+
 pub(crate) struct FanoutRuntimeEventLog {
     jsonl: JsonlRuntimeEventLog,
     session_id: String,
@@ -168,17 +240,16 @@ impl FanoutRuntimeEventLog {
         &self,
         record: ConversationLogRecord,
     ) -> Result<(), EventLogError> {
-        let payload = serde_json::json!({
-            "role": record.role,
-            "message": record.message,
-        });
         let value = self.turn_scoped_record(
             "conversation",
             "conversation",
             "info",
             &record.run_id,
             record.created_at_ms,
-            payload,
+            &ConversationPayload {
+                role: record.role,
+                message: &record.message,
+            },
         )?;
         self.jsonl.append_json_value(&value).await?;
         let session_key = self
@@ -201,28 +272,28 @@ impl FanoutRuntimeEventLog {
         Ok(())
     }
 
-    pub(crate) async fn append_app_event(
+    pub(crate) async fn append_app_event<T: Serialize>(
         &self,
         component: &str,
         event: &str,
         level: &str,
         run_id: &RunId,
         created_at_ms: u64,
-        payload: serde_json::Value,
+        payload: T,
     ) -> Result<(), EventLogError> {
         let value =
-            self.turn_scoped_record(event, component, level, run_id, created_at_ms, payload)?;
+            self.turn_scoped_record(event, component, level, run_id, created_at_ms, &payload)?;
         self.jsonl.append_json_value(&value).await
     }
 
-    fn turn_scoped_record(
+    fn turn_scoped_record<T: Serialize>(
         &self,
         event: &str,
         component: &str,
         level: &str,
         run_id: &RunId,
         created_at_ms: u64,
-        payload: serde_json::Value,
+        payload: &T,
     ) -> Result<serde_json::Value, EventLogError> {
         let context = self
             .turn_contexts
@@ -230,23 +301,21 @@ impl FanoutRuntimeEventLog {
             .map_err(|_| EventLogError::Append("turn log contexts lock poisoned".to_string()))?
             .get(run_id)
             .cloned();
-        let mut record = serde_json::json!({
-            "schema_version": 2,
-            "event": event,
-            "component": component,
-            "level": level,
-            "created_at_ms": created_at_ms,
-            "session_id": self.session_id,
-            "turn_id": run_id.0,
-            "payload": payload,
-        });
-        if let Some(context) = context {
-            record["turn_seq"] = serde_json::json!(context.turn_seq);
-            record["source"] = serde_json::json!(context.source);
-            record["logical_session_key"] = serde_json::json!(context.session_key);
-            record["turn_kind"] = serde_json::json!(context.turn_kind);
-        }
-        Ok(record)
+        serde_json::to_value(TurnScopedRecord {
+            schema_version: 2,
+            event,
+            component,
+            level,
+            created_at_ms,
+            session_id: &self.session_id,
+            turn_id: &run_id.0,
+            payload,
+            turn_seq: context.as_ref().map(|value| value.turn_seq),
+            source: context.as_ref().map(|value| value.source.clone()),
+            session_key: context.as_ref().map(|value| value.session_key.clone()),
+            turn_kind: context.as_ref().map(|value| value.turn_kind.clone()),
+        })
+        .map_err(|err| EventLogError::Append(format!("failed to encode event record: {err}")))
     }
 
     fn runtime_event_record(
@@ -270,14 +339,14 @@ impl FanoutRuntimeEventLog {
                 "info",
                 run_id,
                 *created_at_ms,
-                serde_json::json!({
-                    "request_id": request_id.0,
-                    "command_segments": command_segments,
-                    "inferred_capabilities": inferred_capabilities,
-                    "blocked_rule_id": blocked_rule_id,
-                    "reason": reason,
-                    "reply_to_session_id": reply_to_session_id,
-                }),
+                &ApprovalRequestedPayload {
+                    request_id: &request_id.0,
+                    command_segments,
+                    inferred_capabilities,
+                    blocked_rule_id,
+                    reason,
+                    reply_to_session_id,
+                },
             ),
             RuntimeEvent::ApprovalResolved(ApprovalResolvedEvent {
                 run_id,
@@ -291,10 +360,10 @@ impl FanoutRuntimeEventLog {
                 "info",
                 run_id,
                 *created_at_ms,
-                serde_json::json!({
-                    "request_id": request_id.0,
-                    "action": action,
-                }),
+                &ApprovalResolvedPayload {
+                    request_id: &request_id.0,
+                    action,
+                },
             ),
             RuntimeEvent::PolicyEvaluated(PolicyEvaluatedEvent {
                 run_id,
@@ -309,11 +378,11 @@ impl FanoutRuntimeEventLog {
                 "info",
                 run_id,
                 *created_at_ms,
-                serde_json::json!({
-                    "decision": decision,
-                    "inferred_capabilities": inferred_capabilities,
-                    "trace_path": trace_path,
-                }),
+                &PolicyEvaluatedPayload {
+                    decision,
+                    inferred_capabilities,
+                    trace_path,
+                },
             ),
             RuntimeEvent::QuarantineCompleted(QuarantineCompletedEvent {
                 run_id,
@@ -326,9 +395,7 @@ impl FanoutRuntimeEventLog {
                 "info",
                 run_id,
                 *created_at_ms,
-                serde_json::json!({
-                    "report": report,
-                }),
+                &QuarantineCompletedPayload { report },
             ),
             RuntimeEvent::CodexSessionStatus(CodexSessionStatusEvent {
                 run_id,
@@ -347,16 +414,16 @@ impl FanoutRuntimeEventLog {
                 "info",
                 run_id,
                 *updated_at_ms,
-                serde_json::json!({
-                    "session_id": session_id,
-                    "session_name": session_name,
-                    "cwd": cwd,
-                    "status": status,
-                    "started_at_ms": started_at_ms,
-                    "updated_at_ms": updated_at_ms,
-                    "last_step": last_step,
-                    "summary": summary,
-                }),
+                &CodexSessionStatusPayload {
+                    session_id,
+                    session_name,
+                    cwd,
+                    status,
+                    started_at_ms: *started_at_ms,
+                    updated_at_ms: *updated_at_ms,
+                    last_step,
+                    summary,
+                },
             ),
             RuntimeEvent::AssistantMessage(AssistantMessageEvent {
                 run_id,
@@ -370,10 +437,10 @@ impl FanoutRuntimeEventLog {
                 "info",
                 run_id,
                 *created_at_ms,
-                serde_json::json!({
-                    "message": message,
-                    "reply_to_session_id": reply_to_session_id,
-                }),
+                &AssistantMessagePayload {
+                    message,
+                    reply_to_session_id,
+                },
             ),
         }
     }
