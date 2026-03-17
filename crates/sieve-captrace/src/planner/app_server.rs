@@ -7,7 +7,8 @@ use crate::command_match::argv_matches_command;
 use crate::error::CapTraceError;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 use sieve_shell::{BasicShellAnalyzer, ShellAnalyzer};
 use std::collections::{BTreeSet, VecDeque};
 use tokio::net::TcpStream;
@@ -108,6 +109,83 @@ struct AppServerWsClient {
     next_id: u64,
 }
 
+#[derive(Serialize)]
+struct InitializeParams<'a> {
+    #[serde(rename = "clientInfo")]
+    client_info: ClientInfo<'a>,
+}
+
+#[derive(Serialize)]
+struct ClientInfo<'a> {
+    name: &'a str,
+    title: &'a str,
+    version: &'a str,
+}
+
+#[derive(Serialize)]
+struct ThreadStartParams<'a> {
+    model: &'a str,
+}
+
+#[derive(Serialize)]
+struct TurnStartParams<'a> {
+    #[serde(rename = "threadId")]
+    thread_id: &'a str,
+    input: [TurnInput<'a>; 1],
+    #[serde(rename = "outputSchema")]
+    output_schema: TurnOutputSchema,
+}
+
+#[derive(Serialize)]
+struct TurnInput<'a> {
+    #[serde(rename = "type")]
+    input_type: &'static str,
+    text: &'a str,
+}
+
+#[derive(Serialize)]
+struct TurnOutputSchema {
+    #[serde(rename = "type")]
+    schema_type: &'static str,
+    required: [&'static str; 1],
+    #[serde(rename = "additionalProperties")]
+    additional_properties: bool,
+    properties: TurnOutputProperties,
+}
+
+#[derive(Serialize)]
+struct TurnOutputProperties {
+    cases: TurnCasesProperty,
+}
+
+#[derive(Serialize)]
+struct TurnCasesProperty {
+    #[serde(rename = "type")]
+    property_type: &'static str,
+    items: TurnCaseItem,
+    #[serde(rename = "minItems")]
+    min_items: u8,
+}
+
+#[derive(Serialize)]
+struct TurnCaseItem {
+    #[serde(rename = "type")]
+    item_type: &'static str,
+}
+
+#[derive(Serialize)]
+struct JsonRpcRequest<'a, T: Serialize> {
+    method: &'a str,
+    id: u64,
+    params: T,
+}
+
+#[derive(Serialize)]
+struct JsonRpcNotification<'a, T: Serialize> {
+    method: &'a str,
+    params: T,
+}
+
 impl AppServerWsClient {
     async fn connect(ws_url: &str, connect_timeout: Duration) -> Result<Self, CapTraceError> {
         let (socket, _) = timeout(connect_timeout, connect_async(ws_url))
@@ -128,17 +206,21 @@ impl AppServerWsClient {
     async fn initialize(&mut self) -> Result<(), CapTraceError> {
         self.request(
             "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "sieve_captrace",
-                    "title": "Sieve CapTrace",
-                    "version": env!("CARGO_PKG_VERSION")
-                }
-            }),
+            to_json_value(
+                InitializeParams {
+                    client_info: ClientInfo {
+                        name: "sieve_captrace",
+                        title: "Sieve CapTrace",
+                        version: env!("CARGO_PKG_VERSION"),
+                    },
+                },
+                "captrace initialize params",
+            ),
             Duration::from_secs(5),
         )
         .await?;
-        self.notify("initialized", json!({})).await?;
+        self.notify("initialized", Value::Object(Default::default()))
+            .await?;
         Ok(())
     }
 
@@ -146,9 +228,7 @@ impl AppServerWsClient {
         let result = self
             .request(
                 "thread/start",
-                json!({
-                    "model": model
-                }),
+                to_json_value(ThreadStartParams { model }, "captrace thread start params"),
                 Duration::from_secs(10),
             )
             .await?;
@@ -165,24 +245,30 @@ impl AppServerWsClient {
         let result = self
             .request(
                 "turn/start",
-                json!({
-                    "threadId": thread_id,
-                    "input": [
-                        { "type": "text", "text": prompt }
-                    ],
-                    "outputSchema": {
-                        "type": "object",
-                        "required": ["cases"],
-                        "additionalProperties": false,
-                        "properties": {
-                            "cases": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "minItems": 1
-                            }
-                        }
-                    }
-                }),
+                to_json_value(
+                    TurnStartParams {
+                        thread_id,
+                        input: [TurnInput {
+                            input_type: "text",
+                            text: prompt,
+                        }],
+                        output_schema: TurnOutputSchema {
+                            schema_type: "object",
+                            required: ["cases"],
+                            additional_properties: false,
+                            properties: TurnOutputProperties {
+                                cases: TurnCasesProperty {
+                                    property_type: "array",
+                                    items: TurnCaseItem {
+                                        item_type: "string",
+                                    },
+                                    min_items: 1,
+                                },
+                            },
+                        },
+                    },
+                    "captrace turn start params",
+                ),
                 Duration::from_secs(15),
             )
             .await?;
@@ -262,10 +348,7 @@ impl AppServerWsClient {
     }
 
     async fn notify(&mut self, method: &str, params: Value) -> Result<(), CapTraceError> {
-        self.send_json(&json!({
-            "method": method,
-            "params": params
-        }))
+        self.send_json(JsonRpcNotification { method, params })
         .await
     }
 
@@ -277,11 +360,7 @@ impl AppServerWsClient {
     ) -> Result<Value, CapTraceError> {
         let id = self.next_id;
         self.next_id += 1;
-        self.send_json(&json!({
-            "method": method,
-            "id": id,
-            "params": params
-        }))
+        self.send_json(JsonRpcRequest { method, id, params })
         .await?;
 
         let mut deferred = VecDeque::new();
@@ -364,14 +443,19 @@ impl AppServerWsClient {
         }
     }
 
-    async fn send_json(&mut self, value: &Value) -> Result<(), CapTraceError> {
-        let text = serde_json::to_string(value)
+    async fn send_json<T: Serialize>(&mut self, value: T) -> Result<(), CapTraceError> {
+        let text = serde_json::to_string(&value)
             .map_err(|err| CapTraceError::Llm(format!("serialize rpc message failed: {err}")))?;
         self.socket
             .send(tokio_tungstenite::tungstenite::Message::Text(text))
             .await
             .map_err(|err| CapTraceError::Llm(format!("codex app-server write failed: {err}")))
     }
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
+    serde_json::to_value(value)
+        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn parse_cases_from_agent_message(raw: &str) -> Result<Vec<String>, CapTraceError> {
