@@ -25,6 +25,7 @@ use crate::working_state::{
     looks_like_open_loop_confirmation, OpenLoopStore,
 };
 use chrono::{SecondsFormat, TimeZone, Utc};
+use serde::Serialize;
 use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
 use sieve_runtime::{
     EventLogError, PlannerRunRequest, PlannerRunResult, PlannerToolResult, RuntimeEventLog,
@@ -44,6 +45,80 @@ pub(super) enum GeneratedAssistantMessage {
         reply_to_session_id: Option<String>,
     },
     SuppressHeartbeat,
+}
+
+#[derive(Serialize)]
+struct PlannerRepeatGuardPayload {
+    step_number: usize,
+    planner_steps_taken: usize,
+    reason: &'static str,
+    #[serde(rename = "continue")]
+    should_continue: bool,
+    next_signal_code: u16,
+}
+
+#[derive(Serialize)]
+struct StepCounterPayload {
+    step_number: usize,
+    planner_steps_taken: usize,
+}
+
+#[derive(Serialize)]
+struct PlannerGuidancePayload {
+    step_number: usize,
+    signal_code: u16,
+    effective_signal_code: u16,
+    override_reason: Option<String>,
+    #[serde(rename = "continue")]
+    should_continue: bool,
+    step_tool_count: usize,
+    planner_steps_taken: usize,
+    planner_step_limit: usize,
+    planner_step_hard_limit: usize,
+    auto_extended_limit: bool,
+    consecutive_empty_steps: usize,
+}
+
+#[derive(Serialize)]
+struct HeartbeatFinalizePayload {
+    planner_steps_taken: usize,
+    planner_step_limit: usize,
+    planner_step_hard_limit: usize,
+    compose_followup_cycles: usize,
+    delivered: bool,
+}
+
+#[derive(Serialize)]
+struct TurnFinalizePayload {
+    planner_steps_taken: usize,
+    planner_step_limit: usize,
+    planner_step_hard_limit: usize,
+    compose_followup_cycles: usize,
+    quality_gate_len: usize,
+    summary_calls_used: usize,
+    summary_call_budget: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open_loop_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ComposeDecisionPayload {
+    planner_decision_code: u16,
+    quality_gate_len: usize,
+    planner_steps_taken: usize,
+    planner_step_limit: usize,
+    planner_step_hard_limit: usize,
+    compose_followup_cycles: usize,
+    #[serde(rename = "continue")]
+    should_continue: bool,
+    continue_block_reason: Option<&'static str>,
+    summary_calls_used: usize,
+    summary_call_budget: usize,
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
+    serde_json::to_value(value)
+        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn finalize_heartbeat_message(thoughts: Option<&str>) -> GeneratedAssistantMessage {
@@ -238,13 +313,16 @@ pub(super) async fn generate_assistant_message(
                     event_log,
                     run_id,
                     "planner_repeat_guard",
-                    serde_json::json!({
-                        "step_number": step_number,
-                        "planner_steps_taken": planner_steps_taken,
-                        "reason": "detected repeated bash command/result; forcing action-change guidance",
-                        "continue": can_retry,
-                        "next_signal_code": PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction.code(),
-                    }),
+                    to_json_value(
+                        PlannerRepeatGuardPayload {
+                            step_number,
+                            planner_steps_taken,
+                            reason: "detected repeated bash command/result; forcing action-change guidance",
+                            should_continue: can_retry,
+                            next_signal_code: PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction.code(),
+                        },
+                        "planner repeat guard payload",
+                    ),
                 )
                 .await;
                 let guidance_frame = PlannerGuidanceFrame {
@@ -290,10 +368,13 @@ pub(super) async fn generate_assistant_message(
                         event_log,
                         run_id,
                         "planner_guidance_error",
-                        serde_json::json!({
-                            "step_number": step_number,
-                            "planner_steps_taken": planner_steps_taken,
-                        }),
+                        to_json_value(
+                            StepCounterPayload {
+                                step_number,
+                                planner_steps_taken,
+                            },
+                            "planner guidance error payload",
+                        ),
                     )
                     .await;
                     break;
@@ -310,10 +391,13 @@ pub(super) async fn generate_assistant_message(
                         event_log,
                         run_id,
                         "planner_guidance_invalid",
-                        serde_json::json!({
-                            "step_number": step_number,
-                            "planner_steps_taken": planner_steps_taken,
-                        }),
+                        to_json_value(
+                            StepCounterPayload {
+                                step_number,
+                                planner_steps_taken,
+                            },
+                            "planner guidance invalid payload",
+                        ),
                     )
                     .await;
                     break;
@@ -348,19 +432,23 @@ pub(super) async fn generate_assistant_message(
                 event_log,
                 run_id,
                 "planner_guidance",
-                serde_json::json!({
-                    "step_number": step_number,
-                    "signal_code": signal.code(),
-                    "effective_signal_code": effective_signal.code(),
-                    "override_reason": override_applied.map(|(_, reason)| reason),
-                    "continue": should_continue,
-                    "step_tool_count": step_tool_count,
-                    "planner_steps_taken": planner_steps_taken,
-                    "planner_step_limit": planner_step_limit,
-                    "planner_step_hard_limit": planner_step_hard_limit,
-                    "auto_extended_limit": auto_extended_limit,
-                    "consecutive_empty_steps": consecutive_empty_steps,
-                }),
+                to_json_value(
+                    PlannerGuidancePayload {
+                        step_number,
+                        signal_code: signal.code(),
+                        effective_signal_code: effective_signal.code(),
+                        override_reason: override_applied
+                            .map(|(_, reason)| reason.to_string()),
+                        should_continue,
+                        step_tool_count,
+                        planner_steps_taken,
+                        planner_step_limit,
+                        planner_step_hard_limit,
+                        auto_extended_limit,
+                        consecutive_empty_steps,
+                    },
+                    "planner guidance payload",
+                ),
             )
             .await;
             let mut guidance_frame = guidance_output.guidance;
@@ -384,13 +472,16 @@ pub(super) async fn generate_assistant_message(
                 event_log,
                 run_id,
                 "heartbeat_finalize",
-                serde_json::json!({
-                    "planner_steps_taken": planner_steps_taken,
-                    "planner_step_limit": planner_step_limit,
-                    "planner_step_hard_limit": planner_step_hard_limit,
-                    "compose_followup_cycles": compose_followup_cycles,
-                    "delivered": matches!(heartbeat_message, GeneratedAssistantMessage::Deliver { .. }),
-                }),
+                to_json_value(
+                    HeartbeatFinalizePayload {
+                        planner_steps_taken,
+                        planner_step_limit,
+                        planner_step_hard_limit,
+                        compose_followup_cycles,
+                        delivered: matches!(heartbeat_message, GeneratedAssistantMessage::Deliver { .. }),
+                    },
+                    "heartbeat finalize payload",
+                ),
             )
             .await;
             return Ok(heartbeat_message);
@@ -423,16 +514,19 @@ pub(super) async fn generate_assistant_message(
                     event_log,
                     run_id,
                     "turn_finalize",
-                    serde_json::json!({
-                        "planner_steps_taken": planner_steps_taken,
-                        "planner_step_limit": planner_step_limit,
-                        "planner_step_hard_limit": planner_step_hard_limit,
-                        "compose_followup_cycles": compose_followup_cycles,
-                        "quality_gate_len": 0,
-                        "summary_calls_used": summary_calls_used,
-                        "summary_call_budget": cfg.max_summary_calls_per_turn,
-                        "open_loop_id": open_loop.loop_id,
-                    }),
+                    to_json_value(
+                        TurnFinalizePayload {
+                            planner_steps_taken,
+                            planner_step_limit,
+                            planner_step_hard_limit,
+                            compose_followup_cycles,
+                            quality_gate_len: 0,
+                            summary_calls_used,
+                            summary_call_budget: cfg.max_summary_calls_per_turn,
+                            open_loop_id: Some(open_loop.loop_id.clone()),
+                        },
+                        "turn finalize open loop payload",
+                    ),
                 )
                 .await;
                 return Ok(GeneratedAssistantMessage::Deliver {
@@ -561,15 +655,19 @@ pub(super) async fn generate_assistant_message(
                 event_log,
                 run_id,
                 "turn_finalize",
-                serde_json::json!({
-                    "planner_steps_taken": planner_steps_taken,
-                    "planner_step_limit": planner_step_limit,
-                    "planner_step_hard_limit": planner_step_hard_limit,
-                    "compose_followup_cycles": compose_followup_cycles,
-                    "quality_gate_len": 0,
-                    "summary_calls_used": summary_calls_used,
-                    "summary_call_budget": cfg.max_summary_calls_per_turn,
-                }),
+                to_json_value(
+                    TurnFinalizePayload {
+                        planner_steps_taken,
+                        planner_step_limit,
+                        planner_step_hard_limit,
+                        compose_followup_cycles,
+                        quality_gate_len: 0,
+                        summary_calls_used,
+                        summary_call_budget: cfg.max_summary_calls_per_turn,
+                        open_loop_id: None,
+                    },
+                    "turn finalize no action payload",
+                ),
             )
             .await;
             return Ok(GeneratedAssistantMessage::Deliver {
@@ -624,18 +722,21 @@ pub(super) async fn generate_assistant_message(
                 event_log,
                 run_id,
                 "compose_decision",
-                serde_json::json!({
-                    "planner_decision_code": signal.code(),
-                    "quality_gate_len": composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
-                    "planner_steps_taken": planner_steps_taken,
-                    "planner_step_limit": planner_step_limit,
-                    "planner_step_hard_limit": planner_step_hard_limit,
-                    "compose_followup_cycles": compose_followup_cycles,
-                    "continue": can_continue,
-                    "continue_block_reason": continue_block_reason,
-                    "summary_calls_used": summary_calls_used,
-                    "summary_call_budget": cfg.max_summary_calls_per_turn,
-                }),
+                to_json_value(
+                    ComposeDecisionPayload {
+                        planner_decision_code: signal.code(),
+                        quality_gate_len: composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
+                        planner_steps_taken,
+                        planner_step_limit,
+                        planner_step_hard_limit,
+                        compose_followup_cycles,
+                        should_continue: can_continue,
+                        continue_block_reason,
+                        summary_calls_used,
+                        summary_call_budget: cfg.max_summary_calls_per_turn,
+                    },
+                    "compose decision payload",
+                ),
             )
             .await;
             if can_continue {
@@ -674,15 +775,19 @@ pub(super) async fn generate_assistant_message(
             event_log,
             run_id,
             "turn_finalize",
-            serde_json::json!({
-                "planner_steps_taken": planner_steps_taken,
-                "planner_step_limit": planner_step_limit,
-                "planner_step_hard_limit": planner_step_hard_limit,
-                "compose_followup_cycles": compose_followup_cycles,
-                "quality_gate_len": composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
-                "summary_calls_used": summary_calls_used,
-                "summary_call_budget": cfg.max_summary_calls_per_turn,
-            }),
+            to_json_value(
+                TurnFinalizePayload {
+                    planner_steps_taken,
+                    planner_step_limit,
+                    planner_step_hard_limit,
+                    compose_followup_cycles,
+                    quality_gate_len: composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
+                    summary_calls_used,
+                    summary_call_budget: cfg.max_summary_calls_per_turn,
+                    open_loop_id: None,
+                },
+                "turn finalize payload",
+            ),
         )
         .await;
         return Ok(GeneratedAssistantMessage::Deliver {
