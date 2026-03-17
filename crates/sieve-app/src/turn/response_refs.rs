@@ -6,6 +6,7 @@ use sieve_llm::{
     SummaryModel, SummaryRequest,
 };
 use sieve_runtime::{PlannerRunResult, PlannerToolResult, RuntimeDisposition};
+use sieve_tool_contracts::planner_exposed_tool_names;
 use sieve_types::{Integrity, InteractionModality, RunId, TrustedToolEffect};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -36,24 +37,11 @@ pub(crate) fn planner_allowed_tools_for_turn(
     automation_available: bool,
     codex_available: bool,
 ) -> Vec<String> {
-    configured_tools
-        .iter()
-        .filter(|tool| {
-            is_native_planner_tool(tool)
-                && (has_known_value_refs
-                    || (tool.as_str() != "endorse" && tool.as_str() != "declassify"))
-                && (automation_available || tool.as_str() != "automation")
-                && (codex_available
-                    || (tool.as_str() != "codex_exec" && tool.as_str() != "codex_session"))
-        })
-        .cloned()
-        .collect()
-}
-
-fn is_native_planner_tool(tool: &str) -> bool {
-    matches!(
-        tool,
-        "automation" | "bash" | "codex_exec" | "codex_session" | "endorse" | "declassify"
+    planner_exposed_tool_names(
+        configured_tools,
+        has_known_value_refs,
+        automation_available,
+        codex_available,
     )
 }
 

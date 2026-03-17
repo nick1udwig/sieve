@@ -19,6 +19,7 @@ sieve-command-summaries = { path = "../sieve-command-summaries" }
 sieve-interface-telegram = { path = "../sieve-interface-telegram" }
 sieve-llm = { path = "../sieve-llm" }
 sieve-policy = { path = "../sieve-policy" }
+sieve-tool-contracts = { path = "../sieve-tool-contracts" }
 sieve-prompts = { path = "../sieve-prompts" }
 sieve-quarantine = { path = "../sieve-quarantine" }
 sieve-runtime = { path = "../sieve-runtime" }

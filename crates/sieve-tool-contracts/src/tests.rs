@@ -1,5 +1,7 @@
 use super::*;
-use crate::{supported_tool_descriptors, tool_descriptor};
+use crate::{
+    planner_exposed_tool_names, supported_tool_descriptors, tool_descriptor, ToolExposure,
+};
 use serde_json::{json, Value};
 use sieve_types::{
     AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, CodexExecRequest,
@@ -339,7 +341,7 @@ fn committed_schema_artifacts_match_generated() {
 fn every_supported_tool_has_a_shared_descriptor() {
     for tool_name in supported_tools() {
         let descriptor = tool_descriptor(tool_name).expect("descriptor");
-        assert_eq!(descriptor.name, *tool_name);
+        assert_eq!(descriptor.name, tool_name);
         assert!(!descriptor.description.trim().is_empty());
     }
     assert_eq!(supported_tool_descriptors().len(), supported_tools().len());
@@ -350,7 +352,48 @@ fn automation_descriptor_captures_schedule_examples_and_avoidance() {
     let descriptor = tool_descriptor("automation").expect("automation descriptor");
     let rendered = descriptor.render_function_description();
     assert!(rendered.contains("Manage heartbeat and cron automation jobs."));
+    assert_eq!(descriptor.exposure, ToolExposure::RequiresAutomation);
     assert!(rendered.contains("Use when: explicit reminders"));
     assert!(rendered.contains("Avoid when: retrieval, search, inspection, or triage questions"));
     assert!(rendered.contains("\"kind\":\"after\""));
+}
+
+#[test]
+fn planner_exposed_tool_names_respects_registry_availability() {
+    let configured = vec![
+        "bash".to_string(),
+        "gws".to_string(),
+        "automation".to_string(),
+        "codex_exec".to_string(),
+        "codex_session".to_string(),
+        "endorse".to_string(),
+        "declassify".to_string(),
+    ];
+    assert_eq!(
+        planner_exposed_tool_names(&configured, false, false, false),
+        vec!["bash".to_string()]
+    );
+    assert_eq!(
+        planner_exposed_tool_names(&configured, false, true, false),
+        vec!["bash".to_string(), "automation".to_string()]
+    );
+    assert_eq!(
+        planner_exposed_tool_names(&configured, true, false, false),
+        vec![
+            "bash".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]
+    );
+    assert_eq!(
+        planner_exposed_tool_names(&configured, true, true, true),
+        vec![
+            "bash".to_string(),
+            "automation".to_string(),
+            "codex_exec".to_string(),
+            "codex_session".to_string(),
+            "endorse".to_string(),
+            "declassify".to_string(),
+        ]
+    );
 }

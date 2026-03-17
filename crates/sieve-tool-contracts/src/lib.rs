@@ -11,7 +11,10 @@ use sieve_types::{
 };
 use thiserror::Error;
 
-pub use descriptors::{supported_tool_descriptors, tool_descriptor, ToolDescriptor};
+pub use descriptors::{
+    is_native_planner_tool, planner_exposed_tool_names, supported_tool_descriptors,
+    tool_descriptor, ToolDescriptor, ToolExposure,
+};
 pub use schemas::{
     all_tool_args_schemas, emitted_schema_documents, planner_tool_call_schema,
     planner_turn_output_schema, tool_args_schema,
@@ -142,15 +145,11 @@ impl ContractError {
     }
 }
 
-pub fn supported_tools() -> &'static [&'static str] {
-    &[
-        TOOL_AUTOMATION,
-        TOOL_BASH,
-        TOOL_CODEX_EXEC,
-        TOOL_CODEX_SESSION,
-        TOOL_ENDORSE,
-        TOOL_DECLASSIFY,
-    ]
+pub fn supported_tools() -> Vec<&'static str> {
+    supported_tool_descriptors()
+        .iter()
+        .map(|descriptor| descriptor.name)
+        .collect()
 }
 
 pub(crate) fn make_error(
