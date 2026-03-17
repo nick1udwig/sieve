@@ -118,8 +118,7 @@ struct ComposeUserReplyPayload<'a> {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn compose_tool_outcome_payloads<'a>(

@@ -217,13 +217,11 @@ fn planner_guidance_contract_payload(
                 ..Default::default()
             })
         }
-        PlannerGuidanceSignal::ContinueNeedCommandReformulation => {
-            Some(PlannerGuidanceContract {
-                require_action_change: Some(true),
-                preserve_task_target: Some(true),
-                ..Default::default()
-            })
-        }
+        PlannerGuidanceSignal::ContinueNeedCommandReformulation => Some(PlannerGuidanceContract {
+            require_action_change: Some(true),
+            preserve_task_target: Some(true),
+            ..Default::default()
+        }),
         _ => None,
     }
 }

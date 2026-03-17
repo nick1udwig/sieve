@@ -99,7 +99,10 @@ struct TurnScopedRecord<'a, T: Serialize> {
     turn_seq: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "logical_session_key")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "logical_session_key"
+    )]
     session_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     turn_kind: Option<String>,

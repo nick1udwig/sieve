@@ -80,7 +80,9 @@ pub(crate) fn serialize_response_input(input: &ResponseTurnInput) -> Result<Valu
     .map_err(|err| LlmError::Boundary(format!("failed to serialize response input: {err}")))
 }
 
-fn serialize_response_tool_outcome(outcome: &ResponseToolOutcome) -> ResponseToolOutcomePayload<'_> {
+fn serialize_response_tool_outcome(
+    outcome: &ResponseToolOutcome,
+) -> ResponseToolOutcomePayload<'_> {
     let refs = outcome
         .refs
         .iter()
@@ -95,7 +97,9 @@ fn serialize_response_tool_outcome(outcome: &ResponseToolOutcome) -> ResponseToo
     }
 }
 
-fn serialize_response_ref_metadata(metadata: &ResponseRefMetadata) -> ResponseRefMetadataPayload<'_> {
+fn serialize_response_ref_metadata(
+    metadata: &ResponseRefMetadata,
+) -> ResponseRefMetadataPayload<'_> {
     ResponseRefMetadataPayload {
         ref_id: &metadata.ref_id,
         kind: &metadata.kind,

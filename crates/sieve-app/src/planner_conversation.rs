@@ -106,10 +106,7 @@ pub(crate) fn planner_step_trace_messages(
                 to_json_string(
                     &PlannerTraceActionsPayload {
                         step_index,
-                        tool_calls: step_results
-                            .iter()
-                            .map(planner_tool_call_payload)
-                            .collect(),
+                        tool_calls: step_results.iter().map(planner_tool_call_payload).collect(),
                     },
                     "planner trace actions payload",
                 )

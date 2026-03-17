@@ -218,8 +218,7 @@ struct DeclassifyObservationPayload {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn first_shell_word(command: &str) -> Option<&str> {
@@ -591,7 +590,10 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
                     "succeeded"
                 },
                 message_len: message.as_ref().map(|value| value.len()).unwrap_or(0),
-                failure_reason_len: failure_reason.as_ref().map(|value| value.len()).unwrap_or(0),
+                failure_reason_len: failure_reason
+                    .as_ref()
+                    .map(|value| value.len())
+                    .unwrap_or(0),
                 command_failure_kind: failure_reason.as_ref().map(|_| "invalid_arguments"),
             },
             "automation observation payload",
@@ -711,7 +713,9 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
                         tool: "bash",
                         command_len: command.len(),
                         action_class: classify_bash_action(command).as_str(),
-                        browser_action_class: browser.as_ref().map(|value| value.action_class.as_str()),
+                        browser_action_class: browser
+                            .as_ref()
+                            .map(|value| value.action_class.as_str()),
                         disposition: "denied",
                         exit_code: None,
                         artifact_count: None,
@@ -719,13 +723,15 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
                         stderr_bytes: None,
                         raw_artifacts: None,
                         command_failure_kind: Some(command_failure_kind_from_reason(reason)),
-                        browser_observation: browser.as_ref().map(|value| BrowserObservationPayload {
-                            action_class: value.action_class.as_str(),
-                            session_name: value.session_name.clone(),
-                            session_reusable: false,
-                            target_url: value.target_url.clone(),
-                            page_state: None,
-                            interstitial_kind: None,
+                        browser_observation: browser.as_ref().map(|value| {
+                            BrowserObservationPayload {
+                                action_class: value.action_class.as_str(),
+                                session_name: value.session_name.clone(),
+                                session_reusable: false,
+                                target_url: value.target_url.clone(),
+                                page_state: None,
+                                interstitial_kind: None,
+                            }
                         }),
                         likely_has_candidate_urls: None,
                         likely_has_primary_content: None,
@@ -791,7 +797,10 @@ fn summarize_observed_tool_result(result: &PlannerToolResult) -> serde_json::Val
                 },
                 status: result.as_ref().map(|value| value.status.as_str()),
                 session_name: result.as_ref().map(|value| value.session_name.clone()),
-                summary_len: result.as_ref().map(|value| value.summary.len()).unwrap_or(0),
+                summary_len: result
+                    .as_ref()
+                    .map(|value| value.summary.len())
+                    .unwrap_or(0),
                 user_visible_len: result
                     .as_ref()
                     .and_then(|value| value.user_visible.as_ref())

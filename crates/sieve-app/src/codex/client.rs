@@ -137,7 +137,7 @@ impl AppServerClient {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         self.write_message(JsonRpcRequest { id, method, params })
-        .await?;
+            .await?;
         let mut deferred = VecDeque::new();
         loop {
             let message = if let Some(message) = self.pending.pop_front() {
@@ -168,12 +168,11 @@ impl AppServerClient {
 
     pub(crate) async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
         self.write_message(JsonRpcNotification { method, params })
-        .await
+            .await
     }
 
     pub(crate) async fn respond(&mut self, id: Value, result: Value) -> Result<(), String> {
-        self.write_message(JsonRpcResponse { id, result })
-        .await
+        self.write_message(JsonRpcResponse { id, result }).await
     }
 
     pub(crate) async fn next_message(&mut self) -> Result<Value, String> {
@@ -243,8 +242,7 @@ impl AppServerClient {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn should_add_codex_app_server_args(program: &str) -> bool {

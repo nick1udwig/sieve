@@ -348,8 +348,7 @@ impl AppServerWsClient {
     }
 
     async fn notify(&mut self, method: &str, params: Value) -> Result<(), CapTraceError> {
-        self.send_json(JsonRpcNotification { method, params })
-        .await
+        self.send_json(JsonRpcNotification { method, params }).await
     }
 
     async fn request(
@@ -361,7 +360,7 @@ impl AppServerWsClient {
         let id = self.next_id;
         self.next_id += 1;
         self.send_json(JsonRpcRequest { method, id, params })
-        .await?;
+            .await?;
 
         let mut deferred = VecDeque::new();
         loop {
@@ -454,8 +453,7 @@ impl AppServerWsClient {
 }
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn parse_cases_from_agent_message(raw: &str) -> Result<Vec<String>, CapTraceError> {
