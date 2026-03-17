@@ -2,12 +2,62 @@ use crate::logging::{ConversationHistoryEntry, ConversationRole};
 use crate::planner_products::PlannerIntermediateProductSummary;
 use crate::planner_progress::summarize_redacted_tool_result;
 use crate::working_state::{format_open_loop_context_message, StoredOpenLoop};
-use serde_json::json;
+use serde::Serialize;
 use sieve_runtime::PlannerToolResult;
 use sieve_types::{
     PlannerConversationMessage, PlannerConversationMessageKind, PlannerConversationRole,
     PlannerGuidanceFrame, PlannerGuidanceSignal,
 };
+
+#[derive(Serialize)]
+struct PlannerTraceActionsPayload<'a> {
+    step_index: usize,
+    tool_calls: Vec<PlannerToolCallPayload<'a>>,
+}
+
+#[derive(Serialize)]
+struct PlannerTraceObservationPayload {
+    step_index: usize,
+    tool_results: Vec<serde_json::Value>,
+    intermediate_products: Vec<PlannerIntermediateProductSummary>,
+    guidance: PlannerTraceGuidancePayload,
+}
+
+#[derive(Serialize)]
+struct PlannerTraceGuidancePayload {
+    code: u16,
+    signal_name: Option<&'static str>,
+    confidence_bps: u16,
+    source_hit_index: Option<u16>,
+    evidence_ref_index: Option<u16>,
+}
+
+#[derive(Serialize)]
+struct PlannerToolCallPayload<'a> {
+    tool: &'static str,
+    args: PlannerToolArgsPayload<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum PlannerToolArgsPayload<'a> {
+    Automation(&'a sieve_types::AutomationRequest),
+    Bash(BashArgs<'a>),
+    CodexExec(&'a sieve_types::CodexExecRequest),
+    CodexSession(&'a sieve_types::CodexSessionRequest),
+    Endorse(&'a sieve_types::EndorseRequest),
+    Declassify(&'a sieve_types::DeclassifyRequest),
+}
+
+#[derive(Serialize)]
+struct BashArgs<'a> {
+    cmd: &'a str,
+}
+
+fn to_json_string<T: Serialize>(value: &T, context: &str) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+}
 
 pub(crate) fn build_planner_conversation(
     history: &[ConversationHistoryEntry],
@@ -53,31 +103,40 @@ pub(crate) fn planner_step_trace_messages(
             kind: PlannerConversationMessageKind::FullText,
             content: format!(
                 "TRUSTED_PLANNER_ACTIONS\n{}",
-                json!({
-                    "step_index": step_index,
-                    "tool_calls": step_results.iter().map(planner_tool_call_json).collect::<Vec<_>>(),
-                })
+                to_json_string(
+                    &PlannerTraceActionsPayload {
+                        step_index,
+                        tool_calls: step_results
+                            .iter()
+                            .map(planner_tool_call_payload)
+                            .collect(),
+                    },
+                    "planner trace actions payload",
+                )
             ),
         },
         redacted_user_message(format!(
             "TRUSTED_REDACTED_STEP_OBSERVATION\n{}",
-            json!({
-                "step_index": step_index,
-                "tool_results": step_results
-                    .iter()
-                    .map(summarize_redacted_tool_result)
-                    .collect::<Vec<_>>(),
-                "intermediate_products": intermediate_products,
-                "guidance": {
-                    "code": guidance.code,
-                    "signal_name": PlannerGuidanceSignal::try_from(guidance.code)
-                        .ok()
-                        .map(PlannerGuidanceSignal::name),
-                    "confidence_bps": guidance.confidence_bps,
-                    "source_hit_index": guidance.source_hit_index,
-                    "evidence_ref_index": guidance.evidence_ref_index,
-                }
-            })
+            to_json_string(
+                &PlannerTraceObservationPayload {
+                    step_index,
+                    tool_results: step_results
+                        .iter()
+                        .map(summarize_redacted_tool_result)
+                        .collect(),
+                    intermediate_products: intermediate_products.to_vec(),
+                    guidance: PlannerTraceGuidancePayload {
+                        code: guidance.code,
+                        signal_name: PlannerGuidanceSignal::try_from(guidance.code)
+                            .ok()
+                            .map(PlannerGuidanceSignal::name),
+                        confidence_bps: guidance.confidence_bps,
+                        source_hit_index: guidance.source_hit_index,
+                        evidence_ref_index: guidance.evidence_ref_index,
+                    },
+                },
+                "planner trace observation payload",
+            )
         )),
     ]
 }
@@ -103,25 +162,31 @@ fn redacted_user_message(content: String) -> PlannerConversationMessage {
     }
 }
 
-fn planner_tool_call_json(result: &PlannerToolResult) -> serde_json::Value {
+fn planner_tool_call_payload(result: &PlannerToolResult) -> PlannerToolCallPayload<'_> {
     match result {
-        PlannerToolResult::Automation { request, .. } => {
-            json!({"tool":"automation","args":request})
-        }
-        PlannerToolResult::Bash { command, .. } => {
-            json!({"tool":"bash","args":{"cmd":command}})
-        }
-        PlannerToolResult::CodexExec { request, .. } => {
-            json!({"tool":"codex_exec","args":request})
-        }
-        PlannerToolResult::CodexSession { request, .. } => {
-            json!({"tool":"codex_session","args":request})
-        }
-        PlannerToolResult::Endorse { request, .. } => {
-            json!({"tool":"endorse","args":request})
-        }
-        PlannerToolResult::Declassify { request, .. } => {
-            json!({"tool":"declassify","args":request})
-        }
+        PlannerToolResult::Automation { request, .. } => PlannerToolCallPayload {
+            tool: "automation",
+            args: PlannerToolArgsPayload::Automation(request),
+        },
+        PlannerToolResult::Bash { command, .. } => PlannerToolCallPayload {
+            tool: "bash",
+            args: PlannerToolArgsPayload::Bash(BashArgs { cmd: command }),
+        },
+        PlannerToolResult::CodexExec { request, .. } => PlannerToolCallPayload {
+            tool: "codex_exec",
+            args: PlannerToolArgsPayload::CodexExec(request),
+        },
+        PlannerToolResult::CodexSession { request, .. } => PlannerToolCallPayload {
+            tool: "codex_session",
+            args: PlannerToolArgsPayload::CodexSession(request),
+        },
+        PlannerToolResult::Endorse { request, .. } => PlannerToolCallPayload {
+            tool: "endorse",
+            args: PlannerToolArgsPayload::Endorse(request),
+        },
+        PlannerToolResult::Declassify { request, .. } => PlannerToolCallPayload {
+            tool: "declassify",
+            args: PlannerToolArgsPayload::Declassify(request),
+        },
     }
 }
