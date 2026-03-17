@@ -6,7 +6,7 @@ use crate::LlmError;
 use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::Value;
-use sieve_tool_contracts::tool_args_schema;
+use sieve_tool_contracts::{tool_args_schema, tool_descriptor};
 use sieve_types::{PlannerTurnOutput, ToolContractValidationReport};
 use std::future::Future;
 use std::time::Duration;
@@ -32,7 +32,7 @@ struct PlannerToolDefinition {
 #[derive(Serialize)]
 struct PlannerToolFunction {
     name: String,
-    description: &'static str,
+    description: String,
     parameters: Value,
 }
 
@@ -141,25 +141,19 @@ fn planner_tool_definitions(
             tool_type: "function",
             function: PlannerToolFunction {
                 name: tool_name.clone(),
-                description: tool_description(tool_name),
+                description: tool_descriptor(tool_name)
+                    .ok_or_else(|| {
+                        LlmError::Boundary(format!(
+                            "allowed tool `{tool_name}` is missing a shared descriptor"
+                        ))
+                    })?
+                    .render_function_description(),
                 parameters: schema,
             },
         });
     }
 
     Ok(tools)
-}
-
-fn tool_description(tool_name: &str) -> &'static str {
-    match tool_name {
-        "automation" => {
-            "Manage heartbeat/cron automation. Use for reminders, scheduling, listing, pausing, resuming, or removing cron jobs. For cron_add, pass schedule as an object: {kind:\"after\",delay:\"1m\"}, {kind:\"at\",timestamp:\"2026-03-08T12:00:00Z\"}, {kind:\"every\",interval:\"15m\"}, or {kind:\"cron\",expr:\"0 9 * * 1-5\"}."
-        }
-        "bash" => "Run a cataloged shell command through runtime policy gates.",
-        "endorse" => "Raise integrity of a labeled value_ref after explicit approval.",
-        "declassify" => "Allow a labeled value_ref to flow to one exact sink after explicit approval.",
-        _ => "Planner tool",
-    }
 }
 
 fn ensure_allowed_tools(

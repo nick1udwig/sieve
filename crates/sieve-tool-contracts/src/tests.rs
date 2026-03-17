@@ -1,4 +1,5 @@
 use super::*;
+use crate::{supported_tool_descriptors, tool_descriptor};
 use serde_json::{json, Value};
 use sieve_types::{
     AutomationAction, AutomationRequest, AutomationSchedule, AutomationTarget, CodexExecRequest,
@@ -332,4 +333,24 @@ fn committed_schema_artifacts_match_generated() {
             "schema artifact mismatch for {filename}; rerun emit-schemas"
         );
     }
+}
+
+#[test]
+fn every_supported_tool_has_a_shared_descriptor() {
+    for tool_name in supported_tools() {
+        let descriptor = tool_descriptor(tool_name).expect("descriptor");
+        assert_eq!(descriptor.name, *tool_name);
+        assert!(!descriptor.description.trim().is_empty());
+    }
+    assert_eq!(supported_tool_descriptors().len(), supported_tools().len());
+}
+
+#[test]
+fn automation_descriptor_captures_schedule_examples_and_avoidance() {
+    let descriptor = tool_descriptor("automation").expect("automation descriptor");
+    let rendered = descriptor.render_function_description();
+    assert!(rendered.contains("Manage heartbeat and cron automation jobs."));
+    assert!(rendered.contains("Use when: explicit reminders"));
+    assert!(rendered.contains("Avoid when: retrieval, search, inspection, or triage questions"));
+    assert!(rendered.contains("\"kind\":\"after\""));
 }

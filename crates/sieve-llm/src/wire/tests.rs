@@ -36,28 +36,57 @@ fn build_planner_messages_uses_context_and_conversation() {
         .expect("context string")
         .contains("TRUSTED_PLANNER_CONTEXT"));
     assert_eq!(messages[2]["role"], "user");
-    assert_eq!(messages[2]["content"], "earlier user turn");
-    assert_eq!(messages[3]["role"], "assistant");
-    assert!(messages[3]["content"]
+    assert!(messages[2]["content"]
+        .as_str()
+        .expect("tool guide string")
+        .contains("TRUSTED_TOOL_GUIDE"));
+    assert_eq!(messages[3]["role"], "user");
+    assert_eq!(messages[3]["content"], "earlier user turn");
+    assert_eq!(messages[4]["role"], "assistant");
+    assert!(messages[4]["content"]
         .as_str()
         .expect("redacted string")
         .contains("TRUSTED_REDACTED_STEP_OBSERVATION"));
 }
 
 #[test]
-fn planner_prompt_mentions_markdown_new_fetch_strategy() {
+fn planner_prompt_mentions_trusted_guides_and_runtime_context() {
     assert!(PLANNER_SYSTEM_PROMPT.contains("markdown.new"));
-    assert!(PLANNER_SYSTEM_PROMPT.contains("discovery/search output"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("BROWSER_SESSIONS"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("CODEX_SESSIONS"));
     assert!(PLANNER_SYSTEM_PROMPT.contains("TRUSTED_PLANNER_CONTEXT"));
+    assert!(PLANNER_SYSTEM_PROMPT.contains("TRUSTED_TOOL_GUIDE"));
 }
 
 #[test]
-fn planner_prompt_mentions_gws_schema_to_cli_mapping() {
-    assert!(PLANNER_SYSTEM_PROMPT.contains("gws schema gmail.users.messages.list"));
-    assert!(PLANNER_SYSTEM_PROMPT.contains("gws gmail users messages list"));
-    assert!(PLANNER_SYSTEM_PROMPT.contains("Never emit dotted GWS subcommands"));
+fn planner_prompt_omits_tool_specific_automation_examples() {
+    assert!(!PLANNER_SYSTEM_PROMPT.contains("cron_add"));
+    assert!(!PLANNER_SYSTEM_PROMPT.contains("\"kind\":\"after\""));
+    assert!(!PLANNER_SYSTEM_PROMPT.contains("gws schema gmail.users.messages.list"));
+}
+
+#[test]
+fn build_planner_messages_includes_shared_tool_guide_details() {
+    let messages = build_planner_messages(&PlannerTurnInput {
+        run_id: RunId("run-1".to_string()),
+        user_message: "set a reminder".to_string(),
+        conversation: Vec::new(),
+        allowed_tools: vec!["automation".to_string()],
+        current_time_utc: None,
+        current_timezone: None,
+        allowed_net_connect_scopes: Vec::new(),
+        browser_sessions: Vec::new(),
+        codex_sessions: Vec::new(),
+        previous_events: Vec::new(),
+        guidance: None,
+    })
+    .expect("build planner messages");
+
+    let guide = messages[2]["content"].as_str().expect("tool guide");
+    assert!(guide.contains("TRUSTED_TOOL_GUIDE"));
+    assert!(guide.contains("\"name\":\"automation\""));
+    assert!(guide.contains("Manage heartbeat and cron automation jobs."));
+    assert!(guide.contains("retrieval, search, inspection, or triage questions"));
 }
 
 #[test]

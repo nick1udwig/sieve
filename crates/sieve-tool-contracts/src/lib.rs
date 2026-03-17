@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod descriptors;
 mod schemas;
 mod validate;
 
@@ -10,6 +11,7 @@ use sieve_types::{
 };
 use thiserror::Error;
 
+pub use descriptors::{supported_tool_descriptors, tool_descriptor, ToolDescriptor};
 pub use schemas::{
     all_tool_args_schemas, emitted_schema_documents, planner_tool_call_schema,
     planner_turn_output_schema, tool_args_schema,

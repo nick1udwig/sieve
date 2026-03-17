@@ -3,7 +3,7 @@ use crate::LlmError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sieve_command_summaries::planner_command_catalog;
-use sieve_tool_contracts::validate_at_index;
+use sieve_tool_contracts::{tool_descriptor, validate_at_index};
 use sieve_types::{
     PlannerBrowserSession, PlannerCodexSession, PlannerConversationMessageKind,
     PlannerGuidanceSignal, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, RuntimeEvent,
@@ -51,6 +51,17 @@ struct PlannerGuidanceContract {
 struct PlannerCommandCatalogEntry<'a> {
     command: &'a str,
     description: &'a str,
+}
+
+#[derive(Serialize)]
+struct PlannerToolGuideEntry<'a> {
+    name: &'a str,
+    family: &'a str,
+    description: &'a str,
+    when_to_use: &'a [&'a str],
+    when_not_to_use: &'a [&'a str],
+    usage_notes: &'a [&'a str],
+    examples: &'a [&'a str],
 }
 
 #[derive(Serialize)]
@@ -144,6 +155,18 @@ pub(crate) fn build_planner_messages(input: &PlannerTurnInput) -> Result<Vec<Val
             format!("TRUSTED_PLANNER_CONTEXT\n{}", context_payload),
         ),
     ];
+    let tool_guide = planner_tool_guide_for_allowed_tools(&input.allowed_tools)?;
+    if !tool_guide.is_empty() {
+        messages.push(planner_message(
+            "user",
+            format!(
+                "TRUSTED_TOOL_GUIDE\n{}",
+                serde_json::to_string(&tool_guide).map_err(|err| {
+                    LlmError::Boundary(format!("failed to serialize planner tool guide: {err}"))
+                })?
+            ),
+        ));
+    }
 
     if input.conversation.is_empty() {
         messages.push(planner_message("user", input.user_message.clone()));
@@ -259,6 +282,29 @@ fn planner_command_catalog_for_allowed_tools(
             description: descriptor.description,
         })
         .collect()
+}
+
+fn planner_tool_guide_for_allowed_tools(
+    allowed_tools: &[String],
+) -> Result<Vec<PlannerToolGuideEntry<'static>>, LlmError> {
+    let mut entries = Vec::with_capacity(allowed_tools.len());
+    for tool_name in allowed_tools {
+        let descriptor = tool_descriptor(tool_name).ok_or_else(|| {
+            LlmError::Boundary(format!(
+                "allowed tool `{tool_name}` is missing a shared descriptor"
+            ))
+        })?;
+        entries.push(PlannerToolGuideEntry {
+            name: descriptor.name,
+            family: descriptor.family,
+            description: descriptor.description,
+            when_to_use: descriptor.when_to_use,
+            when_not_to_use: descriptor.when_not_to_use,
+            usage_notes: descriptor.usage_notes,
+            examples: descriptor.examples,
+        });
+    }
+    Ok(entries)
 }
 
 fn runtime_event_kind(event: &RuntimeEvent) -> &'static str {
