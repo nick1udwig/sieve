@@ -1,2 +1,2 @@
-Extract the user's request and any relevant visible text from this image.
+What does this image show?
 Return plain text only.

@@ -8,6 +8,6 @@ Queued events:
 
 Handle the queued events now.
 Return exactly one JSON object.
-- If nothing needs user-facing output: {"action":"noop"}
-- If output is needed: {"action":"deliver","message":"..."}
+- If nothing needs user attention right now: {"action":"noop"}
+- If user-facing output is needed: {"action":"deliver","message":"..."}
 Do not use markdown fences or extra text.
