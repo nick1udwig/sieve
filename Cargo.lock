@@ -3262,6 +3262,7 @@ dependencies = [
  "sieve-quarantine",
  "sieve-runtime",
  "sieve-shell",
+ "sieve-tool-contracts",
  "sieve-types",
  "tokio",
  "uuid",
