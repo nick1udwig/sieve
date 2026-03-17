@@ -1,1 +1,1 @@
-pub(crate) const SUMMARY_SYSTEM_PROMPT: &str = include_str!("../prompts/summary_system.md");
+pub(crate) const SUMMARY_SYSTEM_PROMPT: &str = sieve_prompts::summary::SYSTEM;

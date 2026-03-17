@@ -4,8 +4,8 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-const HEARTBEAT_IDLE_PROMPT: &str = include_str!("../prompts/heartbeat_idle.md");
-const HEARTBEAT_EVENTS_PROMPT: &str = include_str!("../prompts/heartbeat_events.md");
+const HEARTBEAT_IDLE_PROMPT: &str = sieve_prompts::heartbeat::IDLE;
+const HEARTBEAT_EVENTS_PROMPT: &str = sieve_prompts::heartbeat::EVENTS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HeartbeatPrompt {

@@ -6,6 +6,7 @@ members = [
   "crates/sieve-captrace",
   "crates/sieve-policy",
   "crates/sieve-quarantine",
+  "crates/sieve-prompts",
   "crates/sieve-llm",
   "crates/sieve-runtime",
   "crates/sieve-interface-telegram",

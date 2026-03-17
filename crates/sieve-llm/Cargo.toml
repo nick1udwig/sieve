@@ -12,6 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 sieve-command-summaries = { path = "../sieve-command-summaries" }
+sieve-prompts = { path = "../sieve-prompts" }
 sieve-tool-contracts = { path = "../sieve-tool-contracts" }
 sieve-types = { path = "../sieve-types" }
 thiserror.workspace = true

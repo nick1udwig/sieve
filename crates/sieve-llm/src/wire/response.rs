@@ -4,7 +4,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-pub(crate) const RESPONSE_SYSTEM_PROMPT: &str = include_str!("../prompts/response_system.md");
+pub(crate) const RESPONSE_SYSTEM_PROMPT: &str = sieve_prompts::response::SYSTEM;
 
 pub(crate) fn response_output_schema() -> Value {
     json!({

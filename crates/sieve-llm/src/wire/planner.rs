@@ -11,7 +11,7 @@ use sieve_types::{
     TOOL_CONTRACTS_VERSION_V1,
 };
 
-pub(crate) const PLANNER_SYSTEM_PROMPT: &str = include_str!("../prompts/planner_system.md");
+pub(crate) const PLANNER_SYSTEM_PROMPT: &str = sieve_prompts::planner::SYSTEM;
 
 pub(crate) enum PlannerDecodeOutcome {
     Valid(PlannerTurnOutput),
@@ -430,10 +430,7 @@ pub(crate) fn planner_regeneration_diagnostic_prompt(
         ))
     })?;
 
-    Ok(
-        include_str!("../prompts/planner_regeneration_diagnostic.md")
-            .replace("{{DIAGNOSTICS}}", &diagnostics),
-    )
+    Ok(sieve_prompts::planner::REGENERATION_DIAGNOSTIC.replace("{{DIAGNOSTICS}}", &diagnostics))
 }
 
 #[derive(Debug, Deserialize)]

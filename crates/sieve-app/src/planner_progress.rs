@@ -7,7 +7,7 @@ use sieve_runtime::{
 use sieve_types::PlannerGuidanceSignal;
 use std::fs;
 
-const GUIDANCE_INSTRUCTION_PROMPT: &str = include_str!("prompts/guidance_instruction.md");
+const GUIDANCE_INSTRUCTION_PROMPT: &str = sieve_prompts::guidance::INSTRUCTION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BashActionClass {

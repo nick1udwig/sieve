@@ -2,7 +2,7 @@ use crate::LlmError;
 use serde_json::{json, Value};
 use sieve_types::{PlannerGuidanceOutput, PlannerGuidanceSignal};
 
-pub(crate) const GUIDANCE_SYSTEM_PROMPT: &str = include_str!("../prompts/guidance_system.md");
+pub(crate) const GUIDANCE_SYSTEM_PROMPT: &str = sieve_prompts::guidance::SYSTEM;
 
 pub(crate) fn guidance_output_schema() -> Value {
     json!({
