@@ -1,4 +1,5 @@
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -18,6 +19,45 @@ pub(crate) struct AppServerClient {
     stderr_lines: Arc<Mutex<Vec<String>>>,
     pending: VecDeque<Value>,
     next_id: u64,
+}
+
+#[derive(Serialize)]
+struct InitializeParams<'a> {
+    #[serde(rename = "clientInfo")]
+    client_info: ClientInfo<'a>,
+    capabilities: ClientCapabilities,
+}
+
+#[derive(Serialize)]
+struct ClientInfo<'a> {
+    name: &'a str,
+    title: &'a str,
+    version: &'a str,
+}
+
+#[derive(Serialize)]
+struct ClientCapabilities {
+    #[serde(rename = "experimentalApi")]
+    experimental_api: bool,
+}
+
+#[derive(Serialize)]
+struct JsonRpcRequest<'a, T: Serialize> {
+    id: u64,
+    method: &'a str,
+    params: T,
+}
+
+#[derive(Serialize)]
+struct JsonRpcNotification<'a, T: Serialize> {
+    method: &'a str,
+    params: T,
+}
+
+#[derive(Serialize)]
+struct JsonRpcResponse<T: Serialize> {
+    id: Value,
+    result: T,
 }
 
 impl AppServerClient {
@@ -74,29 +114,29 @@ impl AppServerClient {
     pub(crate) async fn initialize(&mut self) -> Result<(), String> {
         self.request(
             "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "sieve",
-                    "title": "Sieve",
-                    "version": env!("CARGO_PKG_VERSION"),
+            to_json_value(
+                InitializeParams {
+                    client_info: ClientInfo {
+                        name: "sieve",
+                        title: "Sieve",
+                        version: env!("CARGO_PKG_VERSION"),
+                    },
+                    capabilities: ClientCapabilities {
+                        experimental_api: true,
+                    },
                 },
-                "capabilities": {
-                    "experimentalApi": true
-                }
-            }),
+                "codex initialize params",
+            ),
         )
         .await?;
-        self.notify("initialized", json!({})).await
+        self.notify("initialized", Value::Object(Default::default()))
+            .await
     }
 
     pub(crate) async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
-        self.write_message(json!({
-            "id": id,
-            "method": method,
-            "params": params,
-        }))
+        self.write_message(JsonRpcRequest { id, method, params })
         .await?;
         let mut deferred = VecDeque::new();
         loop {
@@ -127,18 +167,12 @@ impl AppServerClient {
     }
 
     pub(crate) async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
-        self.write_message(json!({
-            "method": method,
-            "params": params,
-        }))
+        self.write_message(JsonRpcNotification { method, params })
         .await
     }
 
     pub(crate) async fn respond(&mut self, id: Value, result: Value) -> Result<(), String> {
-        self.write_message(json!({
-            "id": id,
-            "result": result,
-        }))
+        self.write_message(JsonRpcResponse { id, result })
         .await
     }
 
@@ -190,7 +224,7 @@ impl AppServerClient {
             .unwrap_or_default()
     }
 
-    async fn write_message(&mut self, value: Value) -> Result<(), String> {
+    async fn write_message<T: Serialize>(&mut self, value: T) -> Result<(), String> {
         let encoded = serde_json::to_string(&value)
             .map_err(|err| format!("encode codex app-server request failed: {err}"))?;
         self.stdin
@@ -206,6 +240,11 @@ impl AppServerClient {
             .await
             .map_err(|err| format!("flush codex app-server request failed: {err}"))
     }
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
+    serde_json::to_value(value)
+        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn should_add_codex_app_server_args(program: &str) -> bool {
@@ -233,6 +272,7 @@ fn extract_error_message(error: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn codex_binary_gets_app_server_args() {
