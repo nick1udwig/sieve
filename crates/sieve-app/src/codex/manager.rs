@@ -10,6 +10,7 @@ use sieve_types::{
     CodexSessionLifecycleStatus, CodexSessionRequest, CodexSessionStatusEvent, CodexTurnResult,
     CodexTurnStatus, CommandSegment, PlannerCodexSession, RunId, RuntimeEvent,
 };
+use serde::Serialize;
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
@@ -61,6 +62,94 @@ struct TurnStreamState {
     agent_delta: String,
     final_agent_text: Option<String>,
     file_change_previews: HashMap<String, String>,
+}
+
+#[derive(Serialize)]
+struct CommandExecParams<'a> {
+    command: &'a [String],
+    cwd: Option<&'a str>,
+    #[serde(rename = "timeoutMs")]
+    timeout_ms: Option<i64>,
+    #[serde(rename = "sandboxPolicy")]
+    sandbox_policy: SandboxPolicy,
+}
+
+#[derive(Serialize)]
+struct ThreadResumeParams<'a> {
+    #[serde(rename = "threadId")]
+    thread_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct ThreadStartParams<'a> {
+    cwd: Option<&'a str>,
+    model: &'a Option<String>,
+    #[serde(rename = "approvalPolicy")]
+    approval_policy: &'static str,
+    ephemeral: bool,
+}
+
+#[derive(Serialize)]
+struct ThreadNameSetParams<'a> {
+    #[serde(rename = "threadId")]
+    thread_id: &'a str,
+    name: &'a str,
+}
+
+#[derive(Serialize)]
+struct TurnStartParams<'a> {
+    #[serde(rename = "threadId")]
+    thread_id: &'a str,
+    input: Vec<TurnInputItem>,
+    cwd: Option<&'a str>,
+    #[serde(rename = "approvalPolicy")]
+    approval_policy: &'static str,
+    #[serde(rename = "sandboxPolicy")]
+    sandbox_policy: SandboxPolicy,
+    model: &'a Option<String>,
+    #[serde(rename = "outputSchema")]
+    output_schema: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct ApprovalDecision {
+    decision: &'static str,
+}
+
+#[derive(Serialize)]
+struct TurnInputItem {
+    #[serde(rename = "type")]
+    item_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum SandboxPolicy {
+    #[serde(rename = "readOnly")]
+    ReadOnly {
+        #[serde(rename = "networkAccess")]
+        network_access: bool,
+    },
+    #[serde(rename = "workspaceWrite")]
+    WorkspaceWrite {
+        #[serde(rename = "writableRoots")]
+        writable_roots: Vec<String>,
+        #[serde(rename = "networkAccess")]
+        network_access: bool,
+        #[serde(rename = "excludeTmpdirEnvVar")]
+        exclude_tmpdir_env_var: bool,
+        #[serde(rename = "excludeSlashTmp")]
+        exclude_slash_tmp: bool,
+    },
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
+    serde_json::to_value(value)
+        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 impl CodexManager {
@@ -118,16 +207,19 @@ impl CodexManager {
                 "command/exec",
                 client.request(
                     "command/exec",
-                    serde_json::json!({
-                        "command": request.command,
-                        "cwd": request.cwd,
-                        "timeoutMs": timeout_ms,
-                        "sandboxPolicy": sandbox_policy_json(
-                            request.sandbox,
-                            request.cwd.as_deref(),
-                            &request.writable_roots
-                        ),
-                    }),
+                    to_json_value(
+                        CommandExecParams {
+                            command: &request.command,
+                            cwd: request.cwd.as_deref(),
+                            timeout_ms,
+                            sandbox_policy: sandbox_policy_json(
+                                request.sandbox,
+                                request.cwd.as_deref(),
+                                &request.writable_roots,
+                            ),
+                        },
+                        "codex command exec params",
+                    ),
                 ),
             )
             .await?;
@@ -304,9 +396,12 @@ impl CodexManager {
                     "thread/resume",
                     client.request(
                         "thread/resume",
-                        serde_json::json!({
-                            "threadId": thread_id,
-                        }),
+                        to_json_value(
+                            ThreadResumeParams {
+                                thread_id,
+                            },
+                            "codex thread resume params",
+                        ),
                     ),
                 )
                 .await?;
@@ -317,12 +412,15 @@ impl CodexManager {
                     "thread/start",
                     client.request(
                         "thread/start",
-                        serde_json::json!({
-                            "cwd": run_ctx.cwd,
-                            "model": self.config.model,
-                            "approvalPolicy": "on-request",
-                            "ephemeral": !run_ctx.persist_session,
-                        }),
+                        to_json_value(
+                            ThreadStartParams {
+                                cwd: run_ctx.cwd.as_deref(),
+                                model: &self.config.model,
+                                approval_policy: "on-request",
+                                ephemeral: !run_ctx.persist_session,
+                            },
+                            "codex thread start params",
+                        ),
                     ),
                 )
                 .await?;
@@ -335,10 +433,13 @@ impl CodexManager {
                 "thread/name/set",
                 client.request(
                     "thread/name/set",
-                    serde_json::json!({
-                        "threadId": thread_id,
-                        "name": run_ctx.session_name,
-                    }),
+                    to_json_value(
+                        ThreadNameSetParams {
+                            thread_id: &thread_id,
+                            name: &run_ctx.session_name,
+                        },
+                        "codex thread name set params",
+                    ),
                 ),
             )
             .await?;
@@ -379,15 +480,22 @@ impl CodexManager {
                 "turn/start",
                 client.request(
                 "turn/start",
-                serde_json::json!({
-                    "threadId": thread_id,
-                    "input": build_turn_input(&run_ctx.instruction, &run_ctx.local_images),
-                    "cwd": run_ctx.cwd,
-                    "approvalPolicy": "on-request",
-                    "sandboxPolicy": sandbox_policy_json(run_ctx.sandbox, run_ctx.cwd.as_deref(), &run_ctx.writable_roots),
-                    "model": self.config.model,
-                    "outputSchema": structured_turn_output_schema(),
-                }),
+                to_json_value(
+                    TurnStartParams {
+                        thread_id: &thread_id,
+                        input: build_turn_input(&run_ctx.instruction, &run_ctx.local_images),
+                        cwd: run_ctx.cwd.as_deref(),
+                        approval_policy: "on-request",
+                        sandbox_policy: sandbox_policy_json(
+                            run_ctx.sandbox,
+                            run_ctx.cwd.as_deref(),
+                            &run_ctx.writable_roots,
+                        ),
+                        model: &self.config.model,
+                        output_schema: structured_turn_output_schema(),
+                    },
+                    "codex turn start params",
+                ),
                 ),
             )
             .await?;
@@ -565,9 +673,12 @@ impl CodexManager {
                 client
                     .respond(
                         id,
-                        serde_json::json!({
-                            "decision": approval_action_to_codex_decision(decision),
-                        }),
+                        to_json_value(
+                            ApprovalDecision {
+                                decision: approval_action_to_codex_decision(decision),
+                            },
+                            "codex command approval decision",
+                        ),
                     )
                     .await?;
             }
@@ -595,9 +706,12 @@ impl CodexManager {
                 client
                     .respond(
                         id,
-                        serde_json::json!({
-                            "decision": approval_action_to_codex_decision(decision),
-                        }),
+                        to_json_value(
+                            ApprovalDecision {
+                                decision: approval_action_to_codex_decision(decision),
+                            },
+                            "codex file change approval decision",
+                        ),
                     )
                     .await?;
             }
@@ -816,19 +930,21 @@ struct TurnCompletion {
     turn_error: Option<String>,
 }
 
-fn build_turn_input(instruction: &str, local_images: &[String]) -> Vec<serde_json::Value> {
-    let mut input = vec![serde_json::json!({
-        "type": "text",
-        "text": format!(
+fn build_turn_input(instruction: &str, local_images: &[String]) -> Vec<TurnInputItem> {
+    let mut input = vec![TurnInputItem {
+        item_type: "text",
+        text: Some(format!(
             "{}\n\nWork in one bounded increment, not an endless first pass. After one coherent milestone or a few minutes of work, stop and return structured output. Use `status=completed` when this turn finished the requested work, `needs_followup` when Sieve should continue the same Codex session with more instructions, and `failed` when blocked or not completed. If the task is large, prefer `needs_followup` after making concrete progress instead of trying to finish everything in one turn. `summary` concise factual summary. `user_visible` short user-facing text or null.",
             instruction.trim()
-        ),
-    })];
+        )),
+        path: None,
+    }];
     for image in local_images {
-        input.push(serde_json::json!({
-            "type": "localImage",
-            "path": image,
-        }));
+        input.push(TurnInputItem {
+            item_type: "localImage",
+            text: None,
+            path: Some(image.clone()),
+        });
     }
     input
 }
@@ -912,12 +1028,11 @@ fn sandbox_policy_json(
     sandbox: CodexSandboxMode,
     cwd: Option<&str>,
     writable_roots: &[String],
-) -> serde_json::Value {
+) -> SandboxPolicy {
     match sandbox {
-        CodexSandboxMode::ReadOnly => serde_json::json!({
-            "type": "readOnly",
-            "networkAccess": false,
-        }),
+        CodexSandboxMode::ReadOnly => SandboxPolicy::ReadOnly {
+            network_access: false,
+        },
         CodexSandboxMode::WorkspaceWrite => {
             let mut roots = Vec::new();
             if let Some(cwd) = cwd {
@@ -930,13 +1045,12 @@ fn sandbox_policy_json(
                     roots.push(root.clone());
                 }
             }
-            serde_json::json!({
-                "type": "workspaceWrite",
-                "writableRoots": roots,
-                "networkAccess": false,
-                "excludeTmpdirEnvVar": false,
-                "excludeSlashTmp": false,
-            })
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots: roots,
+                network_access: false,
+                exclude_tmpdir_env_var: false,
+                exclude_slash_tmp: false,
+            }
         }
     }
 }
@@ -1149,11 +1263,12 @@ mod tests {
 
     #[test]
     fn sandbox_policy_workspace_write_includes_cwd_and_roots() {
-        let value = sandbox_policy_json(
+        let value = serde_json::to_value(sandbox_policy_json(
             CodexSandboxMode::WorkspaceWrite,
             Some("/repo"),
             &["/repo/subdir".to_string()],
-        );
+        ))
+        .expect("sandbox policy");
         assert_eq!(
             value.get("type").and_then(serde_json::Value::as_str),
             Some("workspaceWrite")
@@ -1168,7 +1283,12 @@ mod tests {
 
     #[test]
     fn sandbox_policy_read_only_matches_app_server_shape() {
-        let value = sandbox_policy_json(CodexSandboxMode::ReadOnly, Some("/repo"), &[]);
+        let value = serde_json::to_value(sandbox_policy_json(
+            CodexSandboxMode::ReadOnly,
+            Some("/repo"),
+            &[],
+        ))
+        .expect("sandbox policy");
         assert_eq!(
             value.get("type").and_then(serde_json::Value::as_str),
             Some("readOnly")
@@ -1286,6 +1406,7 @@ for line in sys.stdin:
     #[test]
     fn build_turn_input_includes_bounded_increment_instruction() {
         let input = build_turn_input("build the app", &[]);
+        let input = serde_json::to_value(input).expect("turn input json");
         let text = input[0]
             .get("text")
             .and_then(serde_json::Value::as_str)
