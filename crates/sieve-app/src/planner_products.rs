@@ -13,7 +13,34 @@ pub(crate) struct PlannerIntermediateProductSummary {
     pub tool_family: String,
     pub resource_kind: String,
     pub item_count: usize,
-    pub detail_fetch_hint: serde_json::Value,
+    pub detail_fetch_hint: PlannerDetailFetchHint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "action_class", rename_all = "snake_case")]
+pub(crate) enum PlannerDetailFetchHint {
+    DetailFetch {
+        tool: &'static str,
+        placeholder_format: String,
+        recommended_command_prefix: &'static str,
+        recommended_param_shape: GwsMessageMetadataParamShape,
+        recommended_count: usize,
+    },
+    SchemaFollowup {
+        schema_target: String,
+        command_prefix: String,
+        note: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct GwsMessageMetadataParamShape {
+    #[serde(rename = "userId")]
+    pub user_id: &'static str,
+    pub id: String,
+    pub format: &'static str,
+    #[serde(rename = "metadataHeaders")]
+    pub metadata_headers: [&'static str; 3],
 }
 
 #[derive(Debug, Clone, Default)]
@@ -53,19 +80,18 @@ impl PlannerOpaqueHandleStore {
                 tool_family: "gws".to_string(),
                 resource_kind: "gmail_message".to_string(),
                 item_count,
-                detail_fetch_hint: serde_json::json!({
-                    "action_class": "detail_fetch",
-                    "tool": "bash",
-                    "placeholder_format": format!("[[handle:{product_ref}:<index>]]"),
-                    "recommended_command_prefix": "gws gmail users messages get --params",
-                    "recommended_param_shape": {
-                        "userId": "me",
-                        "id": format!("[[handle:{product_ref}:<index>]]"),
-                        "format": "metadata",
-                        "metadataHeaders": ["From", "Subject", "Date"]
+                detail_fetch_hint: PlannerDetailFetchHint::DetailFetch {
+                    tool: "bash",
+                    placeholder_format: format!("[[handle:{product_ref}:<index>]]"),
+                    recommended_command_prefix: "gws gmail users messages get --params",
+                    recommended_param_shape: GwsMessageMetadataParamShape {
+                        user_id: "me",
+                        id: format!("[[handle:{product_ref}:<index>]]"),
+                        format: "metadata",
+                        metadata_headers: ["From", "Subject", "Date"],
                     },
-                    "recommended_count": 5
-                }),
+                    recommended_count: 5,
+                },
             });
         }
         products
@@ -145,11 +171,10 @@ fn extract_gws_schema_cli_shape(
         tool_family: "gws".to_string(),
         resource_kind: target.replace('.', "_"),
         item_count: cli_tokens.len(),
-        detail_fetch_hint: serde_json::json!({
-            "action_class": "schema_followup",
-            "schema_target": target,
-            "command_prefix": format!("gws {}", cli_tokens.join(" ")),
-            "note": "GWS schema targets are dotted; CLI API calls use space-separated segments."
-        }),
+        detail_fetch_hint: PlannerDetailFetchHint::SchemaFollowup {
+            schema_target: target.to_string(),
+            command_prefix: format!("gws {}", cli_tokens.join(" ")),
+            note: "GWS schema targets are dotted; CLI API calls use space-separated segments.",
+        },
     })
 }
