@@ -3242,7 +3242,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "sieve-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3270,7 +3270,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-captrace"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "dotenvy",
@@ -3290,7 +3290,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-command-summaries"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "codex-shell-command",
  "sieve-policy",
@@ -3299,7 +3299,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-interface-telegram"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -3316,7 +3316,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-llm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -3336,7 +3336,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-policy"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "sieve-types",
@@ -3347,11 +3347,11 @@ dependencies = [
 
 [[package]]
 name = "sieve-prompts"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "sieve-quarantine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "sieve-types",
@@ -3360,7 +3360,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-runtime"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "serde_json",
@@ -3378,7 +3378,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-shell"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "sieve-types",
  "thiserror 1.0.69",
@@ -3388,7 +3388,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-tool-contracts"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -3399,7 +3399,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-types"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "jsonschema",
  "serde",

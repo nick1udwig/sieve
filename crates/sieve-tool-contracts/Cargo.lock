@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-tool-contracts"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "sieve-types"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
