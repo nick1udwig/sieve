@@ -298,7 +298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &runtime,
             guidance_model.as_ref(),
             response_model.as_ref(),
-            summary_model.as_ref(),
+            summary_model.clone(),
             lcm.clone(),
             &event_log,
             &cfg,

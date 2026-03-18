@@ -399,56 +399,6 @@ impl ResponseModel for FirstStdoutSummaryResponseModel {
     }
 }
 
-pub(crate) struct MemoryRecallResponseModel {
-    config: LlmModelConfig,
-}
-
-impl MemoryRecallResponseModel {
-    pub(crate) fn new() -> Self {
-        Self {
-            config: LlmModelConfig {
-                provider: LlmProvider::OpenAi,
-                model: "response-memory-recall-test".to_string(),
-                api_base: None,
-            },
-        }
-    }
-}
-
-#[async_trait]
-impl ResponseModel for MemoryRecallResponseModel {
-    fn config(&self) -> &LlmModelConfig {
-        &self.config
-    }
-
-    async fn write_turn_response(
-        &self,
-        input: ResponseTurnInput,
-    ) -> Result<sieve_llm::ResponseTurnOutput, LlmError> {
-        let lower_prompt = input.trusted_user_message.to_ascii_lowercase();
-        let lower_thoughts = input
-            .planner_thoughts
-            .as_deref()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let message = if lower_prompt.contains("where do i live") {
-            if lower_thoughts.contains("hi i live in livermore ca") {
-                "You live in Livermore ca.".to_string()
-            } else {
-                "I don't know where you live.".to_string()
-            }
-        } else {
-            "Thanks for sharing.".to_string()
-        };
-
-        Ok(sieve_llm::ResponseTurnOutput {
-            message,
-            referenced_ref_ids: BTreeSet::new(),
-            summarized_ref_ids: BTreeSet::new(),
-        })
-    }
-}
-
 pub(crate) enum E2eModelMode {
     Fake {
         planner: Arc<dyn PlannerModel>,

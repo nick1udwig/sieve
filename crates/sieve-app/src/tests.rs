@@ -26,6 +26,7 @@ mod e2e_chat;
 mod e2e_compose;
 mod e2e_live;
 mod guidance_progress;
+mod lcm_context;
 mod media;
 mod models;
 mod open_loops;

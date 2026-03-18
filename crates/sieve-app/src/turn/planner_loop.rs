@@ -11,6 +11,7 @@ use crate::logging::{
     append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
     FanoutRuntimeEventLog,
 };
+use crate::planner_conversation::history_entries_to_planner_messages;
 use crate::planner_conversation::{build_planner_conversation, planner_step_trace_messages};
 use crate::planner_feedback::{planner_memory_feedback, planner_policy_feedback};
 use crate::planner_products::PlannerOpaqueHandleStore;
@@ -37,6 +38,7 @@ use sieve_types::{
     PlannerGuidanceInput, PlannerGuidanceSignal, RunId, RuntimeEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum GeneratedAssistantMessage {
@@ -165,7 +167,8 @@ pub(super) async fn generate_assistant_message(
     runtime: &RuntimeOrchestrator,
     guidance_model: &dyn GuidanceModel,
     response_model: &dyn ResponseModel,
-    summary_model: &dyn SummaryModel,
+    summary_model: Arc<dyn SummaryModel>,
+    lcm: Option<Arc<crate::lcm_integration::LcmIntegration>>,
     event_log: &FanoutRuntimeEventLog,
     cfg: &AppConfig,
     run_id: &RunId,
@@ -224,6 +227,17 @@ pub(super) async fn generate_assistant_message(
     };
     let mut planner_trace_messages: Vec<PlannerConversationMessage> = Vec::new();
     let mut opaque_handle_store = PlannerOpaqueHandleStore::default();
+    let planner_history_messages = if let Some(memory) = lcm.as_ref() {
+        match memory.planner_context_for_session(session_key, None).await {
+            Ok(context) => context.messages,
+            Err(err) => {
+                eprintln!("lcm planner context failed for {}: {}", run_id.0, err);
+                history_entries_to_planner_messages(&event_log.snapshot_conversation(session_key))
+            }
+        }
+    } else {
+        history_entries_to_planner_messages(&event_log.snapshot_conversation(session_key))
+    };
 
     loop {
         while planner_steps_taken < planner_step_limit {
@@ -240,7 +254,7 @@ pub(super) async fn generate_assistant_message(
             let browser_sessions = runtime.planner_browser_sessions()?;
             let codex_sessions = runtime.planner_codex_sessions().await?;
             let planner_conversation = build_planner_conversation(
-                &event_log.snapshot_conversation(session_key),
+                &planner_history_messages,
                 policy_feedback.as_deref(),
                 memory_feedback.as_deref(),
                 active_open_loop.as_ref(),
@@ -545,7 +559,7 @@ pub(super) async fn generate_assistant_message(
         );
         let mut response_input = response_input;
         response_input.extracted_evidence = build_response_evidence_records(
-            summary_model,
+            summary_model.as_ref(),
             run_id,
             trusted_user_message,
             &response_input,
@@ -624,7 +638,7 @@ pub(super) async fn generate_assistant_message(
                 &response_output.referenced_ref_ids,
                 &response_output.summarized_ref_ids,
                 &render_refs,
-                summary_model,
+                summary_model.as_ref(),
                 run_id,
             )
             .await
@@ -636,7 +650,7 @@ pub(super) async fn generate_assistant_message(
                     &response_output.referenced_ref_ids,
                     &response_output.summarized_ref_ids,
                     &render_refs,
-                    summary_model,
+                    summary_model.as_ref(),
                     run_id,
                 )
                 .await
@@ -692,7 +706,7 @@ pub(super) async fn generate_assistant_message(
             }
         } else {
             compose_assistant_message(
-                summary_model,
+                summary_model.as_ref(),
                 &cfg.sieve_home,
                 event_log,
                 run_id,

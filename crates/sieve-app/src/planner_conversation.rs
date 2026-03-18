@@ -60,7 +60,7 @@ fn to_json_string<T: Serialize>(value: &T, context: &str) -> String {
 }
 
 pub(crate) fn build_planner_conversation(
-    history: &[ConversationHistoryEntry],
+    history_messages: &[PlannerConversationMessage],
     policy_feedback: Option<&str>,
     memory_feedback: Option<&str>,
     open_loop: Option<&StoredOpenLoop>,
@@ -82,7 +82,7 @@ pub(crate) fn build_planner_conversation(
             loop_record,
         )));
     }
-    conversation.extend(history.iter().map(history_entry_to_planner_message));
+    conversation.extend(history_messages.iter().cloned());
     conversation.extend(planner_trace.iter().cloned());
     conversation
 }
@@ -138,7 +138,7 @@ pub(crate) fn planner_step_trace_messages(
     ]
 }
 
-fn history_entry_to_planner_message(
+pub(crate) fn history_entry_to_planner_message(
     entry: &ConversationHistoryEntry,
 ) -> PlannerConversationMessage {
     PlannerConversationMessage {
@@ -149,6 +149,15 @@ fn history_entry_to_planner_message(
         kind: PlannerConversationMessageKind::FullText,
         content: entry.message.clone(),
     }
+}
+
+pub(crate) fn history_entries_to_planner_messages(
+    history: &[ConversationHistoryEntry],
+) -> Vec<PlannerConversationMessage> {
+    history
+        .iter()
+        .map(history_entry_to_planner_message)
+        .collect()
 }
 
 fn redacted_user_message(content: String) -> PlannerConversationMessage {
