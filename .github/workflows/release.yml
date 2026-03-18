@@ -31,6 +31,13 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-workspace
+          cache-directories: |
+            ~/.cargo/bin
+
       - name: Compute release version
         id: version
         run: |
@@ -90,6 +97,8 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          cache-from: type=gha,scope=release-image
+          cache-to: type=gha,mode=max,scope=release-image
           tags: |
             nick1udwig/sieve:${{ steps.version.outputs.version }}
             nick1udwig/sieve:latest

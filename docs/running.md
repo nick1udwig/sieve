@@ -119,6 +119,7 @@ If a release asset name ever changes, override the matcher with `--build-arg BRA
 `.github/workflows/release.yml` is currently manual-only via `workflow_dispatch`.
 The old push-to-`master` trigger is commented out because the workflow is too slow for every merge right now.
 For non-release commits it bumps the shared workspace patch version, regenerates both lockfiles, commits the bump back to `master`, and then builds and pushes `nick1udwig/sieve:<version>` plus `nick1udwig/sieve:latest` for `linux/amd64` and `linux/arm64`.
+The release workflow restores a host Rust cache and exports a shared Buildx cache so repeat image builds reuse Cargo layers and Docker layers.
 The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ### Modes

@@ -1,4 +1,6 @@
-FROM rust:slim-bookworm AS builder
+# syntax=docker/dockerfile:1.7
+
+FROM rust:slim-bookworm AS rust-base
 
 ARG TARGETARCH
 ARG CODEX_NPM_SPEC=@openai/codex
@@ -12,15 +14,47 @@ RUN apt-get update \
 
 WORKDIR /src
 
+COPY docker/install-repo-tool.sh /usr/local/bin/install-repo-tool
+
+RUN chmod +x /usr/local/bin/install-repo-tool
+
+FROM rust-base AS cargo-chef
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo install cargo-chef --locked
+
+FROM cargo-chef AS planner
+
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY docs/policy ./docs/policy
-COPY docker/install-repo-tool.sh /usr/local/bin/install-repo-tool
 
-RUN chmod +x /usr/local/bin/install-repo-tool \
-    && cargo build --locked --release -p sieve-app
+RUN cargo chef prepare --recipe-path recipe.json
 
-RUN mkdir -p /opt/sieve-tools \
+FROM cargo-chef AS builder
+
+COPY --from=planner /src/recipe.json recipe.json
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo chef cook --locked --release --recipe-path recipe.json
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY docs/policy ./docs/policy
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --locked --release -p sieve-app \
+    && install -Dm755 /src/target/release/sieve-app /tmp/sieve-app
+
+FROM rust-base AS tooling
+
+RUN --mount=type=cache,target=/root/.npm \
+    mkdir -p /opt/sieve-tools \
     && npm install --global --prefix /opt/sieve-tools "${CODEX_NPM_SPEC}" \
     && TARGETARCH="${TARGETARCH}" INSTALL_ROOT=/opt/sieve-tools install-repo-tool nick1udwig/brave-search bravesearch "${BRAVE_SEARCH_ASSET_REGEX}" \
     && TARGETARCH="${TARGETARCH}" INSTALL_ROOT=/opt/sieve-tools install-repo-tool nick1udwig/st st "${ST_ASSET_REGEX}" \
@@ -53,8 +87,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local/ /usr/local/
-COPY --from=builder /src/target/release/sieve-app /usr/local/bin/sieve-app
-COPY --from=builder /opt/sieve-tools /opt/sieve-tools
+COPY --from=builder /tmp/sieve-app /usr/local/bin/sieve-app
+COPY --from=tooling /opt/sieve-tools /opt/sieve-tools
 COPY .env.example /opt/sieve/.env.example
 COPY docs/policy /opt/sieve/docs/policy
 
