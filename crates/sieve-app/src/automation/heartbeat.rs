@@ -4,6 +4,9 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
+const HEARTBEAT_IDLE_PROMPT: &str = sieve_prompts::heartbeat::IDLE;
+const HEARTBEAT_EVENTS_PROMPT: &str = sieve_prompts::heartbeat::EVENTS;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HeartbeatPrompt {
     pub(crate) text: String,
@@ -60,40 +63,33 @@ pub(crate) fn build_heartbeat_prompt(
         .unwrap_or_else(|| now_ms.to_string());
 
     let prompt = if queued_events.is_empty() {
-        format!(
-            "Heartbeat wake.\nCurrent time: {now}\nReason: {}\n\nInstructions:\n{}\n\nReturn exactly one JSON object.\n- If nothing needs user attention right now: {{\"action\":\"noop\"}}\n- If user-facing output is needed: {{\"action\":\"deliver\",\"message\":\"...\"}}\nDo not use markdown fences or extra text.",
-            reason.unwrap_or("interval"),
-            instructions.unwrap_or_default()
-        )
-    } else {
-        let mut lines = vec![
-            "Main-session system events are pending.".to_string(),
-            format!("Current time: {now}"),
-            format!("Reason: {}", reason.unwrap_or("cron")),
-        ];
-        if let Some(instructions) = instructions {
-            lines.push(String::new());
-            lines.push("Heartbeat instructions:".to_string());
-            lines.push(instructions);
-        }
-        lines.push(String::new());
-        lines.push("Queued events:".to_string());
-        lines.extend(queued_events.into_iter().map(|event| {
-            format!(
-                "- [{}] {}",
-                render_timestamp_ms(event.created_at_ms),
-                event.text
+        HEARTBEAT_IDLE_PROMPT
+            .replace("{{NOW}}", &now)
+            .replace("{{REASON}}", reason.unwrap_or("interval"))
+            .replace(
+                "{{INSTRUCTIONS}}",
+                instructions.unwrap_or_default().as_str(),
             )
-        }));
-        lines.push(String::new());
-        lines.push("Handle the queued events now.".to_string());
-        lines.push("Return exactly one JSON object.".to_string());
-        lines.push("- If nothing needs user-facing output: {\"action\":\"noop\"}".to_string());
-        lines.push(
-            "- If output is needed: {\"action\":\"deliver\",\"message\":\"...\"}".to_string(),
-        );
-        lines.push("Do not use markdown fences or extra text.".to_string());
-        lines.join("\n")
+    } else {
+        let instructions_block = instructions
+            .map(|instructions| format!("\nHeartbeat instructions:\n{instructions}\n"))
+            .unwrap_or_default();
+        let queued_events_block = queued_events
+            .into_iter()
+            .map(|event| {
+                format!(
+                    "- [{}] {}",
+                    render_timestamp_ms(event.created_at_ms),
+                    event.text
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        HEARTBEAT_EVENTS_PROMPT
+            .replace("{{NOW}}", &now)
+            .replace("{{REASON}}", reason.unwrap_or("cron"))
+            .replace("{{INSTRUCTIONS_BLOCK}}", &instructions_block)
+            .replace("{{QUEUED_EVENTS}}", &queued_events_block)
     };
 
     Ok(Some(HeartbeatPrompt {

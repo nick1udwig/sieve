@@ -255,12 +255,16 @@ async fn e2e_fake_go_ahead_binds_to_open_loop_before_saved_codex_session() {
     let second_input = planner.second_input();
     assert!(
         second_input
-            .user_message
-            .contains("TRUSTED_OPEN_LOOP_CONTEXT"),
+            .conversation
+            .iter()
+            .any(|message| message.content.contains("TRUSTED_OPEN_LOOP_CONTEXT")),
         "planner should receive trusted open-loop context on go-ahead followup"
     );
     assert!(
-        second_input.user_message.contains("sieve-tutor"),
+        second_input
+            .conversation
+            .iter()
+            .any(|message| message.content.contains("sieve-tutor")),
         "planner context should preserve the new project target"
     );
     assert!(

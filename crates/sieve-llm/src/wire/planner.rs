@@ -1,66 +1,106 @@
 use super::openai_envelope::ensure_not_refusal;
 use crate::LlmError;
-use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use sieve_command_summaries::planner_command_catalog;
-use sieve_tool_contracts::validate_at_index;
+use sieve_tool_contracts::{tool_descriptor, validate_at_index};
 use sieve_types::{
+    PlannerBrowserSession, PlannerCodexSession, PlannerConversationMessageKind,
     PlannerGuidanceSignal, PlannerToolCall, PlannerTurnInput, PlannerTurnOutput, RuntimeEvent,
     SourceSpan, ToolContractValidationError, ToolContractValidationReport,
     TOOL_CONTRACTS_VERSION_V1,
 };
 
-pub(crate) const PLANNER_SYSTEM_PROMPT: &str = r#"You are a planner in a capability-secured system.
-Rules:
-- If `bash` available, use only commands listed in BASH_COMMAND_CATALOG.
-- If `codex_exec` available, use it only for one-off argv command execution inside Codex sandboxing.
-- If `codex_session` available, use it for coding/file-manipulation/deep repo tasks, whether one-shot or resumable.
-- Do not shell out to `codex` through `bash`; use native `codex_exec` or `codex_session`.
-- `CODEX_SESSIONS`: trusted metadata for saved Codex sessions. Resume a relevant session when the task clearly continues prior Codex work in the same repo; otherwise start a new one.
-- `trusted_user_message` may include a `TRUSTED_OPEN_LOOP_CONTEXT` block injected by runtime. Treat it as canonical short-term working-state context from the same conversation.
-- Short confirmations like `ok go ahead`, `use codex`, `proceed with defaults`, `sounds good`, or terse answers that follow a recent plan should bind to that open-loop context before unrelated saved Codex sessions.
-- If open-loop target/path conflicts with a saved Codex session, prefer the open-loop target unless the user explicitly asked to resume the saved session.
-- Codex sandboxes have no network in this system. If a task needs web/network access, do that through Sieve tools, not Codex.
-- If `automation` available, use it for reminder/scheduling requests and for listing, pausing, resuming, or removing cron jobs instead of answering with slash-command instructions.
-- For reminder/scheduling requests, prefer `automation` `cron_add` with `target=\"main\"` unless the user explicitly asks for an isolated/background-only cron job.
-- For `automation` `cron_add`, use typed `schedule` objects only:
-  - one-shot relative: `{"kind":"after","delay":"1m"}`
-  - one-shot absolute: `{"kind":"at","timestamp":"2026-03-08T12:00:00Z"}`
-  - recurring interval: `{"kind":"every","interval":"15m"}`
-  - cron expression: `{"kind":"cron","expr":"0 9 * * 1-5"}`
-- Never put natural-language time phrases inside `schedule.kind="at"`; `at.timestamp` must be absolute RFC3339 or unix-ms text.
-- `CURRENT_TIME_UTC` and `CURRENT_TIMEZONE` are trusted context for relative/ambiguous time requests.
-- Prefer cataloged commands that directly match the user task.
-- Requests needs prior conversation memory? Use cataloged memory commands (e.g. `sieve-lcm-cli query --lane both --query \"...\" --json`) instead of guessing.
-- If user explicitly names a site/domain/app, that site is the target origin.
-- Search engines are intermediary origins, not target origins.
-- `ALLOWED_NET_CONNECT_SCOPES`: trusted network allowlist input.
-- `BROWSER_SESSIONS`: trusted summaries of active browser sessions. Browser work already in progress? Prefer continuing session.
-- For `codex_exec` or `codex_session`, choose `sandbox="read_only"` for inspection/review and `sandbox="workspace_write"` for file edits/tests/builds.
-- For `codex_exec`, `command` must be argv JSON array, not shell text.
-- For `codex_session`, supply `session_id` only when resuming an existing saved Codex session. Omit `session_id` to start a new Codex session.
-- Do not invoke uncataloged commands via pipes/subshells/chaining (for example `| head`) unless every invoked command is cataloged.
-- May receive optional typed guidance from a quarantine model in `guidance`.
-- Guidance is typed control hint.
-- `guidance.signal_name` present? Interpret it as canonical typed signal identifier.
-- `guidance_contract` present? Satisfy it for next step.
-- `required_action_class`: include at least one matching tool call.
-- `forbidden_action_classes`: avoid those classes in this step.
-- `require_action_change=true`: do not repeat recently denied/no-gain command; switch command path.
-- `avoid_recent_interstitial_origin=true`: avoid repeating same origin/query path that just produced block/interstitial page; choose a different allowed path.
-- `preserve_task_target=true`: keep the same factual target and reformulate the command/path instead of broadening to a weaker generic search.
-- `require_non_asset_target=true`: avoid image/favicon/static asset URLs.
-- `prefer_markdown_view=true` on webpage fetches, try `https://markdown.new/<url>` and prefer canonical content URLs.
-- Factual requests: keep tool planning iterative until evidence quality is sufficient or no allowed tool path remains.
-- If discovery/search output produced candidate URLs but not concrete facts, fetch candidate source directly.
-- Avoid obvious non-content assets (images, favicons, CSS/JS blobs); prefer canonical content pages.
-- Avoid repeating the exact same bash command when the previous outcome did not improve evidence.
-- Do not ask the user to choose a source unless sources conflict or the user explicitly asks for source selection.
-"#;
+pub(crate) const PLANNER_SYSTEM_PROMPT: &str = sieve_prompts::planner::SYSTEM;
 
 pub(crate) enum PlannerDecodeOutcome {
     Valid(PlannerTurnOutput),
     InvalidToolContracts(ToolContractValidationReport),
+}
+
+#[derive(Serialize)]
+struct PlannerGuidancePayload {
+    code: u16,
+    signal_name: Option<&'static str>,
+    confidence_bps: u16,
+    source_hit_index: Option<u16>,
+    evidence_ref_index: Option<u16>,
+}
+
+#[derive(Serialize, Default)]
+struct PlannerGuidanceContract {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required_action_class: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forbidden_action_classes: Option<Vec<&'static str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    require_non_asset_target: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prefer_markdown_view: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    require_action_change: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prefer_current_browser_session: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avoid_recent_interstitial_origin: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preserve_task_target: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct PlannerCommandCatalogEntry<'a> {
+    command: &'a str,
+    description: &'a str,
+}
+
+#[derive(Serialize)]
+struct PlannerToolGuideEntry<'a> {
+    name: &'a str,
+    family: &'a str,
+    description: &'a str,
+    when_to_use: &'a [&'a str],
+    when_not_to_use: &'a [&'a str],
+    usage_notes: &'a [&'a str],
+    examples: &'a [&'a str],
+}
+
+#[derive(Serialize)]
+struct PlannerContextPayload<'a> {
+    run_id: &'a str,
+    trusted_user_message: &'a str,
+    #[serde(rename = "CURRENT_TIME_UTC")]
+    current_time_utc: Option<&'a str>,
+    #[serde(rename = "CURRENT_TIMEZONE")]
+    current_timezone: Option<&'a str>,
+    #[serde(rename = "ALLOWED_NET_CONNECT_SCOPES")]
+    allowed_net_connect_scopes: &'a [String],
+    #[serde(rename = "BROWSER_SESSIONS")]
+    browser_sessions: &'a [PlannerBrowserSession],
+    #[serde(rename = "CODEX_SESSIONS")]
+    codex_sessions: &'a [PlannerCodexSession],
+    #[serde(rename = "BASH_COMMAND_CATALOG")]
+    bash_command_catalog: Vec<PlannerCommandCatalogEntry<'a>>,
+    previous_event_kinds: Vec<&'static str>,
+    guidance: Option<PlannerGuidancePayload>,
+    guidance_contract: Option<PlannerGuidanceContract>,
+}
+
+#[derive(Serialize)]
+struct PlannerChatMessage {
+    role: &'static str,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct NormalizedPlannerToolCall {
+    tool_name: String,
+    args: Value,
+}
+
+#[derive(Serialize)]
+struct NormalizedPlannerOutput {
+    thoughts: Option<String>,
+    tool_calls: Vec<NormalizedPlannerToolCall>,
 }
 
 pub(crate) fn serialize_planner_input(input: &PlannerTurnInput) -> Result<Value, LlmError> {
@@ -77,100 +117,194 @@ pub(crate) fn serialize_planner_input(input: &PlannerTurnInput) -> Result<Value,
         let signal_name = PlannerGuidanceSignal::try_from(guidance.code)
             .ok()
             .map(PlannerGuidanceSignal::name);
-        json!({
-            "code": guidance.code,
-            "signal_name": signal_name,
-            "confidence_bps": guidance.confidence_bps,
-            "source_hit_index": guidance.source_hit_index,
-            "evidence_ref_index": guidance.evidence_ref_index
-        })
+        PlannerGuidancePayload {
+            code: guidance.code,
+            signal_name,
+            confidence_bps: guidance.confidence_bps,
+            source_hit_index: guidance.source_hit_index,
+            evidence_ref_index: guidance.evidence_ref_index,
+        }
     });
     let guidance_contract = input
         .guidance
         .as_ref()
         .and_then(planner_guidance_contract_payload);
     let bash_command_catalog = planner_command_catalog_for_allowed_tools(&input.allowed_tools);
-    Ok(json!({
-        "run_id": input.run_id.0,
-        "trusted_user_message": input.user_message,
-        "CURRENT_TIME_UTC": input.current_time_utc,
-        "CURRENT_TIMEZONE": input.current_timezone,
-        "ALLOWED_NET_CONNECT_SCOPES": input.allowed_net_connect_scopes,
-        "BROWSER_SESSIONS": input.browser_sessions,
-        "CODEX_SESSIONS": input.codex_sessions,
-        "BASH_COMMAND_CATALOG": bash_command_catalog,
-        "previous_event_kinds": event_kinds,
-        "guidance": guidance,
-        "guidance_contract": guidance_contract
-    }))
+    serde_json::to_value(PlannerContextPayload {
+        run_id: &input.run_id.0,
+        trusted_user_message: &input.user_message,
+        current_time_utc: input.current_time_utc.as_deref(),
+        current_timezone: input.current_timezone.as_deref(),
+        allowed_net_connect_scopes: &input.allowed_net_connect_scopes,
+        browser_sessions: &input.browser_sessions,
+        codex_sessions: &input.codex_sessions,
+        bash_command_catalog,
+        previous_event_kinds: event_kinds,
+        guidance,
+        guidance_contract,
+    })
+    .map_err(|err| LlmError::Boundary(format!("failed to serialize planner input: {err}")))
+}
+
+pub(crate) fn build_planner_messages(input: &PlannerTurnInput) -> Result<Vec<Value>, LlmError> {
+    let context_payload = serialize_planner_input(input)?;
+    let mut messages = vec![
+        planner_message("system", PLANNER_SYSTEM_PROMPT.to_string()),
+        planner_message(
+            "user",
+            format!("TRUSTED_PLANNER_CONTEXT\n{}", context_payload),
+        ),
+    ];
+    let tool_guide = planner_tool_guide_for_allowed_tools(&input.allowed_tools)?;
+    if !tool_guide.is_empty() {
+        messages.push(planner_message(
+            "user",
+            format!(
+                "TRUSTED_TOOL_GUIDE\n{}",
+                serde_json::to_string(&tool_guide).map_err(|err| {
+                    LlmError::Boundary(format!("failed to serialize planner tool guide: {err}"))
+                })?
+            ),
+        ));
+    }
+
+    if input.conversation.is_empty() {
+        messages.push(planner_message("user", input.user_message.clone()));
+        return Ok(messages);
+    }
+
+    for message in &input.conversation {
+        messages.push(planner_message(
+            planner_conversation_role(message.role),
+            planner_conversation_content(message),
+        ));
+    }
+    Ok(messages)
 }
 
 fn planner_guidance_contract_payload(
     guidance: &sieve_types::PlannerGuidanceFrame,
-) -> Option<Value> {
+) -> Option<PlannerGuidanceContract> {
     let signal = PlannerGuidanceSignal::try_from(guidance.code).ok()?;
     match signal {
-        PlannerGuidanceSignal::ContinueNeedPrimaryContentFetch => Some(json!({
-            "required_action_class": "fetch",
-            "forbidden_action_classes": ["discovery"],
-            "require_non_asset_target": true,
-            "prefer_markdown_view": true
-        })),
-        PlannerGuidanceSignal::ContinueNeedHigherQualitySource => Some(json!({
-            "required_action_class": "fetch",
-            "forbidden_action_classes": ["discovery"],
-            "require_non_asset_target": true,
-            "require_action_change": true
-        })),
-        PlannerGuidanceSignal::ContinueNeedCanonicalNonAssetUrl => Some(json!({
-            "required_action_class": "fetch",
-            "require_non_asset_target": true,
-            "prefer_markdown_view": true
-        })),
-        PlannerGuidanceSignal::ContinueNeedUrlExtraction => Some(json!({
-            "required_action_class": "extract"
-        })),
-        PlannerGuidanceSignal::ContinueToolDeniedTryAlternativeAllowedTool => Some(json!({
-            "require_action_change": true
-        })),
-        PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction => Some(json!({
-            "forbidden_action_classes": ["discovery"],
-            "require_action_change": true
-        })),
-        PlannerGuidanceSignal::ContinueNeedCurrentPageInspection => Some(json!({
-            "required_action_class": "extract",
-            "forbidden_action_classes": ["discovery"],
-            "prefer_current_browser_session": true,
-            "require_action_change": true
-        })),
-        PlannerGuidanceSignal::ContinueEncounteredAccessInterstitial => Some(json!({
-            "require_action_change": true,
-            "forbidden_action_classes": ["discovery"],
-            "avoid_recent_interstitial_origin": true,
-            "preserve_task_target": true
-        })),
-        PlannerGuidanceSignal::ContinueNeedCommandReformulation => Some(json!({
-            "require_action_change": true,
-            "preserve_task_target": true
-        })),
+        PlannerGuidanceSignal::ContinueNeedPrimaryContentFetch => Some(PlannerGuidanceContract {
+            required_action_class: Some("fetch"),
+            forbidden_action_classes: Some(vec!["discovery"]),
+            require_non_asset_target: Some(true),
+            prefer_markdown_view: Some(true),
+            ..Default::default()
+        }),
+        PlannerGuidanceSignal::ContinueNeedHigherQualitySource => Some(PlannerGuidanceContract {
+            required_action_class: Some("fetch"),
+            forbidden_action_classes: Some(vec!["discovery"]),
+            require_non_asset_target: Some(true),
+            require_action_change: Some(true),
+            ..Default::default()
+        }),
+        PlannerGuidanceSignal::ContinueNeedCanonicalNonAssetUrl => Some(PlannerGuidanceContract {
+            required_action_class: Some("fetch"),
+            require_non_asset_target: Some(true),
+            prefer_markdown_view: Some(true),
+            ..Default::default()
+        }),
+        PlannerGuidanceSignal::ContinueNeedUrlExtraction => Some(PlannerGuidanceContract {
+            required_action_class: Some("extract"),
+            ..Default::default()
+        }),
+        PlannerGuidanceSignal::ContinueToolDeniedTryAlternativeAllowedTool => {
+            Some(PlannerGuidanceContract {
+                require_action_change: Some(true),
+                ..Default::default()
+            })
+        }
+        PlannerGuidanceSignal::ContinueNoProgressTryDifferentAction => {
+            Some(PlannerGuidanceContract {
+                forbidden_action_classes: Some(vec!["discovery"]),
+                require_action_change: Some(true),
+                ..Default::default()
+            })
+        }
+        PlannerGuidanceSignal::ContinueNeedCurrentPageInspection => Some(PlannerGuidanceContract {
+            required_action_class: Some("extract"),
+            forbidden_action_classes: Some(vec!["discovery"]),
+            prefer_current_browser_session: Some(true),
+            require_action_change: Some(true),
+            ..Default::default()
+        }),
+        PlannerGuidanceSignal::ContinueEncounteredAccessInterstitial => {
+            Some(PlannerGuidanceContract {
+                require_action_change: Some(true),
+                forbidden_action_classes: Some(vec!["discovery"]),
+                avoid_recent_interstitial_origin: Some(true),
+                preserve_task_target: Some(true),
+                ..Default::default()
+            })
+        }
+        PlannerGuidanceSignal::ContinueNeedCommandReformulation => Some(PlannerGuidanceContract {
+            require_action_change: Some(true),
+            preserve_task_target: Some(true),
+            ..Default::default()
+        }),
         _ => None,
     }
 }
 
-fn planner_command_catalog_for_allowed_tools(allowed_tools: &[String]) -> Vec<Value> {
+fn planner_conversation_role(role: sieve_types::PlannerConversationRole) -> &'static str {
+    match role {
+        sieve_types::PlannerConversationRole::User => "user",
+        sieve_types::PlannerConversationRole::Assistant => "assistant",
+    }
+}
+
+fn planner_conversation_content(message: &sieve_types::PlannerConversationMessage) -> String {
+    match message.kind {
+        PlannerConversationMessageKind::FullText => message.content.clone(),
+        PlannerConversationMessageKind::RedactedInfo => message.content.clone(),
+    }
+}
+
+fn planner_message(role: &'static str, content: String) -> Value {
+    serde_json::to_value(PlannerChatMessage { role, content })
+        .expect("planner message serialization should succeed")
+}
+
+fn planner_command_catalog_for_allowed_tools(
+    allowed_tools: &[String],
+) -> Vec<PlannerCommandCatalogEntry<'static>> {
     if !allowed_tools.iter().any(|tool| tool == "bash") {
         return Vec::new();
     }
 
     planner_command_catalog()
         .iter()
-        .map(|descriptor| {
-            json!({
-                "command": descriptor.command,
-                "description": descriptor.description
-            })
+        .map(|descriptor| PlannerCommandCatalogEntry {
+            command: descriptor.command,
+            description: descriptor.description,
         })
         .collect()
+}
+
+fn planner_tool_guide_for_allowed_tools(
+    allowed_tools: &[String],
+) -> Result<Vec<PlannerToolGuideEntry<'static>>, LlmError> {
+    let mut entries = Vec::with_capacity(allowed_tools.len());
+    for tool_name in allowed_tools {
+        let descriptor = tool_descriptor(tool_name).ok_or_else(|| {
+            LlmError::Boundary(format!(
+                "allowed tool `{tool_name}` is missing a shared descriptor"
+            ))
+        })?;
+        entries.push(PlannerToolGuideEntry {
+            name: descriptor.name,
+            family: descriptor.family,
+            description: descriptor.description,
+            when_to_use: descriptor.when_to_use,
+            when_not_to_use: descriptor.when_not_to_use,
+            usage_notes: descriptor.usage_notes,
+            examples: descriptor.examples,
+        });
+    }
+    Ok(entries)
 }
 
 fn runtime_event_kind(event: &RuntimeEvent) -> &'static str {
@@ -235,20 +369,21 @@ pub(crate) fn extract_openai_planner_output_json(response: &Value) -> Result<Val
             ))
         })?;
 
-        normalized_tool_calls.push(json!({
-            "tool_name": tool_name,
-            "args": Value::Object(arguments),
-        }));
+        normalized_tool_calls.push(NormalizedPlannerToolCall {
+            tool_name: tool_name.to_string(),
+            args: Value::Object(arguments),
+        });
     }
 
     let thoughts = response
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(ToString::to_string);
-    Ok(json!({
-        "thoughts": thoughts,
-        "tool_calls": normalized_tool_calls,
-    }))
+    serde_json::to_value(NormalizedPlannerOutput {
+        thoughts,
+        tool_calls: normalized_tool_calls,
+    })
+    .map_err(|err| LlmError::Decode(format!("failed to serialize planner output: {err}")))
 }
 
 fn extract_responses_planner_output_json(response: &Value) -> Result<Value, LlmError> {
@@ -293,10 +428,10 @@ fn extract_responses_planner_output_json(response: &Value) -> Result<Value, LlmE
                     ))
                 })?;
 
-                normalized_tool_calls.push(json!({
-                    "tool_name": tool_name,
-                    "args": Value::Object(arguments),
-                }));
+                normalized_tool_calls.push(NormalizedPlannerToolCall {
+                    tool_name: tool_name.to_string(),
+                    args: Value::Object(arguments),
+                });
             }
             "message" => {
                 let Some(content) = item.get("content").and_then(Value::as_array) else {
@@ -325,10 +460,11 @@ fn extract_responses_planner_output_json(response: &Value) -> Result<Value, LlmE
         Some(thoughts_parts.join("\n"))
     };
 
-    Ok(json!({
-        "thoughts": thoughts,
-        "tool_calls": normalized_tool_calls,
-    }))
+    serde_json::to_value(NormalizedPlannerOutput {
+        thoughts,
+        tool_calls: normalized_tool_calls,
+    })
+    .map_err(|err| LlmError::Decode(format!("failed to serialize planner output: {err}")))
 }
 
 pub(crate) fn planner_regeneration_diagnostic_prompt(
@@ -340,10 +476,7 @@ pub(crate) fn planner_regeneration_diagnostic_prompt(
         ))
     })?;
 
-    Ok(format!(
-        "Your previous tool call output violated strict tool argument contracts. \
-Retry with corrected tool calls and fix every diagnostic below.\n\nDiagnostics:\n{diagnostics}"
-    ))
+    Ok(sieve_prompts::planner::REGENERATION_DIAGNOSTIC.replace("{{DIAGNOSTICS}}", &diagnostics))
 }
 
 #[derive(Debug, Deserialize)]

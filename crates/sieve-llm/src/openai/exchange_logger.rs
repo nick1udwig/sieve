@@ -1,4 +1,5 @@
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -8,6 +9,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub(crate) struct LlmExchangeLogger {
     path: Option<PathBuf>,
     provider: &'static str,
+}
+
+#[derive(Serialize)]
+struct ProviderExchangeEvent<'a> {
+    event: &'static str,
+    schema_version: u8,
+    provider: &'a str,
+    created_at_ms: u64,
+    endpoint: &'a str,
+    attempt: usize,
+    request_json: &'a Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_body: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport_error: Option<&'a str>,
 }
 
 impl LlmExchangeLogger {
@@ -50,18 +68,18 @@ impl LlmExchangeLogger {
         status: u16,
         response_body: &str,
     ) {
-        let event = json!({
-            "event": "llm_provider_exchange",
-            "schema_version": 1,
-            "provider": self.provider,
-            "created_at_ms": now_ms(),
-            "endpoint": endpoint,
-            "attempt": attempt,
-            "request_json": request_json,
-            "response_status": status,
-            "response_body": response_body,
+        self.append(ProviderExchangeEvent {
+            event: "llm_provider_exchange",
+            schema_version: 1,
+            provider: self.provider,
+            created_at_ms: now_ms(),
+            endpoint,
+            attempt,
+            request_json,
+            response_status: Some(status),
+            response_body: Some(response_body),
+            transport_error: None,
         });
-        self.append(event);
     }
 
     pub(crate) fn log_transport_error(
@@ -71,20 +89,21 @@ impl LlmExchangeLogger {
         attempt: usize,
         error: &str,
     ) {
-        let event = json!({
-            "event": "llm_provider_exchange",
-            "schema_version": 1,
-            "provider": self.provider,
-            "created_at_ms": now_ms(),
-            "endpoint": endpoint,
-            "attempt": attempt,
-            "request_json": request_json,
-            "transport_error": error,
+        self.append(ProviderExchangeEvent {
+            event: "llm_provider_exchange",
+            schema_version: 1,
+            provider: self.provider,
+            created_at_ms: now_ms(),
+            endpoint,
+            attempt,
+            request_json,
+            response_status: None,
+            response_body: None,
+            transport_error: Some(error),
         });
-        self.append(event);
     }
 
-    fn append(&self, event: Value) {
+    fn append<T: Serialize>(&self, event: T) {
         let Some(path) = &self.path else {
             return;
         };

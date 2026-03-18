@@ -129,6 +129,7 @@ async fn tool_contract_failure_stays_internal_not_chat_visible() {
             run_id: RunId("run_contract_failure".to_string()),
             cwd: "/tmp".to_string(),
             user_message: "dangerous".to_string(),
+            conversation: Vec::new(),
             allowed_tools: vec!["bash".to_string()],
             current_time_utc: None,
             current_timezone: None,

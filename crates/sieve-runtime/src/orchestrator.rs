@@ -83,6 +83,7 @@ pub struct RuntimeOrchestrator {
     pub(crate) value_state: Mutex<RuntimeValueState>,
     pub(crate) persistent_approval_allowances: Mutex<BTreeSet<ApprovalAllowanceKey>>,
     pub(crate) browser_sessions: Mutex<BTreeMap<String, BrowserSessionState>>,
+    pub(crate) bash_placeholder_values: Mutex<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
 pub struct RuntimeDeps {
@@ -119,6 +120,7 @@ impl RuntimeOrchestrator {
             value_state: Mutex::new(RuntimeValueState::default()),
             persistent_approval_allowances: Mutex::new(BTreeSet::new()),
             browser_sessions: Mutex::new(BTreeMap::new()),
+            bash_placeholder_values: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -203,6 +205,37 @@ impl RuntimeOrchestrator {
 
     pub fn has_automation_tool(&self) -> bool {
         self.automation.is_some()
+    }
+
+    pub fn set_bash_placeholder_values(
+        &self,
+        run_id: &RunId,
+        placeholders: BTreeMap<String, String>,
+    ) -> Result<(), RuntimeError> {
+        let mut store = self
+            .bash_placeholder_values
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        store.insert(run_id.0.clone(), placeholders);
+        Ok(())
+    }
+
+    pub(crate) fn expand_bash_placeholders(
+        &self,
+        run_id: &RunId,
+        script: &str,
+    ) -> Result<String, RuntimeError> {
+        let store = self
+            .bash_placeholder_values
+            .lock()
+            .map_err(|_| ValueStateError::LockPoisoned)?;
+        let mut expanded = script.to_string();
+        if let Some(placeholders) = store.get(&run_id.0) {
+            for (placeholder, value) in placeholders {
+                expanded = expanded.replace(placeholder, value);
+            }
+        }
+        Ok(expanded)
     }
 
     pub fn has_codex_tool(&self) -> bool {

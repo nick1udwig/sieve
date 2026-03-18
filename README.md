@@ -59,6 +59,9 @@ The main workspace split is:
 Architecture notes and crate map: [docs/running.md](docs/running.md#architecture).
 Deeper design docs: [docs/sieve-v3-mvp-spec-v1.3.md](docs/sieve-v3-mvp-spec-v1.3.md) and [docs/sieve-v3-mvp-security.md](docs/sieve-v3-mvp-security.md).
 
+Prompts live in `.md` files and get `include_str!`d into the appropriate `.rs` files.
+See, e.g., `crates/sieve-app/src/prompts/` and `crates/sieve-llm/src/prompts`.
+
 ## Testing
 
 Run the local suite with:

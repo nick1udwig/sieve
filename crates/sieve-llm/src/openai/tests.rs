@@ -1,4 +1,5 @@
 use super::*;
+use sieve_tool_contracts::tool_descriptor;
 use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
@@ -129,6 +130,9 @@ async fn planner_request_includes_openai_native_tools_payload() {
     .expect("planner request should succeed");
 
     let requests = requests.lock().expect("request lock");
+    let bash_description = tool_descriptor("bash")
+        .expect("bash descriptor")
+        .render_function_description();
     assert!(requests[0].pointer("/tools").is_some());
     assert_eq!(
         requests[0]
@@ -136,6 +140,12 @@ async fn planner_request_includes_openai_native_tools_payload() {
             .and_then(Value::as_str)
             .unwrap_or_default(),
         "auto"
+    );
+    assert_eq!(
+        requests[0]
+            .pointer("/tools/0/function/description")
+            .and_then(Value::as_str),
+        Some(bash_description.as_str())
     );
 }
 

@@ -1,13 +1,35 @@
 use super::mainline::{count_newlines, mainline_artifact_kind_name};
 use crate::render_refs::RenderRef;
+use serde::Serialize;
 use sieve_llm::{
     ResponseEvidenceRecord, ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput,
     SummaryModel, SummaryRequest,
 };
 use sieve_runtime::{PlannerRunResult, PlannerToolResult, RuntimeDisposition};
+use sieve_tool_contracts::planner_exposed_tool_names;
 use sieve_types::{Integrity, InteractionModality, RunId, TrustedToolEffect};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+#[derive(Serialize)]
+struct ResponseEvidenceBatchRef {
+    ref_id: String,
+    kind: String,
+    byte_count: u64,
+    line_count: u64,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct ResponseEvidenceBatchPayload<'a> {
+    task: &'static str,
+    trusted_user_message: &'a str,
+    refs: Vec<ResponseEvidenceBatchRef>,
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+}
 
 pub(crate) fn planner_allowed_tools_for_turn(
     configured_tools: &[String],
@@ -15,16 +37,12 @@ pub(crate) fn planner_allowed_tools_for_turn(
     automation_available: bool,
     codex_available: bool,
 ) -> Vec<String> {
-    configured_tools
-        .iter()
-        .filter(|tool| {
-            (has_known_value_refs || (tool.as_str() != "endorse" && tool.as_str() != "declassify"))
-                && (automation_available || tool.as_str() != "automation")
-                && (codex_available
-                    || (tool.as_str() != "codex_exec" && tool.as_str() != "codex_session"))
-        })
-        .cloned()
-        .collect()
+    planner_exposed_tool_names(
+        configured_tools,
+        has_known_value_refs,
+        automation_available,
+        codex_available,
+    )
 }
 
 pub(crate) fn build_response_turn_input(
@@ -196,24 +214,27 @@ pub(crate) async fn build_response_evidence_records(
         else {
             continue;
         };
-        refs.push(serde_json::json!({
-            "ref_id": metadata.ref_id,
-            "kind": metadata.kind,
-            "byte_count": metadata.byte_count,
-            "line_count": metadata.line_count,
-            "content": content,
-        }));
+        refs.push(ResponseEvidenceBatchRef {
+            ref_id: metadata.ref_id.clone(),
+            kind: metadata.kind.clone(),
+            byte_count: metadata.byte_count,
+            line_count: metadata.line_count,
+            content,
+        });
     }
 
     if refs.is_empty() {
         return Vec::new();
     }
 
-    let payload = serde_json::json!({
-        "task": "extract_response_evidence_batch",
-        "trusted_user_message": trusted_user_message,
-        "refs": refs,
-    });
+    let payload = to_json_value(
+        ResponseEvidenceBatchPayload {
+            task: "extract_response_evidence_batch",
+            trusted_user_message,
+            refs,
+        },
+        "response evidence batch payload",
+    );
     let Some(raw) = summarize_with_ref_id_counted(
         summary_model,
         run_id,

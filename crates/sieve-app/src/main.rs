@@ -12,7 +12,9 @@ mod ingress;
 mod lcm_integration;
 mod logging;
 mod media;
+mod planner_conversation;
 mod planner_feedback;
+mod planner_products;
 mod planner_progress;
 mod render_refs;
 mod response_style;
@@ -63,7 +65,13 @@ use logging::FanoutRuntimeEventLog;
 pub(crate) use logging::{now_ms, ConversationLogRecord, ConversationRole, TelegramLoopEvent};
 #[cfg(test)]
 #[allow(unused_imports)]
+pub(crate) use planner_conversation::{build_planner_conversation, planner_step_trace_messages};
+#[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use planner_products::{PlannerIntermediateProductSummary, PlannerOpaqueHandleStore};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use planner_progress::{

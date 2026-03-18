@@ -57,7 +57,7 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
     },
     PlannerCommandDescriptor {
         command: "gws",
-        description: "Google Workspace CLI. Supported here: `gws schema <service.resource.method>` and API calls like `gws drive files list --params '{\"pageSize\":10}'` or `gws sheets spreadsheets values append --params '{...}' --json '{...}'`. Use `--dry-run` to inspect request shape locally with no network/file effects. Read-ish methods require Google API net connect; mutating methods or `--json`/`--upload` require Google API net write. `--upload PATH` also reads a local file and `--output PATH` writes a local file. Service `+helpers` and top-level `gws auth|workflow|modelarmor|mcp` are intentionally unsupported.",
+        description: "Google Workspace CLI. Supported here: `gws schema <service.resource.method>` and API calls like `gws drive files list --params '{\"pageSize\":10}'` or `gws sheets spreadsheets values append --params '{...}' --json '{...}'`. Schema targets are dotted, but real API calls are space-separated CLI tokens: `gws schema gmail.users.messages.list` maps to `gws gmail users messages list`. Never use dotted subcommands like `users.messages.list` in a real `gws` API call. Use `--dry-run` to inspect request shape locally with no network/file effects. Read-ish methods require Google API net connect; mutating methods or `--json`/`--upload` require Google API net write. `--upload PATH` also reads a local file and `--output PATH` writes a local file. Service `+helpers` and top-level `gws auth|workflow|modelarmor|mcp` are intentionally unsupported.",
     },
     PlannerCommandDescriptor {
         command: "sieve-lcm-cli",

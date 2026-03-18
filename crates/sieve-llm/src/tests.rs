@@ -318,6 +318,7 @@ fn serialize_planner_input_only_sends_safe_shape() {
     let input = PlannerTurnInput {
         run_id: RunId("run-1".to_string()),
         user_message: "list files".to_string(),
+        conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
         current_time_utc: None,
         current_timezone: None,
@@ -613,6 +614,11 @@ async fn openai_live_planner_smoke_env_gated() {
         .plan_turn(PlannerTurnInput {
             run_id: RunId("live-planner".to_string()),
             user_message: "Use bash to print hello world.".to_string(),
+            conversation: vec![sieve_types::PlannerConversationMessage {
+                role: sieve_types::PlannerConversationRole::User,
+                kind: sieve_types::PlannerConversationMessageKind::FullText,
+                content: "Use bash to print hello world.".to_string(),
+            }],
             allowed_tools: vec!["bash".to_string()],
             current_time_utc: None,
             current_timezone: None,

@@ -3,11 +3,84 @@ use crate::wire::{
     RESPONSE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT,
 };
 use crate::{LlmError, ResponseTurnInput, SummaryRequest};
+use serde::Serialize;
 use serde_json::{json, Value};
 use sieve_tool_contracts::tool_args_schema;
 use sieve_types::PlannerGuidanceInput;
 
 const DEFAULT_CODEX_API_BASE: &str = "https://chatgpt.com/backend-api";
+
+#[derive(Serialize)]
+struct CodexResponsesRequest<'a> {
+    model: &'a str,
+    store: bool,
+    stream: bool,
+    instructions: String,
+    input: Vec<CodexInputMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<CodexToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<CodexTextConfig>,
+}
+
+#[derive(Serialize)]
+struct CodexInputMessage {
+    role: String,
+    content: Vec<CodexContentPart>,
+}
+
+#[derive(Serialize)]
+struct CodexContentPart {
+    #[serde(rename = "type")]
+    content_type: &'static str,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct CodexTextConfig {
+    format: CodexTextFormat,
+}
+
+#[derive(Serialize)]
+struct CodexTextFormat {
+    #[serde(rename = "type")]
+    format_type: &'static str,
+    name: String,
+    strict: bool,
+    schema: Value,
+}
+
+#[derive(Serialize)]
+struct CodexToolDefinition {
+    #[serde(rename = "type")]
+    tool_type: &'static str,
+    name: String,
+    parameters: Value,
+    strict: bool,
+}
+
+#[derive(Serialize)]
+struct PlannerGuidancePayload {
+    run_id: String,
+    prompt: String,
+}
+
+#[derive(Serialize)]
+struct SummaryPayload {
+    run_id: String,
+    ref_id: String,
+    byte_count: u64,
+    line_count: u64,
+    content: String,
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+}
 
 pub(crate) fn build_planner_request(
     model: &str,
@@ -15,32 +88,35 @@ pub(crate) fn build_planner_request(
     allowed_tools: &[String],
 ) -> Result<Value, LlmError> {
     let (instructions, input) = split_messages(messages)?;
-    let mut body = json!({
-        "model": model,
-        "store": false,
-        "stream": true,
-        "instructions": instructions.unwrap_or_else(|| PLANNER_SYSTEM_PROMPT.to_string()),
-        "input": input,
-    });
-
     let tools = planner_tool_definitions(allowed_tools)?;
-    if !tools.is_empty() {
-        body["tools"] = Value::Array(tools);
-        body["tool_choice"] = Value::String("auto".to_string());
-        body["parallel_tool_calls"] = Value::Bool(true);
-    }
-
-    Ok(body)
+    let has_tools = !tools.is_empty();
+    Ok(to_json_value(
+        CodexResponsesRequest {
+            model,
+            store: false,
+            stream: true,
+            instructions: instructions.unwrap_or_else(|| PLANNER_SYSTEM_PROMPT.to_string()),
+            input,
+            tools: has_tools.then_some(tools),
+            tool_choice: has_tools.then_some("auto"),
+            parallel_tool_calls: has_tools.then_some(true),
+            text: None,
+        },
+        "codex planner request",
+    ))
 }
 
 pub(crate) fn build_guidance_request(input: PlannerGuidanceInput, model: &str) -> Value {
     build_structured_request(
         model,
         GUIDANCE_SYSTEM_PROMPT,
-        json!({
-            "run_id": input.run_id.0,
-            "prompt": input.prompt
-        }),
+        to_json_value(
+            PlannerGuidancePayload {
+                run_id: input.run_id.0,
+                prompt: input.prompt,
+            },
+            "codex guidance payload",
+        ),
         "planner_guidance_output",
         guidance_output_schema(),
     )
@@ -61,17 +137,19 @@ pub(crate) fn build_response_request(
 }
 
 pub(crate) fn build_summary_request(request: SummaryRequest, model: &str) -> Value {
-    let payload = json!({
-        "run_id": request.run_id.0,
-        "ref_id": request.ref_id,
-        "byte_count": request.byte_count,
-        "line_count": request.line_count,
-        "content": request.content,
-    });
     build_structured_request(
         model,
         SUMMARY_SYSTEM_PROMPT,
-        payload,
+        to_json_value(
+            SummaryPayload {
+                run_id: request.run_id.0,
+                ref_id: request.ref_id,
+                byte_count: request.byte_count,
+                line_count: request.line_count,
+                content: request.content,
+            },
+            "codex summary payload",
+        ),
         "untrusted_ref_summary",
         json!({
             "type":"object",
@@ -106,34 +184,38 @@ fn build_structured_request(
     schema_name: &str,
     schema: Value,
 ) -> Value {
-    json!({
-        "model": model,
-        "store": false,
-        "stream": true,
-        "instructions": instructions,
-        "input": [
-            {
-                "role":"user",
-                "content": [
-                    {
-                        "type":"input_text",
-                        "text": payload.to_string()
-                    }
-                ]
-            }
-        ],
-        "text": {
-            "format": {
-                "type":"json_schema",
-                "name": schema_name,
-                "strict": true,
-                "schema": schema
-            }
-        }
-    })
+    to_json_value(
+        CodexResponsesRequest {
+            model,
+            store: false,
+            stream: true,
+            instructions: instructions.to_string(),
+            input: vec![CodexInputMessage {
+                role: "user".to_string(),
+                content: vec![CodexContentPart {
+                    content_type: "input_text",
+                    text: payload.to_string(),
+                }],
+            }],
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: Some(CodexTextConfig {
+                format: CodexTextFormat {
+                    format_type: "json_schema",
+                    name: schema_name.to_string(),
+                    strict: true,
+                    schema,
+                },
+            }),
+        },
+        "codex structured request",
+    )
 }
 
-fn split_messages(messages: Vec<Value>) -> Result<(Option<String>, Vec<Value>), LlmError> {
+fn split_messages(
+    messages: Vec<Value>,
+) -> Result<(Option<String>, Vec<CodexInputMessage>), LlmError> {
     let mut instructions = None;
     let mut input = Vec::new();
 
@@ -154,21 +236,25 @@ fn split_messages(messages: Vec<Value>) -> Result<(Option<String>, Vec<Value>), 
             continue;
         }
 
-        input.push(json!({
-            "role": role,
-            "content": [
-                {
-                    "type":"input_text",
-                    "text": content
-                }
-            ]
-        }));
+        let content_type = match role {
+            "assistant" => "output_text",
+            _ => "input_text",
+        };
+        input.push(CodexInputMessage {
+            role: role.to_string(),
+            content: vec![CodexContentPart {
+                content_type,
+                text: content.to_string(),
+            }],
+        });
     }
 
     Ok((instructions, input))
 }
 
-fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmError> {
+fn planner_tool_definitions(
+    allowed_tools: &[String],
+) -> Result<Vec<CodexToolDefinition>, LlmError> {
     let mut tools = Vec::with_capacity(allowed_tools.len());
     for tool_name in allowed_tools {
         let schema = tool_args_schema(tool_name).ok_or_else(|| {
@@ -177,12 +263,12 @@ fn planner_tool_definitions(allowed_tools: &[String]) -> Result<Vec<Value>, LlmE
             ))
         })?;
         let schema = normalize_codex_tool_schema(schema);
-        tools.push(json!({
-            "type": "function",
-            "name": tool_name,
-            "parameters": schema,
-            "strict": true
-        }));
+        tools.push(CodexToolDefinition {
+            tool_type: "function",
+            name: tool_name.clone(),
+            parameters: schema,
+            strict: true,
+        });
     }
     Ok(tools)
 }
@@ -509,8 +595,28 @@ mod tests {
     }
 
     #[test]
+    fn split_messages_encodes_assistant_history_as_output_text() {
+        let (_, input) = split_messages(vec![
+            json!({"role":"system","content":"planner"}),
+            json!({"role":"user","content":"hello"}),
+            json!({"role":"assistant","content":"previous reply"}),
+        ])
+        .expect("split");
+        let input = serde_json::to_value(input).expect("input json");
+        assert_eq!(
+            input[0].pointer("/content/0/type"),
+            Some(&json!("input_text"))
+        );
+        assert_eq!(
+            input[1].pointer("/content/0/type"),
+            Some(&json!("output_text"))
+        );
+    }
+
+    #[test]
     fn planner_tool_definitions_flatten_codex_incompatible_one_of() {
         let tools = planner_tool_definitions(&["automation".to_string()]).expect("tools");
+        let tools = serde_json::to_value(tools).expect("tools json");
         let schedule = tools[0]
             .pointer("/parameters/properties/schedule")
             .cloned()
@@ -529,6 +635,7 @@ mod tests {
     #[test]
     fn nullable_one_of_flattens_to_all_required_nullable_fields_for_codex() {
         let tools = planner_tool_definitions(&["automation".to_string()]).expect("tools");
+        let tools = serde_json::to_value(tools).expect("tools json");
         let schedule = tools[0]
             .pointer("/parameters/properties/schedule")
             .cloned()
@@ -550,6 +657,7 @@ mod tests {
     #[test]
     fn codex_tool_schema_requires_all_top_level_properties() {
         let tools = planner_tool_definitions(&["automation".to_string()]).expect("tools");
+        let tools = serde_json::to_value(tools).expect("tools json");
         let parameters = tools[0].pointer("/parameters").cloned().expect("params");
         assert_eq!(
             parameters.pointer("/required"),

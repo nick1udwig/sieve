@@ -13,6 +13,8 @@ use crate::response_style::{
 };
 use crate::turn::{non_empty_output_ref_ids, summarize_with_ref_id_counted};
 use chrono::{TimeZone, Utc};
+use serde::Serialize;
+use serde_json::Value;
 use sieve_llm::{ResponseTurnInput, SummaryModel};
 use sieve_types::{AutomationDeliveryMode, PlannerGuidanceSignal, RunId, TrustedToolEffect};
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,6 +31,119 @@ pub(crate) struct ComposeAssistantOutcome {
     pub(crate) quality_gate: Option<String>,
     pub(crate) planner_decision: ComposePlannerDecision,
     pub(crate) summary_calls: usize,
+}
+
+#[derive(Serialize)]
+struct ComposeAuditInputRef {
+    ref_id: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct ComposeAuditOutputRef {
+    ref_id: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct ComposeAuditRecord<'a> {
+    input_refs: Vec<ComposeAuditInputRef>,
+    output_ref: ComposeAuditOutputRef,
+    output_ref_ids: &'a [String],
+    source_urls: &'a [String],
+    quality_gate: Option<&'a str>,
+    grounding_gate: Option<&'a str>,
+    planner_followup_signal_code: Option<u16>,
+}
+
+#[derive(Serialize)]
+struct ComposeEvidenceExtractPayload<'a> {
+    task: &'static str,
+    trusted_user_message: &'a str,
+    ref_id: &'a str,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct ComposeGatePayload<'a> {
+    task: &'static str,
+    trusted_user_message: &'a str,
+    user_requested_sources: bool,
+    user_requested_detailed_output: bool,
+    trusted_evidence: &'a [String],
+    trusted_effects: &'a [TrustedToolEffect],
+    composed_message: &'a str,
+    extracted_evidence: &'a [sieve_llm::ResponseEvidenceRecord],
+    evidence_summaries: &'a [String],
+    source_urls: &'a [String],
+}
+
+#[derive(Serialize)]
+struct ComposeOutcomeRefPayload<'a> {
+    ref_id: &'a str,
+    kind: &'a str,
+    byte_count: u64,
+    line_count: u64,
+}
+
+#[derive(Serialize)]
+struct ComposeToolOutcomePayload<'a> {
+    tool_name: &'a str,
+    outcome: &'a str,
+    attempted_command: Option<&'a str>,
+    failure_reason: Option<&'a str>,
+    refs: Vec<ComposeOutcomeRefPayload<'a>>,
+}
+
+#[derive(Serialize)]
+struct ComposeUserReplyPayload<'a> {
+    task: &'static str,
+    trusted_user_message: &'a str,
+    response_modality: &'a sieve_types::InteractionModality,
+    user_requested_sources: bool,
+    user_requested_detailed_output: bool,
+    trusted_evidence: &'a [String],
+    trusted_effects: &'a [TrustedToolEffect],
+    assistant_draft_message: &'a str,
+    planner_thoughts: Option<&'a str>,
+    tool_outcomes: &'a [ComposeToolOutcomePayload<'a>],
+    extracted_evidence: &'a [sieve_llm::ResponseEvidenceRecord],
+    output_ref_ids: &'a [String],
+    available_plain_urls: &'a [String],
+    evidence_summaries: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compose_diagnostic: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous_composed_message: Option<&'a str>,
+}
+
+fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
+    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
+}
+
+fn compose_tool_outcome_payloads<'a>(
+    response_input: &'a ResponseTurnInput,
+) -> Vec<ComposeToolOutcomePayload<'a>> {
+    response_input
+        .tool_outcomes
+        .iter()
+        .map(|outcome| ComposeToolOutcomePayload {
+            tool_name: &outcome.tool_name,
+            outcome: &outcome.outcome,
+            attempted_command: outcome.attempted_command.as_deref(),
+            failure_reason: outcome.failure_reason.as_deref(),
+            refs: outcome
+                .refs
+                .iter()
+                .map(|ref_metadata| ComposeOutcomeRefPayload {
+                    ref_id: &ref_metadata.ref_id,
+                    kind: &ref_metadata.kind,
+                    byte_count: ref_metadata.byte_count,
+                    line_count: ref_metadata.line_count,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 async fn write_compose_audit_artifacts(
@@ -57,10 +172,10 @@ async fn write_compose_audit_artifacts(
         tokio::fs::write(&path, content)
             .await
             .map_err(|err| format!("failed to write compose payload artifact: {err}"))?;
-        input_refs.push(serde_json::json!({
-            "ref_id": ref_id,
-            "path": path.to_string_lossy(),
-        }));
+        input_refs.push(ComposeAuditInputRef {
+            ref_id,
+            path: path.to_string_lossy().into_owned(),
+        });
     }
 
     let output_ref_id = format!("assistant-compose-output:{}", run_id.0);
@@ -69,18 +184,21 @@ async fn write_compose_audit_artifacts(
         .await
         .map_err(|err| format!("failed to write compose output artifact: {err}"))?;
 
-    let record = serde_json::json!({
-        "input_refs": input_refs,
-        "output_ref": {
-            "ref_id": output_ref_id,
-            "path": output_path.to_string_lossy(),
+    let record = to_json_value(
+        ComposeAuditRecord {
+            input_refs,
+            output_ref: ComposeAuditOutputRef {
+                ref_id: output_ref_id,
+                path: output_path.to_string_lossy().into_owned(),
+            },
+            output_ref_ids,
+            source_urls,
+            quality_gate,
+            grounding_gate,
+            planner_followup_signal_code: planner_followup_signal.map(PlannerGuidanceSignal::code),
         },
-        "output_ref_ids": output_ref_ids,
-        "source_urls": source_urls,
-        "quality_gate": quality_gate,
-        "grounding_gate": grounding_gate,
-        "planner_followup_signal_code": planner_followup_signal.map(PlannerGuidanceSignal::code),
-    });
+        "compose audit record",
+    );
     event_log
         .append_app_event("compose", "compose_audit", "info", run_id, now_ms(), record)
         .await
@@ -193,12 +311,15 @@ async fn build_compose_evidence_summaries(
             }
             continue;
         }
-        let payload = serde_json::json!({
-            "task": "compose_evidence_extract",
-            "trusted_user_message": trusted_user_message,
-            "ref_id": metadata.ref_id,
-            "content": content,
-        });
+        let payload = to_json_value(
+            ComposeEvidenceExtractPayload {
+                task: "compose_evidence_extract",
+                trusted_user_message,
+                ref_id: &metadata.ref_id,
+                content,
+            },
+            "compose evidence extract payload",
+        );
         let ref_id = format!("assistant-compose-evidence:{}:{}", run_id.0, idx + 1);
         if let Some(summary) = summarize_with_ref_id_counted(
             summary_model,
@@ -233,18 +354,21 @@ async fn run_compose_gate(
     summary_calls: &mut usize,
     summary_budget: usize,
 ) -> Option<ComposeGateOutput> {
-    let payload = serde_json::json!({
-        "task": "compose_gate",
-        "trusted_user_message": trusted_user_message,
-        "user_requested_sources": user_requested_sources(trusted_user_message),
-        "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
-        "trusted_evidence": trusted_evidence,
-        "trusted_effects": trusted_effects,
-        "composed_message": composed_message,
-        "extracted_evidence": extracted_evidence,
-        "evidence_summaries": evidence_summaries,
-        "source_urls": source_urls,
-    });
+    let payload = to_json_value(
+        ComposeGatePayload {
+            task: "compose_gate",
+            trusted_user_message,
+            user_requested_sources: user_requested_sources(trusted_user_message),
+            user_requested_detailed_output: user_requested_detailed_output(trusted_user_message),
+            trusted_evidence,
+            trusted_effects,
+            composed_message,
+            extracted_evidence,
+            evidence_summaries,
+            source_urls,
+        },
+        "compose gate payload",
+    );
     let raw = summarize_with_ref_id_counted(
         summary_model,
         run_id,
@@ -337,44 +461,30 @@ pub(crate) async fn compose_assistant_message(
             })
             .collect()
     };
-    let tool_outcomes: Vec<serde_json::Value> = response_input
-        .tool_outcomes
-        .iter()
-        .map(|outcome| {
-            serde_json::json!({
-                "tool_name": outcome.tool_name,
-                "outcome": outcome.outcome,
-                "attempted_command": outcome.attempted_command,
-                "failure_reason": outcome.failure_reason,
-                "refs": outcome.refs.iter().map(|ref_metadata| {
-                    serde_json::json!({
-                        "ref_id": ref_metadata.ref_id,
-                        "kind": ref_metadata.kind,
-                        "byte_count": ref_metadata.byte_count,
-                        "line_count": ref_metadata.line_count,
-                    })
-                }).collect::<Vec<_>>()
-            })
-        })
-        .collect();
+    let tool_outcomes = compose_tool_outcome_payloads(response_input);
 
     let mut attempt_payloads = Vec::new();
-    let payload = serde_json::json!({
-        "task": "compose_user_reply",
-        "trusted_user_message": trusted_user_message,
-        "response_modality": response_input.response_modality,
-        "user_requested_sources": user_requested_sources(trusted_user_message),
-        "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
-        "trusted_evidence": trusted_evidence.clone(),
-        "trusted_effects": response_input.trusted_effects.clone(),
-        "assistant_draft_message": draft_message,
-        "planner_thoughts": response_input.planner_thoughts.clone(),
-        "tool_outcomes": tool_outcomes,
-        "extracted_evidence": extracted_evidence.clone(),
-        "output_ref_ids": output_ref_ids.clone(),
-        "available_plain_urls": source_urls.clone(),
-        "evidence_summaries": evidence_summaries.clone(),
-    });
+    let payload = to_json_value(
+        ComposeUserReplyPayload {
+            task: "compose_user_reply",
+            trusted_user_message,
+            response_modality: &response_input.response_modality,
+            user_requested_sources: user_requested_sources(trusted_user_message),
+            user_requested_detailed_output: user_requested_detailed_output(trusted_user_message),
+            trusted_evidence: &trusted_evidence,
+            trusted_effects: &response_input.trusted_effects,
+            assistant_draft_message: &draft_message,
+            planner_thoughts: response_input.planner_thoughts.as_deref(),
+            tool_outcomes: &tool_outcomes,
+            extracted_evidence: &extracted_evidence,
+            output_ref_ids: &output_ref_ids,
+            available_plain_urls: &source_urls,
+            evidence_summaries: &evidence_summaries,
+            compose_diagnostic: None,
+            previous_composed_message: None,
+        },
+        "compose user reply payload",
+    );
     attempt_payloads.push(payload.clone());
 
     let first_composed = summarize_with_ref_id_counted(
@@ -421,30 +531,29 @@ pub(crate) async fn compose_assistant_message(
     let did_retry = !retry_diagnostics.is_empty() && summary_calls < summary_budget;
     if did_retry {
         let retry_diagnostic = retry_diagnostics.join(" | ");
-        let retry_payload = serde_json::json!({
-            "task": "compose_user_reply",
-            "trusted_user_message": trusted_user_message,
-            "response_modality": response_input.response_modality,
-            "user_requested_sources": user_requested_sources(trusted_user_message),
-            "user_requested_detailed_output": user_requested_detailed_output(trusted_user_message),
-            "trusted_evidence": trusted_evidence.clone(),
-            "trusted_effects": response_input.trusted_effects.clone(),
-            "assistant_draft_message": payload
-                .get("assistant_draft_message")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default(),
-            "planner_thoughts": response_input.planner_thoughts.clone(),
-            "tool_outcomes": payload
-                .get("tool_outcomes")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "extracted_evidence": extracted_evidence.clone(),
-            "output_ref_ids": output_ref_ids.clone(),
-            "available_plain_urls": source_urls.clone(),
-            "evidence_summaries": evidence_summaries.clone(),
-            "compose_diagnostic": retry_diagnostic,
-            "previous_composed_message": composed,
-        });
+        let retry_payload = to_json_value(
+            ComposeUserReplyPayload {
+                task: "compose_user_reply",
+                trusted_user_message,
+                response_modality: &response_input.response_modality,
+                user_requested_sources: user_requested_sources(trusted_user_message),
+                user_requested_detailed_output: user_requested_detailed_output(
+                    trusted_user_message,
+                ),
+                trusted_evidence: &trusted_evidence,
+                trusted_effects: &response_input.trusted_effects,
+                assistant_draft_message: &draft_message,
+                planner_thoughts: response_input.planner_thoughts.as_deref(),
+                tool_outcomes: &tool_outcomes,
+                extracted_evidence: &extracted_evidence,
+                output_ref_ids: &output_ref_ids,
+                available_plain_urls: &source_urls,
+                evidence_summaries: &evidence_summaries,
+                compose_diagnostic: Some(&retry_diagnostic),
+                previous_composed_message: Some(&composed),
+            },
+            "compose retry payload",
+        );
         attempt_payloads.push(retry_payload.clone());
         composed = summarize_with_ref_id_counted(
             summary_model,
