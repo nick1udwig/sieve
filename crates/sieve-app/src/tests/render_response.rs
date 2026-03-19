@@ -1,5 +1,46 @@
 use super::*;
 use crate::turn::{build_response_evidence_records, response_evidence_fingerprint};
+use async_trait::async_trait;
+use serde_json::Value;
+
+struct RefEchoSummaryModel;
+
+#[async_trait]
+impl SummaryModel for RefEchoSummaryModel {
+    fn config(&self) -> &LlmModelConfig {
+        static CONFIG: OnceLock<LlmModelConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| LlmModelConfig {
+            provider: LlmProvider::OpenAi,
+            model: "summary-ref-echo-test".to_string(),
+            api_base: None,
+        })
+    }
+
+    async fn summarize_ref(&self, request: SummaryRequest) -> Result<String, LlmError> {
+        let payload: Value = serde_json::from_str(&request.content)
+            .unwrap_or_else(|err| panic!("parse ref echo payload: {err}"));
+        let refs = payload
+            .get("refs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let records = refs
+            .into_iter()
+            .filter_map(|value| {
+                let ref_id = value.get("ref_id")?.as_str()?.to_string();
+                Some(serde_json::json!({
+                    "ref_id": ref_id.clone(),
+                    "summary": format!("selected {ref_id}"),
+                    "page_state": "detail_page",
+                    "blockers": [],
+                    "source_urls": [],
+                    "items": [],
+                }))
+            })
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({ "records": records }).to_string())
+    }
+}
 
 #[tokio::test]
 async fn render_assistant_message_replaces_known_tokens() {
@@ -307,4 +348,165 @@ async fn build_response_evidence_records_batches_and_parses_structured_output() 
             .map(|candidate| candidate.title.as_str()),
         Some("Jordan Peterson Live on Tour: The Hidden Key to a Fulfilling Life")
     );
+}
+
+#[tokio::test]
+async fn build_response_evidence_records_prefers_later_live_success_refs() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "Any gmails that need my attention?".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: None,
+        trusted_effects: Vec::new(),
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![
+            ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed mainline (exit_code=Some(1))".to_string(),
+                attempted_command: Some(
+                    "gws schema gmail.users.messages.list && gws gmail users messages list --params '{\"maxResults\":10}'"
+                        .to_string(),
+                ),
+                failure_reason: None,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-55".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 128,
+                    line_count: 8,
+                }],
+            },
+            ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed mainline (exit_code=Some(0))".to_string(),
+                attempted_command: Some("gws schema gmail.users.messages.list".to_string()),
+                failure_reason: None,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-57".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 128,
+                    line_count: 8,
+                }],
+            },
+            ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed mainline (exit_code=Some(1))".to_string(),
+                attempted_command: Some(
+                    "gws gmail users messages list --params '{\"userId\":\"me\",\"labelIds\":[\"INBOX\",\"UNREAD\"]}'"
+                        .to_string(),
+                ),
+                failure_reason: None,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-59".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 128,
+                    line_count: 8,
+                }],
+            },
+            ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed mainline (exit_code=Some(0))".to_string(),
+                attempted_command: Some(
+                    "gws gmail users messages list --dry-run --params '{\"userId\":\"me\"}'"
+                        .to_string(),
+                ),
+                failure_reason: None,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-61".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 128,
+                    line_count: 8,
+                }],
+            },
+            ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed mainline (exit_code=Some(0))".to_string(),
+                attempted_command: Some(
+                    "gws gmail users messages list --params '{\"userId\":\"me\",\"q\":\"in:inbox is:unread newer_than:14d\"}'"
+                        .to_string(),
+                ),
+                failure_reason: None,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-63".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 128,
+                    line_count: 8,
+                }],
+            },
+            ResponseToolOutcome {
+                tool_name: "bash".to_string(),
+                outcome: "executed mainline (exit_code=Some(0))".to_string(),
+                attempted_command: Some(
+                    "gws gmail users messages get --params '{\"userId\":\"me\",\"id\":\"[[handle:gws-gmail-message-2:0]]\"}' && gws gmail users messages get --params '{\"userId\":\"me\",\"id\":\"[[handle:gws-gmail-message-2:1]]\"}'"
+                        .to_string(),
+                ),
+                failure_reason: None,
+                refs: vec![ResponseRefMetadata {
+                    ref_id: "artifact-65".to_string(),
+                    kind: "stdout".to_string(),
+                    byte_count: 128,
+                    line_count: 8,
+                }],
+            },
+        ],
+    };
+    let render_refs = BTreeMap::from([
+        (
+            "artifact-55".to_string(),
+            RenderRef::Literal {
+                value: "failure-55".to_string(),
+            },
+        ),
+        (
+            "artifact-57".to_string(),
+            RenderRef::Literal {
+                value: "schema-57".to_string(),
+            },
+        ),
+        (
+            "artifact-59".to_string(),
+            RenderRef::Literal {
+                value: "failure-59".to_string(),
+            },
+        ),
+        (
+            "artifact-61".to_string(),
+            RenderRef::Literal {
+                value: "dry-run-61".to_string(),
+            },
+        ),
+        (
+            "artifact-63".to_string(),
+            RenderRef::Literal {
+                value: "success-list-63".to_string(),
+            },
+        ),
+        (
+            "artifact-65".to_string(),
+            RenderRef::Literal {
+                value: "success-get-65".to_string(),
+            },
+        ),
+    ]);
+    let mut summary_calls = 0usize;
+
+    let records = build_response_evidence_records(
+        &RefEchoSummaryModel,
+        &RunId("run-1".to_string()),
+        "Any gmails that need my attention?",
+        &input,
+        &render_refs,
+        &mut summary_calls,
+        4,
+    )
+    .await;
+
+    let ref_ids = records
+        .iter()
+        .map(|record| record.ref_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(summary_calls, 1);
+    assert!(ref_ids.contains(&"artifact-63"));
+    assert!(ref_ids.contains(&"artifact-65"));
+    assert!(!ref_ids.contains(&"artifact-57"));
+    assert!(!ref_ids.contains(&"artifact-61"));
 }
