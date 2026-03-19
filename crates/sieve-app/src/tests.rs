@@ -29,7 +29,6 @@ mod guidance_progress;
 mod lcm_context;
 mod media;
 mod models;
-mod open_loops;
 mod planner_conversation;
 mod planner_core;
 mod planner_products;

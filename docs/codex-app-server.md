@@ -12,8 +12,6 @@ Read when: touching Codex tool wiring, OCR ingress, approval passthrough, or Cod
 - Session names come from a short hyphenated instruction summary with chemist-name fallback when needed.
 - Codex sandboxes are forced to `networkAccess: false` in both `readOnly` and `workspaceWrite` modes.
 - Sieve planner receives trusted `CODEX_SESSIONS` summaries so it can choose resume vs start-new.
-- Sieve now persists lightweight trusted open-loop working state in the same sqlite store for unresolved planning/brainstorming turns.
-- Short follow-ups like `go ahead`, `use codex`, or status checks can bind to that open-loop state before unrelated saved Codex sessions.
 - Telegram image OCR now uses a transient Codex app-server turn with local image input instead of shelling out to `codex exec`.
 - Command and file-change approvals from Codex sessions are passed through Sieve approval flow and Telegram UI with the session name prefixed.
 - File-change approval prompts include best-effort diff preview text.

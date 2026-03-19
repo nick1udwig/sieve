@@ -1,7 +1,6 @@
 use crate::logging::{ConversationHistoryEntry, ConversationRole};
 use crate::planner_products::PlannerIntermediateProductSummary;
 use crate::planner_progress::summarize_redacted_tool_result;
-use crate::working_state::{format_open_loop_context_message, StoredOpenLoop};
 use serde::Serialize;
 use sieve_runtime::PlannerToolResult;
 use sieve_types::{
@@ -63,7 +62,6 @@ pub(crate) fn build_planner_conversation(
     history_messages: &[PlannerConversationMessage],
     policy_feedback: Option<&str>,
     memory_feedback: Option<&str>,
-    open_loop: Option<&StoredOpenLoop>,
     planner_trace: &[PlannerConversationMessage],
 ) -> Vec<PlannerConversationMessage> {
     let mut conversation = Vec::new();
@@ -75,11 +73,6 @@ pub(crate) fn build_planner_conversation(
     if let Some(feedback) = memory_feedback.filter(|value| !value.trim().is_empty()) {
         conversation.push(redacted_user_message(format!(
             "TRUSTED_MEMORY_FEEDBACK\n{feedback}"
-        )));
-    }
-    if let Some(loop_record) = open_loop {
-        conversation.push(redacted_user_message(format_open_loop_context_message(
-            loop_record,
         )));
     }
     conversation.extend(history_messages.iter().cloned());
