@@ -319,8 +319,9 @@ fn split_status_paths(raw: &str) -> Vec<String> {
 
 fn classify_path(path: &str) -> SieveHomePathClass {
     let normalized = path.trim_start_matches("./");
-    if normalized == "state/auth.json"
-        || normalized == "state/approval-allowances.json"
+    if normalized == "state"
+        || normalized.starts_with("state/")
+        || normalized == "lcm"
         || normalized.starts_with("lcm/")
         || normalized.ends_with(".db")
     {

@@ -91,6 +91,8 @@ fn ensure_sieve_home_repo_untracks_never_commit_state_files() {
     git(&home, &["commit", "-m", "seed tracked state"]);
 
     ensure_sieve_home_repo(&home).expect("reinitialize sieve home repo");
+    commit_sieve_home_changes_for_bucket(&home, SieveHomeCommitBucket::Immediate)
+        .expect("run immediate bucket");
 
     let tracked = git(&home, &["ls-files"]);
     assert!(!tracked.contains("state/auth.json"));
