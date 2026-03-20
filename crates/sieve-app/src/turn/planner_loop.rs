@@ -11,6 +11,7 @@ use crate::logging::{
     append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
     FanoutRuntimeEventLog,
 };
+use crate::planner_conversation::history_entries_to_planner_messages;
 use crate::planner_conversation::{build_planner_conversation, planner_step_trace_messages};
 use crate::planner_feedback::{planner_memory_feedback, planner_policy_feedback};
 use crate::planner_products::PlannerOpaqueHandleStore;
@@ -20,10 +21,6 @@ use crate::planner_progress::{
 };
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
-use crate::working_state::{
-    build_open_loop_from_preference_turn, format_open_loop_status_reply, linked_session_for_loop,
-    looks_like_open_loop_confirmation, OpenLoopStore,
-};
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::Serialize;
 use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
@@ -37,6 +34,7 @@ use sieve_types::{
     PlannerGuidanceInput, PlannerGuidanceSignal, RunId, RuntimeEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum GeneratedAssistantMessage {
@@ -97,8 +95,6 @@ struct TurnFinalizePayload {
     quality_gate_len: usize,
     summary_calls_used: usize,
     summary_call_budget: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    open_loop_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -165,7 +161,8 @@ pub(super) async fn generate_assistant_message(
     runtime: &RuntimeOrchestrator,
     guidance_model: &dyn GuidanceModel,
     response_model: &dyn ResponseModel,
-    summary_model: &dyn SummaryModel,
+    summary_model: Arc<dyn SummaryModel>,
+    lcm: Option<Arc<crate::lcm_integration::LcmIntegration>>,
     event_log: &FanoutRuntimeEventLog,
     cfg: &AppConfig,
     run_id: &RunId,
@@ -174,22 +171,8 @@ pub(super) async fn generate_assistant_message(
     response_modality: InteractionModality,
     turn_kind: &TurnKind,
 ) -> Result<GeneratedAssistantMessage, Box<dyn std::error::Error>> {
-    let open_loop_store = OpenLoopStore::new(&cfg.codex_store_path)?;
     if matches!(turn_kind, TurnKind::User) {
         let codex_sessions = runtime.planner_codex_sessions().await?;
-        if looks_like_codex_status_query(trusted_user_message) {
-            if let Some(loop_record) =
-                open_loop_store.referenced_loop_for_status(session_key, trusted_user_message)?
-            {
-                let linked_session = linked_session_for_loop(&loop_record, &codex_sessions);
-                return Ok(GeneratedAssistantMessage::Deliver {
-                    message: format_open_loop_status_reply(&loop_record, linked_session),
-                    reply_to_session_id: linked_session
-                        .map(|session| session.session_id.clone())
-                        .or_else(|| loop_record.linked_codex_session_id.clone()),
-                });
-            }
-        }
         if let Some(session) = find_referenced_codex_session(trusted_user_message, &codex_sessions)
         {
             if looks_like_codex_status_query(trusted_user_message) {
@@ -217,13 +200,19 @@ pub(super) async fn generate_assistant_message(
         .max_planner_steps
         .saturating_add(max_compose_followup_cycles);
     let mut planner_step_limit = cfg.max_planner_steps.max(1);
-    let active_open_loop = if matches!(turn_kind, TurnKind::User) {
-        open_loop_store.active_loop_for_followup(session_key, trusted_user_message)?
-    } else {
-        None
-    };
     let mut planner_trace_messages: Vec<PlannerConversationMessage> = Vec::new();
     let mut opaque_handle_store = PlannerOpaqueHandleStore::default();
+    let planner_history_messages = if let Some(memory) = lcm.as_ref() {
+        match memory.planner_context_for_session(session_key, None).await {
+            Ok(context) => context.messages,
+            Err(err) => {
+                eprintln!("lcm planner context failed for {}: {}", run_id.0, err);
+                history_entries_to_planner_messages(&event_log.snapshot_conversation(session_key))
+            }
+        }
+    } else {
+        history_entries_to_planner_messages(&event_log.snapshot_conversation(session_key))
+    };
 
     loop {
         while planner_steps_taken < planner_step_limit {
@@ -240,10 +229,9 @@ pub(super) async fn generate_assistant_message(
             let browser_sessions = runtime.planner_browser_sessions()?;
             let codex_sessions = runtime.planner_codex_sessions().await?;
             let planner_conversation = build_planner_conversation(
-                &event_log.snapshot_conversation(session_key),
+                &planner_history_messages,
                 policy_feedback.as_deref(),
                 memory_feedback.as_deref(),
-                active_open_loop.as_ref(),
                 &planner_trace_messages,
             );
             let current_time_utc = Utc
@@ -488,55 +476,6 @@ pub(super) async fn generate_assistant_message(
             return Ok(heartbeat_message);
         }
 
-        if aggregated_result.tool_results.is_empty()
-            && matches!(
-                planner_guidance
-                    .as_ref()
-                    .and_then(|guidance| guidance.signal().ok()),
-                Some(PlannerGuidanceSignal::ContinueNeedPreferenceOrConstraint)
-            )
-        {
-            if let Some(assistant_context) = aggregated_result
-                .thoughts
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                let open_loop = build_open_loop_from_preference_turn(
-                    session_key,
-                    run_id,
-                    trusted_user_message,
-                    assistant_context,
-                    active_open_loop.as_ref(),
-                    now_ms(),
-                );
-                open_loop_store.upsert_loop(&open_loop)?;
-                append_turn_controller_event(
-                    event_log,
-                    run_id,
-                    "turn_finalize",
-                    to_json_value(
-                        TurnFinalizePayload {
-                            planner_steps_taken,
-                            planner_step_limit,
-                            planner_step_hard_limit,
-                            compose_followup_cycles,
-                            quality_gate_len: 0,
-                            summary_calls_used,
-                            summary_call_budget: cfg.max_summary_calls_per_turn,
-                            open_loop_id: Some(open_loop.loop_id.clone()),
-                        },
-                        "turn finalize open loop payload",
-                    ),
-                )
-                .await;
-                return Ok(GeneratedAssistantMessage::Deliver {
-                    message: open_loop.assistant_context.clone(),
-                    reply_to_session_id: None,
-                });
-            }
-        }
-
         let (response_input, render_refs) = build_response_turn_input(
             run_id,
             trusted_user_message,
@@ -545,7 +484,7 @@ pub(super) async fn generate_assistant_message(
         );
         let mut response_input = response_input;
         response_input.extracted_evidence = build_response_evidence_records(
-            summary_model,
+            summary_model.as_ref(),
             run_id,
             trusted_user_message,
             &response_input,
@@ -624,7 +563,7 @@ pub(super) async fn generate_assistant_message(
                 &response_output.referenced_ref_ids,
                 &response_output.summarized_ref_ids,
                 &render_refs,
-                summary_model,
+                summary_model.as_ref(),
                 run_id,
             )
             .await
@@ -636,7 +575,7 @@ pub(super) async fn generate_assistant_message(
                     &response_output.referenced_ref_ids,
                     &response_output.summarized_ref_ids,
                     &render_refs,
-                    summary_model,
+                    summary_model.as_ref(),
                     run_id,
                 )
                 .await
@@ -665,7 +604,6 @@ pub(super) async fn generate_assistant_message(
                         quality_gate_len: 0,
                         summary_calls_used,
                         summary_call_budget: cfg.max_summary_calls_per_turn,
-                        open_loop_id: None,
                     },
                     "turn finalize no action payload",
                 ),
@@ -692,7 +630,7 @@ pub(super) async fn generate_assistant_message(
             }
         } else {
             compose_assistant_message(
-                summary_model,
+                summary_model.as_ref(),
                 &cfg.sieve_home,
                 event_log,
                 run_id,
@@ -759,23 +697,6 @@ pub(super) async fn generate_assistant_message(
             }
         }
 
-        if let Some(loop_record) = active_open_loop.as_ref() {
-            if let Some((session_id, session_name)) =
-                first_codex_session_result_identity(&aggregated_result)
-            {
-                open_loop_store.mark_executing(
-                    &loop_record.loop_id,
-                    session_id.as_deref(),
-                    Some(&session_name),
-                    now_ms(),
-                )?;
-            } else if !aggregated_result.tool_results.is_empty()
-                && looks_like_open_loop_confirmation(trusted_user_message)
-            {
-                open_loop_store.mark_executing(&loop_record.loop_id, None, None, now_ms())?;
-            }
-        }
-
         append_turn_controller_event(
             event_log,
             run_id,
@@ -789,7 +710,6 @@ pub(super) async fn generate_assistant_message(
                     quality_gate_len: composed.quality_gate.as_deref().map(str::len).unwrap_or(0),
                     summary_calls_used,
                     summary_call_budget: cfg.max_summary_calls_per_turn,
-                    open_loop_id: None,
                 },
                 "turn finalize payload",
             ),
@@ -914,22 +834,6 @@ fn reply_to_codex_session_id(
         .or_else(|| {
             find_referenced_codex_session(trusted_user_message, codex_sessions)
                 .map(|session| session.session_id.clone())
-        })
-}
-
-fn first_codex_session_result_identity(
-    aggregated_result: &PlannerRunResult,
-) -> Option<(Option<String>, String)> {
-    aggregated_result
-        .tool_results
-        .iter()
-        .rev()
-        .find_map(|tool_result| match tool_result {
-            PlannerToolResult::CodexSession {
-                result: Some(result),
-                ..
-            } => Some((result.session_id.clone(), result.session_name.clone())),
-            _ => None,
         })
 }
 

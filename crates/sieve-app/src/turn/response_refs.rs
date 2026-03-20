@@ -31,6 +31,33 @@ fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
+#[derive(Clone)]
+struct EvidenceRefCandidate {
+    ref_id: String,
+    kind: String,
+    byte_count: u64,
+    line_count: u64,
+    priority: u8,
+    sequence: usize,
+}
+
+fn evidence_ref_priority(outcome: &ResponseToolOutcome) -> u8 {
+    let attempted_command = outcome.attempted_command.as_deref().unwrap_or("");
+    let trimmed = attempted_command.trim();
+    let is_dry_run = trimmed.contains(" --dry-run") || trimmed.ends_with("--dry-run");
+    let is_schema =
+        trimmed.starts_with("gws schema ") && !trimmed.contains("&&") && !trimmed.contains("||");
+    let is_live = !is_dry_run && !is_schema;
+    let is_success = outcome.outcome.contains("exit_code=Some(0)") || outcome.outcome == "executed";
+
+    match (is_live, is_success) {
+        (true, true) => 3,
+        (true, false) => 2,
+        (false, true) => 1,
+        (false, false) => 0,
+    }
+}
+
 pub(crate) fn planner_allowed_tools_for_turn(
     configured_tools: &[String],
     has_known_value_refs: bool,
@@ -198,27 +225,52 @@ pub(crate) async fn build_response_evidence_records(
         return Vec::new();
     }
 
-    let mut refs = Vec::new();
+    let mut candidates = Vec::new();
     let mut seen = BTreeSet::new();
-    for metadata in input
-        .tool_outcomes
-        .iter()
-        .flat_map(|outcome| outcome.refs.iter())
-        .filter(|metadata| metadata.byte_count > 0)
-    {
-        if refs.len() >= 4 || !seen.insert(metadata.ref_id.clone()) {
-            continue;
+    let mut sequence = 0usize;
+    for outcome in &input.tool_outcomes {
+        let priority = evidence_ref_priority(outcome);
+        for metadata in outcome
+            .refs
+            .iter()
+            .filter(|metadata| metadata.byte_count > 0)
+        {
+            if !seen.insert(metadata.ref_id.clone()) {
+                continue;
+            }
+            candidates.push(EvidenceRefCandidate {
+                ref_id: metadata.ref_id.clone(),
+                kind: metadata.kind.clone(),
+                byte_count: metadata.byte_count,
+                line_count: metadata.line_count,
+                priority,
+                sequence,
+            });
+            sequence = sequence.saturating_add(1);
         }
+    }
+
+    candidates.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| right.sequence.cmp(&left.sequence))
+    });
+    candidates.truncate(4);
+    candidates.sort_by_key(|candidate| candidate.sequence);
+
+    let mut refs = Vec::new();
+    for candidate in candidates {
         let Some((content, _, _)) =
-            crate::render_refs::resolve_ref_summary_input(&metadata.ref_id, render_refs).await
+            crate::render_refs::resolve_ref_summary_input(&candidate.ref_id, render_refs).await
         else {
             continue;
         };
         refs.push(ResponseEvidenceBatchRef {
-            ref_id: metadata.ref_id.clone(),
-            kind: metadata.kind.clone(),
-            byte_count: metadata.byte_count,
-            line_count: metadata.line_count,
+            ref_id: candidate.ref_id,
+            kind: candidate.kind,
+            byte_count: candidate.byte_count,
+            line_count: candidate.line_count,
             content,
         });
     }

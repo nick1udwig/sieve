@@ -25,5 +25,6 @@ sieve-quarantine = { path = "../sieve-quarantine" }
 sieve-runtime = { path = "../sieve-runtime" }
 sieve-shell = { path = "../sieve-shell" }
 sieve-types = { path = "../sieve-types" }
+sieve-lcm = { path = "../../../sieve-lcm" }
 tokio.workspace = true
 uuid = { version = "1", features = ["v4"] }

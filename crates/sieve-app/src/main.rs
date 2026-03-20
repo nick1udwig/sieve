@@ -19,7 +19,6 @@ mod planner_progress;
 mod render_refs;
 mod response_style;
 mod turn;
-mod working_state;
 
 use agent_loop::run_agent_loop;
 #[cfg(test)]
@@ -151,10 +150,6 @@ pub(crate) use turn::{
     response_has_visible_selected_output, TurnOutcome,
 };
 use turn::{run_turn, AppMainlineRunner};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use working_state::{OpenLoopStore, StoredOpenLoop};
-
 fn planner_allowed_net_connect_scopes(policy: &TomlPolicyEngine) -> Vec<String> {
     let mut scopes = Vec::new();
     let mut seen = BTreeSet::new();
@@ -298,7 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &runtime,
             guidance_model.as_ref(),
             response_model.as_ref(),
-            summary_model.as_ref(),
+            summary_model.clone(),
             lcm.clone(),
             &event_log,
             &cfg,
