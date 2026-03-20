@@ -65,6 +65,39 @@ fn ensure_sieve_home_repo_removes_legacy_managed_gitignore_block() {
 }
 
 #[test]
+fn ensure_sieve_home_repo_refreshes_managed_agents_block() {
+    let home = temp_home("agents-refresh");
+    fs::write(
+        home.join("AGENTS.md"),
+        "<!-- sieve home description -->\nold\n<!-- /sieve home description -->\n",
+    )
+    .expect("seed legacy agents");
+
+    ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
+
+    let body = fs::read_to_string(home.join("AGENTS.md")).expect("read agents");
+    assert!(body.contains("periodic runtime history snapshots"));
+    assert!(!body.contains("\nold\n"));
+}
+
+#[test]
+fn ensure_sieve_home_repo_untracks_never_commit_state_files() {
+    let home = temp_home("untrack-state");
+    ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
+
+    fs::write(home.join("state/auth.json"), "{\"token\":\"secret\"}\n").expect("write auth");
+    fs::write(home.join("state/codex.db"), "sqlite-ish").expect("write db");
+    git(&home, &["add", "state/auth.json", "state/codex.db"]);
+    git(&home, &["commit", "-m", "seed tracked state"]);
+
+    ensure_sieve_home_repo(&home).expect("reinitialize sieve home repo");
+
+    let tracked = git(&home, &["ls-files"]);
+    assert!(!tracked.contains("state/auth.json"));
+    assert!(!tracked.contains("state/codex.db"));
+}
+
+#[test]
 fn immediate_commit_tracks_config_and_leaves_logs_for_periodic_commit() {
     let home = temp_home("immediate");
     ensure_sieve_home_repo(&home).expect("initialize sieve home repo");

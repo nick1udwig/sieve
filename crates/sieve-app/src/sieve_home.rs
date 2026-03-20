@@ -58,14 +58,18 @@ pub(crate) fn ensure_sieve_home_repo(sieve_home: &Path) -> Result<(), String> {
     ensure_git_repo(sieve_home)?;
     ensure_git_identity(sieve_home)?;
     remove_legacy_managed_gitignore(sieve_home)?;
-    let changed = ensure_managed_block(
+    let agents_changed = ensure_managed_block(
         &sieve_home.join("AGENTS.md"),
         AGENTS_MARKER_START,
         AGENTS_MARKER_END,
         MANAGED_AGENTS_BLOCK,
     )?;
-    if changed {
-        commit_paths(sieve_home, &["AGENTS.md"], "chore: initialize sieve home")?;
+    let untracked_paths = untrack_never_commit_paths(sieve_home)?;
+    if agents_changed {
+        run_git_vec(sieve_home, &["add", "-A", "--", "AGENTS.md"])?;
+    }
+    if agents_changed || !untracked_paths.is_empty() {
+        commit_staged_changes(sieve_home, "chore: initialize sieve home")?;
     }
     Ok(())
 }
@@ -217,10 +221,24 @@ fn ensure_managed_block(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(format!("read {} failed: {err}", path.display())),
     };
-    if existing.contains(marker_start) && existing.contains(marker_end) {
+    let desired = replace_or_append_managed_block(&existing, marker_start, marker_end, block);
+    if desired == existing {
         return Ok(false);
     }
-    let mut updated = existing;
+    fs::write(path, desired).map_err(|err| format!("write {} failed: {err}", path.display()))?;
+    Ok(true)
+}
+
+fn replace_or_append_managed_block(
+    existing: &str,
+    marker_start: &str,
+    marker_end: &str,
+    block: &str,
+) -> String {
+    if existing.contains(marker_start) && existing.contains(marker_end) {
+        return replace_managed_block(existing, marker_start, marker_end, block);
+    }
+    let mut updated = existing.to_string();
     if !updated.trim().is_empty() && !updated.ends_with('\n') {
         updated.push('\n');
     }
@@ -228,8 +246,39 @@ fn ensure_managed_block(
         updated.push('\n');
     }
     updated.push_str(block);
-    fs::write(path, updated).map_err(|err| format!("write {} failed: {err}", path.display()))?;
-    Ok(true)
+    updated
+}
+
+fn replace_managed_block(
+    existing: &str,
+    marker_start: &str,
+    marker_end: &str,
+    block: &str,
+) -> String {
+    let Some(start) = existing.find(marker_start) else {
+        return existing.to_string();
+    };
+    let Some(end_marker_offset) = existing[start..].find(marker_end) else {
+        return existing.to_string();
+    };
+    let end = start + end_marker_offset + marker_end.len();
+    let mut updated = String::new();
+    updated.push_str(&existing[..start]);
+    if !updated.trim_end().is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(block);
+    let suffix = existing[end..].trim_start_matches('\n');
+    if !suffix.is_empty() {
+        if !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        updated.push_str(suffix);
+        if !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+    }
+    updated
 }
 
 fn status_paths_for_bucket(
@@ -286,6 +335,28 @@ fn classify_path(path: &str) -> SieveHomePathClass {
     SieveHomePathClass::Immediate
 }
 
+fn legacy_tracked_never_paths(sieve_home: &Path) -> Result<Vec<String>, String> {
+    let output = run_git_capture(sieve_home, ["ls-files"])?;
+    let mut paths = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if classify_path(line) == SieveHomePathClass::Never {
+            paths.push(line.to_string());
+        }
+    }
+    Ok(paths)
+}
+
+fn untrack_never_commit_paths(sieve_home: &Path) -> Result<Vec<String>, String> {
+    let tracked = legacy_tracked_never_paths(sieve_home)?;
+    if tracked.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut args = vec!["rm", "--cached", "-r", "--ignore-unmatch", "--quiet"];
+    args.extend(tracked.iter().map(String::as_str));
+    run_git_vec(sieve_home, &args)?;
+    Ok(tracked)
+}
+
 fn matches_bucket(class: SieveHomePathClass, bucket: SieveHomeCommitBucket) -> bool {
     match (class, bucket) {
         (SieveHomePathClass::Immediate, SieveHomeCommitBucket::Immediate) => true,
@@ -323,8 +394,15 @@ fn commit_paths(sieve_home: &Path, paths: &[&str], message: &str) -> Result<(), 
     if String::from_utf8_lossy(&diff.stdout).trim().is_empty() {
         return Ok(());
     }
-    run_git(sieve_home, ["commit", "-m", message, "--no-verify"])?;
-    Ok(())
+    commit_staged_changes(sieve_home, message)
+}
+
+fn commit_staged_changes(sieve_home: &Path, message: &str) -> Result<(), String> {
+    let diff = run_git_capture(sieve_home, ["diff", "--cached", "--name-only"])?;
+    if String::from_utf8_lossy(&diff.stdout).trim().is_empty() {
+        return Ok(());
+    }
+    run_git(sieve_home, ["commit", "-m", message, "--no-verify"])
 }
 
 fn run_git<const N: usize>(sieve_home: &Path, args: [&str; N]) -> Result<(), String> {
