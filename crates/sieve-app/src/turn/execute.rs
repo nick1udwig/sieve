@@ -28,7 +28,7 @@ pub(crate) async fn run_turn(
     runtime: &RuntimeOrchestrator,
     guidance_model: &dyn GuidanceModel,
     response_model: &dyn ResponseModel,
-    summary_model: &dyn SummaryModel,
+    summary_model: Arc<dyn SummaryModel>,
     lcm: Option<Arc<LcmIntegration>>,
     event_log: &FanoutRuntimeEventLog,
     cfg: &AppConfig,
@@ -74,6 +74,12 @@ pub(crate) async fn run_turn(
             {
                 eprintln!("lcm ingest user failed for {}: {}", run_id.0, err);
             }
+            if let Err(err) = memory
+                .compact_session_for_turn(&prompt.session_key, &run_id, summary_model.clone(), None)
+                .await
+            {
+                eprintln!("lcm compact after user failed for {}: {}", run_id.0, err);
+            }
         }
     }
 
@@ -92,7 +98,8 @@ pub(crate) async fn run_turn(
         runtime,
         guidance_model,
         response_model,
-        summary_model,
+        summary_model.clone(),
+        lcm.clone(),
         event_log,
         cfg,
         &run_id,
@@ -165,6 +172,15 @@ pub(crate) async fn run_turn(
                 .await
             {
                 eprintln!("lcm ingest assistant failed for {}: {}", run_id.0, err);
+            }
+            if let Err(err) = memory
+                .compact_session_for_turn(&prompt.session_key, &run_id, summary_model.clone(), None)
+                .await
+            {
+                eprintln!(
+                    "lcm compact after assistant failed for {}: {}",
+                    run_id.0, err
+                );
             }
         }
     }

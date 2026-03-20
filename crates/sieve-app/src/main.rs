@@ -18,8 +18,8 @@ mod planner_products;
 mod planner_progress;
 mod render_refs;
 mod response_style;
+mod sieve_home;
 mod turn;
-mod working_state;
 
 use agent_loop::run_agent_loop;
 #[cfg(test)]
@@ -93,6 +93,11 @@ pub(crate) use response_style::{
     strip_unexpanded_render_tokens, user_requested_detailed_output, user_requested_sources,
 };
 use sieve_command_summaries::DefaultCommandSummarizer;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use sieve_home::{
+    commit_sieve_home_changes_for_bucket, ensure_sieve_home_repo, SieveHomeCommitBucket,
+};
 use sieve_llm::{
     GuidanceModel, OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel,
     OpenAiSummaryModel, ResponseModel, SummaryModel,
@@ -151,10 +156,6 @@ pub(crate) use turn::{
     response_has_visible_selected_output, TurnOutcome,
 };
 use turn::{run_turn, AppMainlineRunner};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use working_state::{OpenLoopStore, StoredOpenLoop};
-
 fn planner_allowed_net_connect_scopes(policy: &TomlPolicyEngine) -> Vec<String> {
     let mut scopes = Vec::new();
     let mut seen = BTreeSet::new();
@@ -194,6 +195,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cfg =
         AppConfig::from_env().map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    if let Err(err) = sieve_home::ensure_sieve_home_repo(&cfg.sieve_home) {
+        eprintln!(
+            "failed to initialize sieve home repo at {}: {}",
+            cfg.sieve_home.display(),
+            err
+        );
+    }
     let policy_toml = fs::read_to_string(&cfg.policy_path)?;
     let policy = TomlPolicyEngine::from_toml_str(&policy_toml)?;
     cfg.allowed_net_connect_scopes = planner_allowed_net_connect_scopes(&policy);
@@ -230,6 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg.event_log_path.clone(),
         event_tx,
     )?);
+    let _sieve_home_watcher = sieve_home::spawn_sieve_home_git_watcher(cfg.sieve_home.clone());
 
     let automation = match prompt_tx {
         Some(prompt_tx) => Some(Arc::new(AutomationManager::new(
@@ -298,7 +307,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &runtime,
             guidance_model.as_ref(),
             response_model.as_ref(),
-            summary_model.as_ref(),
+            summary_model.clone(),
             lcm.clone(),
             &event_log,
             &cfg,

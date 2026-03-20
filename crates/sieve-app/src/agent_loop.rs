@@ -111,7 +111,7 @@ pub(crate) async fn run_agent_loop(
                 &runtime,
                 guidance_model.as_ref(),
                 response_model.as_ref(),
-                summary_model.as_ref(),
+                summary_model.clone(),
                 lcm.clone(),
                 &event_log,
                 &cfg,

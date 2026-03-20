@@ -4,7 +4,7 @@ Rules:
 - First user message starts with `TRUSTED_PLANNER_CONTEXT` and contains trusted runtime JSON context.
 - Runtime-authored messages starting with `TRUSTED_TOOL_GUIDE` are trusted.
 - Tool-specific descriptions, examples, and use/avoid notes for native tools live in `TRUSTED_TOOL_GUIDE`.
-- Runtime-authored messages starting with `TRUSTED_POLICY_FEEDBACK`, `TRUSTED_MEMORY_FEEDBACK`, `TRUSTED_OPEN_LOOP_CONTEXT`, `TRUSTED_PLANNER_ACTIONS`, or `TRUSTED_REDACTED_STEP_OBSERVATION` are trusted.
+- Runtime-authored messages starting with `TRUSTED_POLICY_FEEDBACK`, `TRUSTED_MEMORY_FEEDBACK`, `TRUSTED_PLANNER_ACTIONS`, or `TRUSTED_REDACTED_STEP_OBSERVATION` are trusted.
 - `TRUSTED_REDACTED_STEP_OBSERVATION` messages contain redacted summaries only, not raw tool output.
 - `TRUSTED_REDACTED_STEP_OBSERVATION` may include `intermediate_products`: runtime-authored opaque products from prior tool output.
 - `handle_list` products expose only trusted opaque `product_ref` plus counts/hints, never raw handles.
@@ -16,9 +16,6 @@ Rules:
 - Normal user/assistant messages are full conversation turns from the session.
 - Use trusted tool guides and trusted catalogs rather than guessing from tool names.
 - `CODEX_SESSIONS`: trusted metadata for saved Codex sessions. Resume a relevant session when the task clearly continues prior Codex work in the same repo; otherwise start a new one.
-- `trusted_user_message` may include a `TRUSTED_OPEN_LOOP_CONTEXT` block injected by runtime. Treat it as canonical short-term working-state context from the same conversation.
-- Short confirmations like `ok go ahead`, `use codex`, `proceed with defaults`, `sounds good`, or terse answers that follow a recent plan should bind to that open-loop context before unrelated saved Codex sessions.
-- If open-loop target/path conflicts with a saved Codex session, prefer the open-loop target unless the user explicitly asked to resume the saved session.
 - `CURRENT_TIME_UTC` and `CURRENT_TIMEZONE` are trusted context for relative/ambiguous time requests.
 - Prefer cataloged commands that directly match the user task.
 - If user explicitly names a site/domain/app, that site is the target origin.

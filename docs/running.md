@@ -50,6 +50,11 @@
 
 `.env.example` carries the fuller provider-level matrix (`SIEVE_*_PROVIDER`, `*_API_BASE`, scoped API keys, Codex auth-file overrides, runtime defaults, and Telegram polling config).
 `sieve-app` auto-loads `.env` from the current working directory when present.
+`SIEVE_HOME` is auto-initialized as a local git repo on startup when `.git/` is missing.
+The runtime seeds `$SIEVE_HOME/AGENTS.md` with a description of the home layout and git commit behavior.
+The runtime seeds `$SIEVE_HOME/.gitignore` with default local-only ignores, including `$SIEVE_HOME/state/auth.json`.
+Tracked files under `$SIEVE_HOME/state/` or `$SIEVE_HOME/lcm/` are removed from the git index during home initialization.
+While `sieve-app` is running, it polls `$SIEVE_HOME`, commits config-like changes immediately, and checkpoints logs plus conversation artifacts periodically.
 Codex auth defaults to `$SIEVE_HOME/state/auth.json`.
 Codex session metadata persists in `$SIEVE_HOME/state/codex.db`.
 See [Codex App Server](./codex-app-server.md) for tool semantics, persistence, approvals, and open follow-ups.

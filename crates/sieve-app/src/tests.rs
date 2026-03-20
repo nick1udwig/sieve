@@ -26,15 +26,16 @@ mod e2e_chat;
 mod e2e_compose;
 mod e2e_live;
 mod guidance_progress;
+mod lcm_context;
 mod media;
 mod models;
-mod open_loops;
 mod planner_conversation;
 mod planner_core;
 mod planner_products;
 mod render_response;
 mod response_style;
 mod runtime_bridge;
+mod sieve_home;
 mod support;
 
 pub(crate) use models::*;

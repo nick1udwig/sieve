@@ -2802,6 +2802,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c6d5e5acb6f6129fe3f7ba0a7fc77bca1942cb568535e18e7bc40262baf3110"
 dependencies = [
  "bitflags 2.11.0",
+ "chrono",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
@@ -3256,6 +3257,7 @@ dependencies = [
  "serde_json",
  "sieve-command-summaries",
  "sieve-interface-telegram",
+ "sieve-lcm",
  "sieve-llm",
  "sieve-policy",
  "sieve-prompts",
@@ -3312,6 +3314,24 @@ dependencies = [
  "sieve-shell",
  "sieve-types",
  "tokio",
+]
+
+[[package]]
+name = "sieve-lcm"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "once_cell",
+ "parking_lot",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
