@@ -27,6 +27,7 @@ mod e2e_compose;
 mod e2e_live;
 mod guidance_progress;
 mod lcm_context;
+mod manifest_guard;
 mod media;
 mod models;
 mod planner_conversation;

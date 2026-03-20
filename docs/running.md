@@ -57,6 +57,7 @@ Tracked files under `$SIEVE_HOME/state/` or `$SIEVE_HOME/lcm/` are removed from 
 While `sieve-app` is running, it polls `$SIEVE_HOME`, commits config-like changes immediately, and checkpoints logs plus conversation artifacts periodically.
 Codex auth defaults to `$SIEVE_HOME/state/auth.json`.
 Codex session metadata persists in `$SIEVE_HOME/state/codex.db`.
+sieve-app links the `sieve-lcm` crate from the public `nick1udwig/sieve-lcm` git repo so CI does not require a sibling checkout.
 See [Codex App Server](./codex-app-server.md) for tool semantics, persistence, approvals, and open follow-ups.
 `cargo run -p sieve-app -- auth path` prints the resolved auth file path.
 

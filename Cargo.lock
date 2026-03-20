@@ -3319,6 +3319,7 @@ dependencies = [
 [[package]]
 name = "sieve-lcm"
 version = "0.1.2"
+source = "git+https://github.com/nick1udwig/sieve-lcm?rev=d8e6dc24b6e3258d4d293f281c639022a4c665e6#d8e6dc24b6e3258d4d293f281c639022a4c665e6"
 dependencies = [
  "anyhow",
  "async-trait",
