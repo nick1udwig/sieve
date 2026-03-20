@@ -38,17 +38,22 @@ fn ensure_sieve_home_repo_initializes_git_and_managed_docs() {
 
     assert!(home.join(".git").exists());
     assert!(home.join("AGENTS.md").exists());
+    assert!(home.join(".gitignore").exists());
     assert!(home.join("config").exists());
 
     let tracked = git(&home, &["ls-files"]);
     assert!(tracked.contains("AGENTS.md"));
+    assert!(tracked.contains(".gitignore"));
+
+    let gitignore = fs::read_to_string(home.join(".gitignore")).expect("read gitignore");
+    assert!(gitignore.contains("state/auth.json"));
 
     let log = git(&home, &["log", "--oneline", "--max-count=1"]);
     assert!(log.contains("initialize sieve home"));
 }
 
 #[test]
-fn ensure_sieve_home_repo_removes_legacy_managed_gitignore_block() {
+fn ensure_sieve_home_repo_replaces_legacy_managed_gitignore_block() {
     let home = temp_home("gitignore-migrate");
     fs::write(
         home.join(".gitignore"),
@@ -58,10 +63,10 @@ fn ensure_sieve_home_repo_removes_legacy_managed_gitignore_block() {
 
     ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
 
-    assert!(
-        !home.join(".gitignore").exists(),
-        "legacy managed gitignore should be removed"
-    );
+    let body = fs::read_to_string(home.join(".gitignore")).expect("read gitignore");
+    assert!(body.contains("state/auth.json"));
+    assert!(!body.contains("/logs/"));
+    assert!(!body.contains("/artifacts/"));
 }
 
 #[test]
@@ -77,7 +82,26 @@ fn ensure_sieve_home_repo_refreshes_managed_agents_block() {
 
     let body = fs::read_to_string(home.join("AGENTS.md")).expect("read agents");
     assert!(body.contains("periodic runtime history snapshots"));
+    assert!(body.contains("Git Behavior"));
+    assert!(body.contains("tracked files under `state/` or `lcm/`"));
     assert!(!body.contains("\nold\n"));
+}
+
+#[test]
+fn ensure_sieve_home_repo_refreshes_managed_gitignore_block_and_preserves_user_entries() {
+    let home = temp_home("gitignore-refresh");
+    fs::write(
+        home.join(".gitignore"),
+        "notes/\n\n# --- sieve home ignores ---\nold-entry\n# --- /sieve home ignores ---\n",
+    )
+    .expect("seed gitignore");
+
+    ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
+
+    let body = fs::read_to_string(home.join(".gitignore")).expect("read gitignore");
+    assert!(body.contains("notes/"));
+    assert!(body.contains("state/auth.json"));
+    assert!(!body.contains("old-entry"));
 }
 
 #[test]
@@ -87,7 +111,7 @@ fn ensure_sieve_home_repo_untracks_never_commit_state_files() {
 
     fs::write(home.join("state/auth.json"), "{\"token\":\"secret\"}\n").expect("write auth");
     fs::write(home.join("state/codex.db"), "sqlite-ish").expect("write db");
-    git(&home, &["add", "state/auth.json", "state/codex.db"]);
+    git(&home, &["add", "-f", "state/auth.json", "state/codex.db"]);
     git(&home, &["commit", "-m", "seed tracked state"]);
 
     ensure_sieve_home_repo(&home).expect("reinitialize sieve home repo");

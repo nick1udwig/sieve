@@ -8,6 +8,8 @@ const DEFAULT_GIT_USER_NAME: &str = "Sieve Runtime";
 const DEFAULT_GIT_USER_EMAIL: &str = "sieve@localhost";
 const AGENTS_MARKER_START: &str = "<!-- sieve home description -->";
 const AGENTS_MARKER_END: &str = "<!-- /sieve home description -->";
+const GITIGNORE_MARKER_START: &str = "# --- sieve home ignores ---";
+const GITIGNORE_MARKER_END: &str = "# --- /sieve home ignores ---";
 const LEGACY_GITIGNORE_MARKER_START: &str = "# --- sieve runtime ignores ---";
 const LEGACY_GITIGNORE_MARKER_END: &str = "# --- /sieve runtime ignores ---";
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
@@ -30,12 +32,26 @@ Runtime commits use two buckets.
 - `artifacts/`: per-turn artifacts, committed periodically.
 - `media/`: downloaded or uploaded media, committed periodically.
 - `lcm/`: local memory databases, not auto-committed.
+- `.gitignore`: managed default ignores for local-only runtime files.
+
+## Git Behavior
+
+- Immediate auto-commit: `AGENTS.md`, `config/`, and other local metadata.
+- Periodic auto-commit: `logs/`, `artifacts/`, and `media/`.
+- Never auto-commit: `state/` and `lcm/`.
+- Startup cleanup: tracked files under `state/` or `lcm/` are removed from the git index.
 
 ## Notes
 
 Keep secrets out of tracked files.
 Prefer small, reviewable commits.
 <!-- /sieve home description -->
+";
+
+const MANAGED_GITIGNORE_BLOCK: &str = "\
+# --- sieve home ignores ---
+state/auth.json
+# --- /sieve home ignores ---
 ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,11 +80,26 @@ pub(crate) fn ensure_sieve_home_repo(sieve_home: &Path) -> Result<(), String> {
         AGENTS_MARKER_END,
         MANAGED_AGENTS_BLOCK,
     )?;
+    let gitignore_changed = ensure_managed_block(
+        &sieve_home.join(".gitignore"),
+        GITIGNORE_MARKER_START,
+        GITIGNORE_MARKER_END,
+        MANAGED_GITIGNORE_BLOCK,
+    )?;
     let untracked_paths = untrack_never_commit_paths(sieve_home)?;
+    let mut managed_paths = Vec::new();
     if agents_changed {
-        run_git_vec(sieve_home, &["add", "-A", "--", "AGENTS.md"])?;
+        managed_paths.push("AGENTS.md");
     }
-    if agents_changed || !untracked_paths.is_empty() {
+    if gitignore_changed {
+        managed_paths.push(".gitignore");
+    }
+    if !managed_paths.is_empty() {
+        let mut args = vec!["add", "-A", "--"];
+        args.extend(managed_paths);
+        run_git_vec(sieve_home, &args)?;
+    }
+    if agents_changed || gitignore_changed || !untracked_paths.is_empty() {
         commit_staged_changes(sieve_home, "chore: initialize sieve home")?;
     }
     Ok(())
@@ -370,7 +401,10 @@ fn staged_commit_message(bucket: SieveHomeCommitBucket, paths: &[String]) -> Str
     match bucket {
         SieveHomeCommitBucket::Periodic => "chore: checkpoint sieve runtime history".to_string(),
         SieveHomeCommitBucket::Immediate => {
-            if paths.iter().any(|path| path == "AGENTS.md") {
+            if paths
+                .iter()
+                .any(|path| matches!(path.as_str(), "AGENTS.md" | ".gitignore"))
+            {
                 return "chore: update sieve home metadata".to_string();
             }
             if paths.iter().any(|path| path.starts_with("config/")) {
