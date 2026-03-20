@@ -95,7 +95,9 @@ pub(crate) use response_style::{
 use sieve_command_summaries::DefaultCommandSummarizer;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use sieve_home::{ensure_sieve_home_repo, maybe_commit_sieve_home_changes};
+pub(crate) use sieve_home::{
+    commit_sieve_home_changes_for_bucket, ensure_sieve_home_repo, SieveHomeCommitBucket,
+};
 use sieve_llm::{
     GuidanceModel, OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel,
     OpenAiSummaryModel, ResponseModel, SummaryModel,

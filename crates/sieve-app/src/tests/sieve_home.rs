@@ -37,12 +37,10 @@ fn ensure_sieve_home_repo_initializes_git_and_managed_docs() {
     ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
 
     assert!(home.join(".git").exists());
-    assert!(home.join(".gitignore").exists());
     assert!(home.join("AGENTS.md").exists());
     assert!(home.join("config").exists());
 
     let tracked = git(&home, &["ls-files"]);
-    assert!(tracked.contains(".gitignore"));
     assert!(tracked.contains("AGENTS.md"));
 
     let log = git(&home, &["log", "--oneline", "--max-count=1"]);
@@ -50,8 +48,25 @@ fn ensure_sieve_home_repo_initializes_git_and_managed_docs() {
 }
 
 #[test]
-fn maybe_commit_sieve_home_changes_commits_config_but_skips_runtime_dirs() {
-    let home = temp_home("commit");
+fn ensure_sieve_home_repo_removes_legacy_managed_gitignore_block() {
+    let home = temp_home("gitignore-migrate");
+    fs::write(
+        home.join(".gitignore"),
+        "# --- sieve runtime ignores ---\n/logs/\n/artifacts/\n# --- /sieve runtime ignores ---\n",
+    )
+    .expect("seed legacy gitignore");
+
+    ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
+
+    assert!(
+        !home.join(".gitignore").exists(),
+        "legacy managed gitignore should be removed"
+    );
+}
+
+#[test]
+fn immediate_commit_tracks_config_and_leaves_logs_for_periodic_commit() {
+    let home = temp_home("immediate");
     ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
 
     fs::create_dir_all(home.join("config")).expect("create config dir");
@@ -63,7 +78,8 @@ fn maybe_commit_sieve_home_changes_commits_config_but_skips_runtime_dirs() {
     )
     .expect("write log");
 
-    let committed = maybe_commit_sieve_home_changes(&home).expect("commit home changes");
+    let committed = commit_sieve_home_changes_for_bucket(&home, SieveHomeCommitBucket::Immediate)
+        .expect("commit immediate home changes");
     assert!(committed);
 
     let tracked = git(&home, &["ls-files"]);
@@ -71,8 +87,41 @@ fn maybe_commit_sieve_home_changes_commits_config_but_skips_runtime_dirs() {
     assert!(!tracked.contains("logs/runtime-events.jsonl"));
 
     let changed = git(&home, &["show", "--stat", "--format=%s", "HEAD"]);
-    assert!(changed.contains("update sieve home"));
+    assert!(changed.contains("update sieve home config"));
     assert!(changed.contains("config/settings.toml"));
+    assert!(!changed.contains("logs/runtime-events.jsonl"));
+
+    let status = git(&home, &["status", "--short"]);
+    assert!(
+        status.contains("logs/"),
+        "expected logs to remain pending: {status}"
+    );
+}
+
+#[test]
+fn periodic_commit_tracks_runtime_history() {
+    let home = temp_home("periodic");
+    ensure_sieve_home_repo(&home).expect("initialize sieve home repo");
+
+    fs::create_dir_all(home.join("logs")).expect("create logs dir");
+    fs::create_dir_all(home.join("artifacts/run-1")).expect("create artifacts dir");
+    fs::write(
+        home.join("logs/runtime-events.jsonl"),
+        "{\"event\":\"runtime\"}\n",
+    )
+    .expect("write log");
+    fs::write(home.join("artifacts/run-1/stdout.log"), "hello\n").expect("write artifact");
+
+    let committed = commit_sieve_home_changes_for_bucket(&home, SieveHomeCommitBucket::Periodic)
+        .expect("commit periodic home changes");
+    assert!(committed);
+
+    let tracked = git(&home, &["ls-files"]);
+    assert!(tracked.contains("logs/runtime-events.jsonl"));
+    assert!(tracked.contains("artifacts/run-1/stdout.log"));
+
+    let changed = git(&home, &["show", "--stat", "--format=%s", "HEAD"]);
+    assert!(changed.contains("checkpoint sieve runtime history"));
 
     let status = git(&home, &["status", "--short"]);
     assert!(status.trim().is_empty(), "unexpected git status: {status}");
