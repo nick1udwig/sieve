@@ -420,12 +420,11 @@ checksum = "e9b18233253483ce2f65329a24072ec414db782531bdbb7d0bbc4bd2ce6b7e21"
 
 [[package]]
 name = "codex-execpolicy"
-version = "0.0.0"
-source = "git+https://github.com/openai/codex.git?rev=7754dd1b89c763b7ebba9f01a51f23a58dab2989#7754dd1b89c763b7ebba9f01a51f23a58dab2989"
+version = "0.99.0-alpha.27"
+source = "git+https://github.com/openai/codex.git?rev=6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7#6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7"
 dependencies = [
  "anyhow",
  "clap",
- "codex-utils-absolute-path",
  "multimap",
  "serde",
  "serde_json",
@@ -436,8 +435,8 @@ dependencies = [
 
 [[package]]
 name = "codex-git"
-version = "0.0.0"
-source = "git+https://github.com/openai/codex.git?rev=7754dd1b89c763b7ebba9f01a51f23a58dab2989#7754dd1b89c763b7ebba9f01a51f23a58dab2989"
+version = "0.99.0-alpha.27"
+source = "git+https://github.com/openai/codex.git?rev=6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7#6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7"
 dependencies = [
  "once_cell",
  "regex",
@@ -451,8 +450,8 @@ dependencies = [
 
 [[package]]
 name = "codex-protocol"
-version = "0.0.0"
-source = "git+https://github.com/openai/codex.git?rev=7754dd1b89c763b7ebba9f01a51f23a58dab2989#7754dd1b89c763b7ebba9f01a51f23a58dab2989"
+version = "0.99.0-alpha.27"
+source = "git+https://github.com/openai/codex.git?rev=6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7#6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7"
 dependencies = [
  "codex-execpolicy",
  "codex-git",
@@ -461,13 +460,13 @@ dependencies = [
  "icu_decimal",
  "icu_locale_core",
  "icu_provider",
- "quick-xml",
+ "mime_guess",
  "schemars 0.8.22",
  "serde",
  "serde_json",
  "serde_with",
  "strum",
- "strum_macros 0.28.0",
+ "strum_macros",
  "sys-locale",
  "tracing",
  "ts-rs",
@@ -476,8 +475,8 @@ dependencies = [
 
 [[package]]
 name = "codex-shell-command"
-version = "0.0.0"
-source = "git+https://github.com/openai/codex.git?rev=7754dd1b89c763b7ebba9f01a51f23a58dab2989#7754dd1b89c763b7ebba9f01a51f23a58dab2989"
+version = "0.99.0-alpha.27"
+source = "git+https://github.com/openai/codex.git?rev=6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7#6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7"
 dependencies = [
  "base64",
  "codex-protocol",
@@ -495,8 +494,8 @@ dependencies = [
 
 [[package]]
 name = "codex-utils-absolute-path"
-version = "0.0.0"
-source = "git+https://github.com/openai/codex.git?rev=7754dd1b89c763b7ebba9f01a51f23a58dab2989#7754dd1b89c763b7ebba9f01a51f23a58dab2989"
+version = "0.99.0-alpha.27"
+source = "git+https://github.com/openai/codex.git?rev=6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7#6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7"
 dependencies = [
  "dirs",
  "path-absolutize",
@@ -507,8 +506,8 @@ dependencies = [
 
 [[package]]
 name = "codex-utils-cache"
-version = "0.0.0"
-source = "git+https://github.com/openai/codex.git?rev=7754dd1b89c763b7ebba9f01a51f23a58dab2989#7754dd1b89c763b7ebba9f01a51f23a58dab2989"
+version = "0.99.0-alpha.27"
+source = "git+https://github.com/openai/codex.git?rev=6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7#6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7"
 dependencies = [
  "lru",
  "sha1",
@@ -517,13 +516,12 @@ dependencies = [
 
 [[package]]
 name = "codex-utils-image"
-version = "0.0.0"
-source = "git+https://github.com/openai/codex.git?rev=7754dd1b89c763b7ebba9f01a51f23a58dab2989#7754dd1b89c763b7ebba9f01a51f23a58dab2989"
+version = "0.99.0-alpha.27"
+source = "git+https://github.com/openai/codex.git?rev=6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7#6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7"
 dependencies = [
  "base64",
  "codex-utils-cache",
  "image",
- "mime_guess",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -2461,16 +2459,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
-name = "quick-xml"
-version = "0.38.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
-dependencies = [
- "memchr",
- "serde",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3621,7 +3609,7 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros 0.27.2",
+ "strum_macros",
 ]
 
 [[package]]
@@ -3629,18 +3617,6 @@ name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
  "proc-macro2",
