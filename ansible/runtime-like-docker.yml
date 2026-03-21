@@ -1,0 +1,171 @@
+---
+- name: Provision a host like the release image runtime
+  hosts: all
+  become: true
+  vars:
+    sieve_repo_root: "{{ playbook_dir | dirname }}"
+    sieve_release_bundle_dir: "{{ sieve_repo_root }}/dist/release"
+    sieve_binary_src: "{{ sieve_release_bundle_dir }}/sieve-app"
+    sieve_tools_src: "{{ sieve_release_bundle_dir }}/sieve-tools"
+    sieve_opt_root: /opt/sieve
+    sieve_tools_root: /opt/sieve-tools
+    sieve_workspace: /workspace
+    sieve_data_root: /data
+    sieve_node_major: 22
+    sieve_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+  pre_tasks:
+    - name: Fail when the host architecture is unsupported
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture in sieve_arch_map
+        fail_msg: "unsupported architecture {{ ansible_architecture }}; expected one of {{ sieve_arch_map.keys() | list }}"
+
+    - name: Check local release bundle binary
+      become: false
+      delegate_to: localhost
+      ansible.builtin.stat:
+        path: "{{ sieve_binary_src }}"
+      register: sieve_binary_stat
+
+    - name: Check local release bundle tools
+      become: false
+      delegate_to: localhost
+      ansible.builtin.stat:
+        path: "{{ sieve_tools_src }}"
+      register: sieve_tools_stat
+
+    - name: Fail when the local release bundle is missing
+      ansible.builtin.assert:
+        that:
+          - sieve_binary_stat.stat.exists
+          - sieve_tools_stat.stat.exists
+        fail_msg: "build dist/release first with scripts/build-release-bundle.sh --arch {{ sieve_arch_map[ansible_architecture] }} --out-dir dist/release"
+
+  tasks:
+    - name: Install apt prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gpg
+        state: present
+        update_cache: true
+
+    - name: Ensure apt keyring directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Download the NodeSource signing key
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        dest: /tmp/nodesource-repo.gpg.key
+        mode: "0644"
+
+    - name: Install the NodeSource signing key
+      ansible.builtin.command:
+        argv:
+          - gpg
+          - --dearmor
+          - --yes
+          - --output
+          - /etc/apt/keyrings/nodesource.gpg
+          - /tmp/nodesource-repo.gpg.key
+      args:
+        creates: /etc/apt/keyrings/nodesource.gpg
+
+    - name: Enable the NodeSource repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{{ sieve_node_major }}.x nodistro main"
+        filename: nodesource
+        state: present
+
+    - name: Install runtime packages
+      ansible.builtin.apt:
+        name:
+          - bash
+          - bubblewrap
+          - ca-certificates
+          - curl
+          - ffmpeg
+          - git
+          - jq
+          - libssl3
+          - nodejs
+          - python3
+          - strace
+          - tini
+          - trash-cli
+          - unzip
+          - xz-utils
+        state: present
+        update_cache: true
+
+    - name: Create runtime directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ sieve_opt_root }}", mode: "0755" }
+        - { path: "{{ sieve_opt_root }}/docs", mode: "0755" }
+        - { path: "{{ sieve_tools_root }}", mode: "0755" }
+        - { path: "{{ sieve_workspace }}", mode: "0755" }
+        - { path: "{{ sieve_data_root }}", mode: "0755" }
+        - { path: "{{ sieve_data_root }}/.sieve", mode: "0755" }
+        - { path: "{{ sieve_data_root }}/home", mode: "0755" }
+
+    - name: Install the Sieve release binary
+      ansible.builtin.copy:
+        src: "{{ sieve_binary_src }}"
+        dest: /usr/local/bin/sieve-app
+        mode: "0755"
+
+    - name: Install the prebuilt Sieve tools bundle
+      ansible.builtin.copy:
+        src: "{{ sieve_tools_src }}/"
+        dest: "{{ sieve_tools_root }}/"
+
+    - name: Install the example environment file
+      ansible.builtin.copy:
+        src: "{{ sieve_repo_root }}/.env.example"
+        dest: "{{ sieve_opt_root }}/.env.example"
+        mode: "0644"
+
+    - name: Install policy docs
+      ansible.builtin.copy:
+        src: "{{ sieve_repo_root }}/docs/policy/"
+        dest: "{{ sieve_opt_root }}/docs/policy/"
+
+    - name: Install shell defaults matching the container
+      ansible.builtin.copy:
+        dest: /etc/profile.d/sieve.sh
+        mode: "0644"
+        content: |
+          export PATH=/opt/sieve-tools/bin:$PATH
+          export SIEVE_HOME=${SIEVE_HOME:-/data/.sieve}
+          export SIEVE_POLICY_PATH=${SIEVE_POLICY_PATH:-/opt/sieve/docs/policy/baseline-policy.toml}
+          export SIEVE_RUNTIME_CWD=${SIEVE_RUNTIME_CWD:-/workspace}
+
+    - name: Verify core runtime binaries
+      ansible.builtin.command:
+        argv:
+          - "{{ item }}"
+          - --help
+      register: sieve_runtime_checks
+      changed_when: false
+      loop:
+        - /usr/local/bin/sieve-app
+        - /opt/sieve-tools/bin/bravesearch
+        - /opt/sieve-tools/bin/st
+        - /opt/sieve-tools/bin/sieve-lcm-cli
+
+    - name: Verify Node-backed Codex CLI is present
+      ansible.builtin.command:
+        argv:
+          - /opt/sieve-tools/bin/codex
+          - --help
+      changed_when: false

@@ -121,6 +121,14 @@ If `bubblewrap` quarantine fails under Docker, allow unprivileged user namespace
 If a release asset name ever changes, override the matcher with `--build-arg BRAVE_SEARCH_ASSET_REGEX=...`, `ST_ASSET_REGEX=...`, or `SIEVE_LCM_ASSET_REGEX=...`.
 `CODEX_NPM_SPEC` still controls the installed Codex npm package spec.
 
+### Ansible Host Setup
+
+[`ansible/runtime-like-docker.yml`](../ansible/runtime-like-docker.yml) provisions an Ubuntu host to look like the release image runtime.
+It installs the Docker-like runtime packages, adds NodeSource Node 22, copies a prebuilt `dist/release` bundle onto the host, and writes shell defaults for `PATH`, `SIEVE_HOME`, `SIEVE_POLICY_PATH`, and `SIEVE_RUNTIME_CWD`.
+Build the local bundle first with `scripts/build-release-bundle.sh --arch <amd64|arm64> --out-dir dist/release`.
+Then run `ansible-playbook -i <inventory> ansible/runtime-like-docker.yml`.
+The target host architecture must match the bundle architecture because the playbook copies the already-built `sieve-app` binary and `sieve-tools` tree instead of rebuilding them remotely.
+
 ### Release Automation
 
 `.github/workflows/release.yml` runs on `workflow_dispatch` and on pushes to `master`.
