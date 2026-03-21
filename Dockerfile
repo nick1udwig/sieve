@@ -62,7 +62,7 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM node:22-bookworm-slim AS node-runtime
 
-FROM debian:bookworm-slim AS runtime
+FROM ubuntu:24.04 AS runtime
 
 ARG SIEVE_VERSION=0.0.0-dev
 ARG VCS_REF=unknown

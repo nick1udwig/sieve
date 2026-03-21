@@ -89,9 +89,10 @@ Expected result:
 
 ### Docker
 
-The repo ships a multi-stage Debian image in [`Dockerfile`](../Dockerfile).
-The runtime image is `debian:bookworm-slim` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
+The repo ships a multi-stage Ubuntu image in [`Dockerfile`](../Dockerfile).
+The runtime image is `ubuntu:24.04` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
 The Nick CLI tools are downloaded from their latest GitHub releases at build time instead of being built from source.
+Release CI uses [`Dockerfile.release`](../Dockerfile.release) instead, and only packages a prebuilt `sieve-app` binary plus a prebuilt tool bundle into the runtime image.
 Container defaults:
 - workdir: `/workspace`
 - `SIEVE_RUNTIME_CWD=/workspace`
@@ -122,11 +123,12 @@ If a release asset name ever changes, override the matcher with `--build-arg BRA
 
 ### Release Automation
 
-`.github/workflows/release.yml` is currently manual-only via `workflow_dispatch`.
-The old push-to-`master` trigger is commented out because the workflow is too slow for every merge right now.
-For non-release commits it bumps the shared workspace patch version, regenerates both lockfiles, commits the bump back to `master`, and then builds and pushes `nick1udwig/sieve:<version>` plus `nick1udwig/sieve:latest` for `linux/amd64` and `linux/arm64`.
-The release workflow restores a host Rust cache and exports a shared Buildx cache so repeat image builds reuse Cargo layers and Docker layers.
-The release workflow also verifies pinned git dependency revisions before the Cargo steps run.
+`.github/workflows/release.yml` runs on `workflow_dispatch` and on pushes to `master`.
+Bot-authored version-bump pushes are skipped so one user push produces one release workflow run.
+The `prepare` job bumps the shared workspace patch version when needed, runs format/typecheck/tests once on `ubuntu-24.04`, and outputs the final release `sha`, `version`, and build timestamp.
+The `build-image` job then runs natively on `ubuntu-24.04` for `amd64` and `ubuntu-24.04-arm` for `arm64`, restores a per-arch Rust cache, runs `scripts/build-release-bundle.sh`, and pushes arch-specific tags with [`Dockerfile.release`](../Dockerfile.release).
+The `publish-manifest` job merges those arch tags into `nick1udwig/sieve:<version>` and `nick1udwig/sieve:latest`.
+The release workflow verifies pinned git dependency revisions and release-workflow invariants before the Cargo steps run.
 The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ### Modes
