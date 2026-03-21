@@ -126,7 +126,8 @@ If a release asset name ever changes, override the matcher with `--build-arg BRA
 `.github/workflows/release.yml` runs on `workflow_dispatch` and on pushes to `master`.
 Bot-authored version-bump pushes are skipped so one user push produces one release workflow run.
 The `prepare` job bumps the shared workspace patch version when needed, runs format/typecheck/tests once on `ubuntu-24.04`, and outputs the final release `sha`, `version`, and build timestamp.
-The `build-image` job then runs natively on `ubuntu-24.04` for `amd64` and `ubuntu-24.04-arm` for `arm64`, restores a per-arch Rust cache, runs `scripts/build-release-bundle.sh`, and pushes arch-specific tags with [`Dockerfile.release`](../Dockerfile.release).
+The `build-image` job then runs natively on `ubuntu-24.04` for `amd64` and `ubuntu-24.04-arm` for `arm64`, restores a per-arch Rust cache, installs `sccache`, compiles the release bundle through `sccache` with a GitHub-backed per-arch cache namespace, runs `scripts/build-release-bundle.sh`, and pushes arch-specific tags with [`Dockerfile.release`](../Dockerfile.release).
+Each arch job prints `sccache --show-stats` so warm-cache hit rates are visible in CI logs.
 The `publish-manifest` job merges those arch tags into `nick1udwig/sieve:<version>` and `nick1udwig/sieve:latest`.
 The release workflow verifies pinned git dependency revisions and release-workflow invariants before the Cargo steps run.
 The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.

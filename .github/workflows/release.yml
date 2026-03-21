@@ -102,6 +102,10 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_VERSION: release-bundle-v1-${{ matrix.arch }}
 
     steps:
       - name: Check out repository
@@ -118,13 +122,23 @@ jobs:
         with:
           shared-key: release-bundle-${{ matrix.arch }}
 
+      - name: Install sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.9
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      - name: Zero sccache stats
+        run: sccache --zero-stats || true
+
       - name: Build release bundle
         run: scripts/build-release-bundle.sh --arch "${{ matrix.arch }}" --out-dir dist/release
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
