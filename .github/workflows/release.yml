@@ -54,6 +54,9 @@ jobs:
       - name: Check version sync
         run: scripts/bump-version.sh --check
 
+      - name: Check pinned git dependencies
+        run: scripts/check-git-deps.sh
+
       - name: Check formatting
         run: cargo fmt --check
 
