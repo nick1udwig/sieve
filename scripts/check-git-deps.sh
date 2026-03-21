@@ -9,7 +9,7 @@ check_git_dep() {
   local repo="$3"
   local line rev
 
-  line="$(rg -N "^[[:space:]]*${name}[[:space:]]*=" "$manifest")"
+  line="$(grep -E "^[[:space:]]*${name}[[:space:]]*=" "$manifest" | head -n 1 || true)"
   if [[ -z "$line" ]]; then
     echo "missing dependency line for ${name} in ${manifest}" >&2
     exit 1
