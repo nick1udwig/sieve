@@ -21,6 +21,9 @@ Full dependency, env, runtime, logging, Telegram, troubleshooting, and external 
 
 ## Running
 
+Start from `.env.example`, then set either `OPENAI_API_KEY` or Codex auth with `cargo run -p sieve-app -- auth login openai-codex`.
+The most common long-running extras are `SIEVE_PLANNER_MODEL`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`.
+
 Send a one-off request with:
 
 ```bash
@@ -30,21 +33,10 @@ cargo run -p sieve-app -- run --prompt "review workspace status"
 Start long-running mode with:
 
 ```bash
-cargo run --release -p sieve-app -- run
+cargo run -p sieve-app -- run
 ```
 
 Long-running mode also accepts automation commands on stdin or Telegram.
-
-Examples:
-
-```text
-/heartbeat now
-/cron add main every 15m -- remind me to check deploys
-/cron add isolated cron 0 9 * * 1-5 -- send build summary
-```
-
-Heartbeat reads instructions from `HEARTBEAT.md` in `SIEVE_RUNTIME_CWD` unless `SIEVE_HEARTBEAT_PROMPT` is set.
-Durable cron and heartbeat state lives at `$SIEVE_HOME/state/automation.json`.
 
 ## Architecture
 
@@ -80,5 +72,35 @@ Commands and coverage notes: [docs/running.md](docs/running.md#testing).
 
 ## Docker
 
-A multi-arch Docker image is built from [`Dockerfile`](Dockerfile) and published to Docker Hub as `nick1udwig/sieve`.
-Container usage, bundled CLI tools, and release automation live in [docs/running.md](docs/running.md#docker).
+A multi-arch Docker image is published to Docker Hub as `nick1udwig/sieve`.
+Use `-e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$HOME/.sieve:/root/.sieve"` to keep container state in the normal host `~/.sieve` path.
+
+Pull once:
+
+```bash
+docker pull nick1udwig/sieve:latest
+```
+
+Run one prompt against the current checkout:
+
+```bash
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
+```
+
+Run long-lived mode:
+
+```bash
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run
+```
+
+`seccomp` is Docker's Linux syscall filter.
+`--security-opt seccomp=unconfined` disables the default filter so `bubblewrap` and `strace` work inside the container.
+
+## Ansible
+
+If you want a host install that looks like the Docker runtime, use [`ansible/runtime-like-docker.yml`](ansible/runtime-like-docker.yml).
+It provisions an Ubuntu host with the same broad runtime shape, then copies in a prebuilt `dist/release` bundle.
+Build the bundle with `scripts/build-release-bundle.sh --arch <amd64|arm64> --out-dir dist/release`, then run `ansible-playbook -i <inventory> ansible/runtime-like-docker.yml`.
+More detail on what it installs and the host-arch requirement lives in [docs/running.md](docs/running.md#ansible-host-setup).
+
+Full Docker details, bundled CLI tools, and release automation live in [docs/running.md](docs/running.md#docker).

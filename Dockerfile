@@ -76,9 +76,9 @@ LABEL org.opencontainers.image.title="sieve" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 ENV LANG=C.UTF-8 \
-    HOME=/data/home \
+    HOME=/root \
     PATH=/opt/sieve-tools/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
-    SIEVE_HOME=/data/.sieve \
+    SIEVE_HOME=/root/.sieve \
     SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml \
     SIEVE_RUNTIME_CWD=/workspace
 
@@ -92,7 +92,9 @@ COPY --from=tooling /opt/sieve-tools /opt/sieve-tools
 COPY .env.example /opt/sieve/.env.example
 COPY docs/policy /opt/sieve/docs/policy
 
-RUN mkdir -p /workspace /data/.sieve /data/home
+RUN mkdir -p /workspace /root/.sieve
+
+VOLUME ["/root/.sieve"]
 
 WORKDIR /workspace
 

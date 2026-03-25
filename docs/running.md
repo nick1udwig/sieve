@@ -89,37 +89,35 @@ Expected result:
 
 ### Docker
 
-The repo ships a multi-stage Ubuntu image in [`Dockerfile`](../Dockerfile).
+Use the published Docker Hub image `nick1udwig/sieve`.
 The runtime image is `ubuntu:24.04` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
-The Nick CLI tools are downloaded from their latest GitHub releases at build time instead of being built from source.
-Release CI uses [`Dockerfile.release`](../Dockerfile.release) instead, and only packages a prebuilt `sieve-app` binary plus a prebuilt tool bundle into the runtime image.
+Set `HOME=/root` and `SIEVE_HOME=/root/.sieve` on `docker run` if you want state to land in the host's normal `~/.sieve` path.
 Container defaults:
 - workdir: `/workspace`
 - `SIEVE_RUNTIME_CWD=/workspace`
-- `SIEVE_HOME=/data/.sieve`
 - `SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml`
 
-Build locally:
+Pull once:
 
 ```bash
-docker build -t sieve:local .
+docker pull nick1udwig/sieve:latest
 ```
 
 Run against the current checkout:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local run --prompt "review workspace status"
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
 ```
 
 Run long-lived mode:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v sieve-data:/data sieve:local run
+docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run
 ```
 
+`seccomp` is Docker's Linux syscall filter.
+`--security-opt seccomp=unconfined` disables the default filter so `bubblewrap` and `strace` can run inside the container.
 If `bubblewrap` quarantine fails under Docker, allow unprivileged user namespaces on the host or add the extra container privileges your runtime requires.
-If a release asset name ever changes, override the matcher with `--build-arg BRAVE_SEARCH_ASSET_REGEX=...`, `ST_ASSET_REGEX=...`, or `SIEVE_LCM_ASSET_REGEX=...`.
-`CODEX_NPM_SPEC` still controls the installed Codex npm package spec.
 
 ### Ansible Host Setup
 
