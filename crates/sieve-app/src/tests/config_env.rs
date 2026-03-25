@@ -41,6 +41,16 @@ fn config_env_keys() -> &'static [&'static str] {
         "SIEVE_POLICY_PATH",
         "SIEVE_HOME",
         "HOME",
+        "OPENAI_API_KEY",
+        "OPENAI_CODEX_ACCESS_TOKEN",
+        "OPENAI_CODEX_ACCOUNT_ID",
+        "OPENAI_CODEX_AUTH_JSON_PATH",
+        "SIEVE_PLANNER_MODEL",
+        "SIEVE_PLANNER_PROVIDER",
+        "SIEVE_PLANNER_OPENAI_API_KEY",
+        "SIEVE_PLANNER_OPENAI_CODEX_ACCESS_TOKEN",
+        "SIEVE_PLANNER_OPENAI_CODEX_ACCOUNT_ID",
+        "SIEVE_PLANNER_OPENAI_CODEX_AUTH_JSON_PATH",
         "SIEVE_RUNTIME_CWD",
         "SIEVE_HEARTBEAT_EVERY",
         "SIEVE_HEARTBEAT_PROMPT",
@@ -344,4 +354,36 @@ fn app_config_from_env_rejects_invalid_heartbeat_duration() {
         .err()
         .expect("invalid heartbeat duration");
     assert!(err.contains("invalid SIEVE_HEARTBEAT_EVERY"));
+}
+
+#[test]
+fn initialize_sieve_home_from_env_seeds_default_home_before_model_config_errors() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    let home_root = std::env::temp_dir().join(format!(
+        "sieve-app-startup-home-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    let sieve_home = home_root.join(".sieve");
+    std::env::set_var("HOME", &home_root);
+    std::env::set_var("SIEVE_PLANNER_MODEL", "gpt-5.4");
+
+    initialize_sieve_home_from_env();
+
+    let err = OpenAiPlannerModel::from_env().expect_err("planner config must fail without api key");
+    match err {
+        LlmError::Config(message) => {
+            assert!(message.contains("missing OpenAI API key"), "{message}");
+        }
+        other => panic!("expected config error, got {other:?}"),
+    }
+
+    assert!(sieve_home.join(".git").exists());
+    assert!(sieve_home.join("AGENTS.md").exists());
+    assert!(sieve_home.join(".gitignore").exists());
+
+    let _ = fs::remove_dir_all(&home_root);
 }

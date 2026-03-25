@@ -131,6 +131,7 @@ pub(crate) use sieve_types::{
 #[allow(unused_imports)]
 pub(crate) use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::env;
 use std::fs;
 use std::io;
 #[cfg(test)]
@@ -180,6 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_dotenv_if_present().map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
     let cli_command = cli::Cli::parse().into_command();
+    initialize_sieve_home_from_env();
     if let cli::CliCommand::Auth(command) = cli_command.clone() {
         run_auth_command(command)
             .await
@@ -195,13 +197,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cfg =
         AppConfig::from_env().map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
-    if let Err(err) = sieve_home::ensure_sieve_home_repo(&cfg.sieve_home) {
-        eprintln!(
-            "failed to initialize sieve home repo at {}: {}",
-            cfg.sieve_home.display(),
-            err
-        );
-    }
     let policy_toml = fs::read_to_string(&cfg.policy_path)?;
     let policy = TomlPolicyEngine::from_toml_str(&policy_toml)?;
     cfg.allowed_net_connect_scopes = planner_allowed_net_connect_scopes(&policy);
@@ -335,6 +330,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn initialize_sieve_home_from_env() {
+    let sieve_home = parse_sieve_home(env::var("SIEVE_HOME").ok(), env::var("HOME").ok());
+    if let Err(err) = sieve_home::ensure_sieve_home_repo(&sieve_home) {
+        eprintln!(
+            "failed to initialize sieve home repo at {}: {}",
+            sieve_home.display(),
+            err
+        );
+    }
 }
 
 #[cfg(test)]
