@@ -40,7 +40,8 @@ pub(crate) use compose_gate::{
     ComposeGateOutput,
 };
 use config::{
-    approval_allowances_path, load_approval_allowances, load_dotenv_if_present, AppConfig,
+    approval_allowances_path, load_approval_allowances, load_dotenv_if_present, parse_sieve_home,
+    AppConfig,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
