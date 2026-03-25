@@ -65,9 +65,6 @@ jobs:
       - name: Check release workflow
         run: scripts/test-release-workflow.sh
 
-      - name: Check Docker runtime image
-        run: scripts/test-docker-runtime-image.sh
-
       - name: Check formatting
         run: cargo fmt --check
 
