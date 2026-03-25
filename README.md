@@ -73,7 +73,8 @@ Commands and coverage notes: [docs/running.md](docs/running.md#testing).
 ## Docker
 
 A multi-arch Docker image is published to Docker Hub as `nick1udwig/sieve`.
-Use `-e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$HOME/.sieve:/root/.sieve"` to keep container state in the normal host `~/.sieve` path.
+The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, and a non-root `1000:1000` runtime user.
+Create the host state dir as the real user before first run so Docker does not create it as `root`.
 
 Pull once:
 
@@ -84,13 +85,13 @@ docker pull nick1udwig/sieve:latest
 Run one prompt against the current checkout:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
 ```
 
 Run long-lived mode:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run
 ```
 
 `seccomp` is Docker's Linux syscall filter.

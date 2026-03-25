@@ -67,6 +67,8 @@ FROM ubuntu:24.04 AS runtime
 ARG SIEVE_VERSION=0.0.0-dev
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
+ARG SIEVE_UID=1000
+ARG SIEVE_GID=1000
 
 LABEL org.opencontainers.image.title="sieve" \
       org.opencontainers.image.description="Prompt-injection-resistant agent runtime" \
@@ -76,14 +78,18 @@ LABEL org.opencontainers.image.title="sieve" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 ENV LANG=C.UTF-8 \
-    HOME=/root \
+    HOME=/home/sieve \
     PATH=/opt/sieve-tools/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
-    SIEVE_HOME=/root/.sieve \
+    SIEVE_HOME=/home/sieve/.sieve \
     SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml \
     SIEVE_RUNTIME_CWD=/workspace
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bash bubblewrap ca-certificates curl ffmpeg git jq libssl3 python3 strace tini trash-cli \
+    && if ! getent group "${SIEVE_GID}" >/dev/null; then groupadd --gid "${SIEVE_GID}" sieve; fi \
+    && if ! getent passwd "${SIEVE_UID}" >/dev/null; then useradd --uid "${SIEVE_UID}" --gid "${SIEVE_GID}" --create-home --home-dir /home/sieve --shell /bin/bash sieve; fi \
+    && mkdir -p /workspace /home/sieve/.sieve \
+    && chown -R "${SIEVE_UID}:${SIEVE_GID}" /workspace /home/sieve \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local/ /usr/local/
@@ -92,11 +98,10 @@ COPY --from=tooling /opt/sieve-tools /opt/sieve-tools
 COPY .env.example /opt/sieve/.env.example
 COPY docs/policy /opt/sieve/docs/policy
 
-RUN mkdir -p /workspace /root/.sieve
-
-VOLUME ["/root/.sieve"]
+VOLUME ["/home/sieve/.sieve"]
 
 WORKDIR /workspace
+USER ${SIEVE_UID}:${SIEVE_GID}
 
 ENTRYPOINT ["tini", "--", "sieve-app"]
 CMD []

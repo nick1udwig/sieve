@@ -91,9 +91,13 @@ Expected result:
 
 Use the published Docker Hub image `nick1udwig/sieve`.
 The runtime image is `ubuntu:24.04` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
-Set `HOME=/root` and `SIEVE_HOME=/root/.sieve` on `docker run` if you want state to land in the host's normal `~/.sieve` path.
+The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, and a non-root `1000:1000` runtime user.
+Create the host state dir as the real user before first run so Docker does not create it as `root`.
 Container defaults:
 - workdir: `/workspace`
+- user: `1000:1000`
+- `HOME=/home/sieve`
+- `SIEVE_HOME=/home/sieve/.sieve`
 - `SIEVE_RUNTIME_CWD=/workspace`
 - `SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml`
 
@@ -106,13 +110,13 @@ docker pull nick1udwig/sieve:latest
 Run against the current checkout:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
 ```
 
 Run long-lived mode:
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined --env-file .env -e HOME=/root -e SIEVE_HOME=/root/.sieve -v "$PWD:/workspace" -v "$HOME/.sieve:/root/.sieve" nick1udwig/sieve:latest run
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined --env-file .env -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run
 ```
 
 `seccomp` is Docker's Linux syscall filter.
