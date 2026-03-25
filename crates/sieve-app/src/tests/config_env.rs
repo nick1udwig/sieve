@@ -373,7 +373,9 @@ fn initialize_sieve_home_from_env_seeds_default_home_before_model_config_errors(
 
     initialize_sieve_home_from_env();
 
-    let err = OpenAiPlannerModel::from_env().expect_err("planner config must fail without api key");
+    let err = OpenAiPlannerModel::from_env()
+        .err()
+        .expect("planner config must fail without api key");
     match err {
         LlmError::Config(message) => {
             assert!(message.contains("missing OpenAI API key"), "{message}");
