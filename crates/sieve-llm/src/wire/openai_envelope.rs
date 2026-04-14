@@ -4,10 +4,7 @@ use serde_json::Value;
 pub(crate) fn extract_openai_message_content_json(response: &Value) -> Result<Value, LlmError> {
     ensure_not_refusal(response)?;
 
-    let content = response
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
+    let content = extract_chat_completions_message_text(response)
         .or_else(|| extract_responses_message_text(response))
         .ok_or_else(|| {
             LlmError::Decode(
@@ -17,6 +14,22 @@ pub(crate) fn extract_openai_message_content_json(response: &Value) -> Result<Va
 
     serde_json::from_str::<Value>(&content)
         .map_err(|e| LlmError::Decode(format!("content is not valid JSON object: {e}")))
+}
+
+fn extract_chat_completions_message_text(response: &Value) -> Option<String> {
+    let content = response.pointer("/choices/0/message/content")?;
+    match content {
+        Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        }
+        Value::Array(parts) => collect_message_text_parts(parts),
+        _ => None,
+    }
 }
 
 pub(super) fn ensure_not_refusal(response: &Value) -> Result<(), LlmError> {
@@ -56,6 +69,37 @@ fn extract_responses_message_text(response: &Value) -> Option<String> {
                         texts.push(text.to_string());
                     }
                 }
+            }
+        }
+    }
+
+    if texts.is_empty() {
+        None
+    } else {
+        Some(texts.join("\n"))
+    }
+}
+
+fn collect_message_text_parts(parts: &[Value]) -> Option<String> {
+    let mut texts = Vec::new();
+
+    for part in parts {
+        if let Some(text) = part.as_str() {
+            let text = text.trim();
+            if !text.is_empty() {
+                texts.push(text.to_string());
+            }
+            continue;
+        }
+
+        let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
+        if (part_type == "output_text" || part_type == "text" || part_type.is_empty())
+            && part.get("text").and_then(Value::as_str).is_some()
+        {
+            let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
+            let text = text.trim();
+            if !text.is_empty() {
+                texts.push(text.to_string());
             }
         }
     }

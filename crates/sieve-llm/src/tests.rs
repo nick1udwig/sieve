@@ -483,6 +483,28 @@ fn extract_openai_message_content_json_parses_responses_output_text() {
 }
 
 #[test]
+fn extract_openai_message_content_json_parses_chat_completions_content_parts() {
+    let response = json!({
+        "choices": [
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "{\"guidance\":{\"code\":200,\"confidence_bps\":9000,\"source_hit_index\":null,\"evidence_ref_index\":null}}"
+                        }
+                    ]
+                }
+            }
+        ]
+    });
+
+    let content = extract_openai_message_content_json(&response).expect("parse content parts");
+    let out = decode_guidance_output(content).expect("decode guidance");
+    assert_eq!(out.guidance.code, 200);
+}
+
+#[test]
 fn extract_openai_planner_output_json_parses_responses_function_calls() {
     let response = json!({
         "output": [
