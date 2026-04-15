@@ -80,12 +80,13 @@ LABEL org.opencontainers.image.title="sieve" \
 ENV LANG=C.UTF-8 \
     HOME=/home/sieve \
     PATH=/opt/sieve-tools/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
+    SIEVE_CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:4500 \
     SIEVE_HOME=/home/sieve/.sieve \
     SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml \
     SIEVE_RUNTIME_CWD=/workspace
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash bubblewrap ca-certificates curl ffmpeg git jq libssl3 python3 strace tini trash-cli \
+    && apt-get install -y --no-install-recommends bash bubblewrap ca-certificates curl ffmpeg git jq libssl3 python3 strace tini tmux trash-cli \
     && if ! getent group "${SIEVE_GID}" >/dev/null; then groupadd --gid "${SIEVE_GID}" sieve; fi \
     && if ! getent passwd "${SIEVE_UID}" >/dev/null; then useradd --uid "${SIEVE_UID}" --gid "${SIEVE_GID}" --create-home --home-dir /home/sieve --shell /bin/bash sieve; fi \
     && mkdir -p /workspace /home/sieve/.sieve \
@@ -96,12 +97,15 @@ COPY --from=node-runtime /usr/local/ /usr/local/
 COPY --from=builder /tmp/sieve-app /usr/local/bin/sieve-app
 COPY --from=tooling /opt/sieve-tools /opt/sieve-tools
 COPY .env.example /opt/sieve/.env.example
+COPY docker/sieve-docker-entrypoint.sh /usr/local/bin/sieve-docker-entrypoint
 COPY docs/policy /opt/sieve/docs/policy
+
+RUN chmod +x /usr/local/bin/sieve-docker-entrypoint
 
 VOLUME ["/home/sieve/.sieve"]
 
 WORKDIR /workspace
 USER ${SIEVE_UID}:${SIEVE_GID}
 
-ENTRYPOINT ["tini", "--", "sieve-app"]
-CMD []
+ENTRYPOINT ["tini", "--", "/usr/local/bin/sieve-docker-entrypoint"]
+CMD ["run"]

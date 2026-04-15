@@ -23,12 +23,15 @@ use sieve_runtime::{ApprovalBus, EventLogError};
 use std::future::Future;
 
 const DEFAULT_CODEX_PROGRAM: &str = "codex";
+const DEFAULT_CODEX_CONNECT_TIMEOUT_MS: u64 = 5 * 1000;
 const DEFAULT_TURN_TIMEOUT_MS: u64 = 15 * 60 * 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30 * 1000;
 
 #[derive(Debug, Clone)]
 struct CodexManagerConfig {
-    program: String,
+    program: Option<String>,
+    ws_url: Option<String>,
+    connect_timeout_ms: u64,
     model: Option<String>,
     turn_timeout_ms: u64,
     request_timeout_ms: u64,
@@ -163,7 +166,16 @@ impl CodexManager {
                     .ok()
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| DEFAULT_CODEX_PROGRAM.to_string()),
+                    .or_else(|| Some(DEFAULT_CODEX_PROGRAM.to_string())),
+                ws_url: env::var("SIEVE_CODEX_APP_SERVER_WS_URL")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                connect_timeout_ms: env::var("SIEVE_CODEX_APP_SERVER_CONNECT_TIMEOUT_MS")
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+                    .filter(|value| *value > 0)
+                    .unwrap_or(DEFAULT_CODEX_CONNECT_TIMEOUT_MS),
                 model: env::var("SIEVE_CODEX_MODEL")
                     .ok()
                     .map(|value| value.trim().to_string())
@@ -192,6 +204,8 @@ impl CodexManager {
         let request = normalize_exec_request(request)?;
         let mut client = AppServerClient::spawn(&AppServerClientConfig {
             program: self.config.program.clone(),
+            ws_url: self.config.ws_url.clone(),
+            connect_timeout: Duration::from_millis(self.config.connect_timeout_ms),
         })
         .await?;
         self.call_with_timeout("initialize", client.initialize())
@@ -384,6 +398,8 @@ impl CodexManager {
     ) -> Result<CodexSessionToolResult, String> {
         let mut client = AppServerClient::spawn(&AppServerClientConfig {
             program: self.config.program.clone(),
+            ws_url: self.config.ws_url.clone(),
+            connect_timeout: Duration::from_millis(self.config.connect_timeout_ms),
         })
         .await?;
         self.call_with_timeout("initialize", client.initialize())
@@ -1635,7 +1651,9 @@ for line in sys.stdin:
         let event_log = Arc::new(RecordingEventLog::default());
         let manager = CodexManager {
             config: CodexManagerConfig {
-                program: script.to_string_lossy().to_string(),
+                program: Some(script.to_string_lossy().to_string()),
+                ws_url: None,
+                connect_timeout_ms: DEFAULT_CODEX_CONNECT_TIMEOUT_MS,
                 model: Some("mock-model".to_string()),
                 turn_timeout_ms: 5_000,
                 request_timeout_ms: 100,
@@ -1680,7 +1698,15 @@ for line in sys.stdin:
                 program: env::var("SIEVE_CODEX_APP_SERVER_BIN")
                     .ok()
                     .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| "codex".to_string()),
+                    .or_else(|| Some("codex".to_string())),
+                ws_url: env::var("SIEVE_CODEX_APP_SERVER_WS_URL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty()),
+                connect_timeout_ms: env::var("SIEVE_CODEX_APP_SERVER_CONNECT_TIMEOUT_MS")
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+                    .filter(|value| *value > 0)
+                    .unwrap_or(DEFAULT_CODEX_CONNECT_TIMEOUT_MS),
                 model: env::var("SIEVE_CODEX_MODEL")
                     .ok()
                     .filter(|value| !value.trim().is_empty())
@@ -1949,7 +1975,9 @@ for line in sys.stdin:
     ) -> CodexManager {
         CodexManager {
             config: CodexManagerConfig {
-                program: script.to_string_lossy().to_string(),
+                program: Some(script.to_string_lossy().to_string()),
+                ws_url: None,
+                connect_timeout_ms: DEFAULT_CODEX_CONNECT_TIMEOUT_MS,
                 model: Some("mock-model".to_string()),
                 turn_timeout_ms: 5_000,
                 request_timeout_ms: 5_000,

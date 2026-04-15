@@ -3251,6 +3251,7 @@ dependencies = [
  "clap",
  "croner",
  "dotenvy",
+ "futures-util",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -3267,6 +3268,7 @@ dependencies = [
  "sieve-tool-contracts",
  "sieve-types",
  "tokio",
+ "tokio-tungstenite",
  "uuid",
 ]
 

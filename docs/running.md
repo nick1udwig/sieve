@@ -90,8 +90,9 @@ Expected result:
 ### Docker
 
 Use the published Docker Hub image `nick1udwig/sieve`.
-The runtime image is `ubuntu:24.04` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
-The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, and a non-root `1000:1000` runtime user.
+The runtime image is `ubuntu:24.04` and includes `sieve-app`, `bubblewrap`, `strace`, `ffmpeg`, `tmux`, `trash`, `bravesearch`, `st`, `codex`, and `sieve-lcm-cli`.
+The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, a non-root `1000:1000` runtime user, and `SIEVE_CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:4500`.
+Container startup creates tmux session `codex` for `codex app-server --listen ws://127.0.0.1:4500` and tmux session `sieve` for `sieve-app`.
 Create the host state dir as the real user before first run so Docker does not create it as `root`.
 Sieve loads `/workspace/.env` itself on startup, so the safest Docker path is to mount the repo and not pass `--env-file`.
 If you do use `--env-file`, keep scalar values unquoted because Docker keeps quotes literal.
@@ -100,6 +101,7 @@ Container defaults:
 - user: `1000:1000`
 - `HOME=/home/sieve`
 - `SIEVE_HOME=/home/sieve/.sieve`
+- `SIEVE_CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:4500`
 - `SIEVE_RUNTIME_CWD=/workspace`
 - `SIEVE_POLICY_PATH=/opt/sieve/docs/policy/baseline-policy.toml`
 
@@ -112,17 +114,20 @@ docker pull nick1udwig/sieve:latest
 Run against the current checkout:
 
 ```bash
-HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --name sieve-local --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
 ```
 
 Run long-lived mode:
 
 ```bash
-HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run -d --restart unless-stopped --name sieve-local --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest
 ```
 
 `seccomp` is Docker's Linux syscall filter.
 `--security-opt seccomp=unconfined` disables the default filter so `bubblewrap` and `strace` can run inside the container.
+Inspect Docker-managed tmux sessions with `docker exec -it sieve-local tmux list-sessions`.
+Attach to the app with `docker exec -it sieve-local tmux attach -t sieve`.
+Attach to the shared Codex app-server with `docker exec -it sieve-local tmux attach -t codex`.
 If `bubblewrap` quarantine fails under Docker, allow unprivileged user namespaces on the host or add the extra container privileges your runtime requires.
 
 ### Ansible Host Setup

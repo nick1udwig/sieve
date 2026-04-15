@@ -20,6 +20,8 @@ Read when: touching Codex tool wiring, OCR ingress, approval passthrough, or Cod
 - Codex approval prompts stay separate Telegram messages, but they reply to the session status card when one exists.
 - Simple natural-language status questions about a saved Codex session are answered directly from trusted saved session metadata instead of going back through planner tool selection.
 - Old `codex exec` command-summary/catalog handling was removed from `sieve-command-summaries`.
+- `sieve-app` can now talk to a shared websocket app-server via `SIEVE_CODEX_APP_SERVER_WS_URL` instead of always spawning a fresh stdio child.
+- The Docker image defaults that websocket URL to `ws://127.0.0.1:4500` and runs the shared server in tmux session `codex`.
 
 ## Tool Semantics
 
@@ -33,8 +35,7 @@ Read when: touching Codex tool wiring, OCR ingress, approval passthrough, or Cod
 ## Current Limits
 
 - No `turn/steer` support yet for in-flight Codex turns.
-- No shared long-lived app-server child yet.
-- Sieve spawns a fresh stdio app-server process per Codex request and relies on saved `thread_id` for continuity.
+- When `SIEVE_CODEX_APP_SERVER_WS_URL` is unset, Sieve still spawns a fresh stdio app-server process per Codex request and relies on saved `thread_id` for continuity.
 - Resume policy is still mostly prompt-driven from stored metadata.
 - Open-loop working state currently only materializes automatically from zero-tool `continue_need_preference_or_constraint` turns.
 - No Codex web search or network-enabled mode yet.
@@ -44,5 +45,5 @@ Read when: touching Codex tool wiring, OCR ingress, approval passthrough, or Cod
 
 - Add `turn/steer` and interrupt wiring for long-running Codex tasks.
 - Add richer session-policy metadata so Sieve can decide resume vs fork vs start-new more reliably.
-- Consider a shared app-server connection pool if process startup becomes a bottleneck.
+- Consider pooling multiple shared app-server connections if one websocket listener becomes a bottleneck.
 - Add live integration tests behind env gates once a stable Codex test setup exists.

@@ -73,7 +73,8 @@ Commands and coverage notes: [docs/running.md](docs/running.md#testing).
 ## Docker
 
 A multi-arch Docker image is published to Docker Hub as `nick1udwig/sieve`.
-The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, and a non-root `1000:1000` runtime user.
+The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, a non-root `1000:1000` runtime user, and `SIEVE_CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:4500`.
+Startup creates tmux session `codex` for `codex app-server` and tmux session `sieve` for `sieve-app`.
 Create the host state dir as the real user before first run so Docker does not create it as `root`.
 Sieve loads `/workspace/.env` itself on startup, so the safest Docker path is to mount the repo and not pass `--env-file`.
 If you do use `--env-file`, keep scalar values unquoted because Docker keeps quotes literal.
@@ -87,17 +88,20 @@ docker pull nick1udwig/sieve:latest
 Run one prompt against the current checkout:
 
 ```bash
-HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --name sieve-local --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
 ```
 
 Run long-lived mode:
 
 ```bash
-HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run -d --restart unless-stopped --name sieve-local --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest
 ```
 
 `seccomp` is Docker's Linux syscall filter.
 `--security-opt seccomp=unconfined` disables the default filter so `bubblewrap` and `strace` work inside the container.
+Inspect tmux sessions with `docker exec -it sieve-local tmux list-sessions`.
+Attach to Sieve with `docker exec -it sieve-local tmux attach -t sieve`.
+Attach to the shared Codex app-server with `docker exec -it sieve-local tmux attach -t codex`.
 
 ## Ansible
 

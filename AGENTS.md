@@ -52,6 +52,7 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 - Use Codex background for long jobs; tmux only for interactive/persistent (debugger/server).
 - Sieve runtime: tmux session `sieve-app` with command `cargo build --release && SIEVE_PLANNER_MODEL=gpt-5.4 SIEVE_QUARANTINE_MODEL=gpt-5.4 ./target/release/sieve-app`.
 - Docker env files: keep scalar `.env` values unquoted; Docker `--env-file` keeps quotes literal. Prefer mounting the repo and letting Sieve load `/workspace/.env`.
+- Docker runtime image: tmux session `codex` runs `codex app-server`; tmux session `sieve` runs `sieve-app`.
 - Testing workflow: always look for running sieve process and stop it before tests.
 - Post-change workflow: look for and stop sieve, then build and start sieve in `sr`.
 
