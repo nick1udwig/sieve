@@ -128,11 +128,13 @@ fn parse_codex_event_stream(body: &str) -> Result<Value, LlmError> {
     let mut current_data = Vec::<String>::new();
     let mut completed_response = None::<Value>;
     let mut failed_error = None::<String>;
+    let mut streamed_output_items = Vec::<Value>::new();
 
     let flush_event = |event: &mut Option<String>,
                        data: &mut Vec<String>,
                        completed_response: &mut Option<Value>,
-                       failed_error: &mut Option<String>|
+                       failed_error: &mut Option<String>,
+                       streamed_output_items: &mut Vec<Value>|
      -> Result<(), LlmError> {
         let Some(event_name) = event.take() else {
             data.clear();
@@ -150,11 +152,20 @@ fn parse_codex_event_stream(body: &str) -> Result<Value, LlmError> {
         })?;
         match event_name.as_str() {
             "response.completed" => {
-                *completed_response = Some(parsed.get("response").cloned().ok_or_else(|| {
+                let mut response = parsed.get("response").cloned().ok_or_else(|| {
                     LlmError::Decode(
                         "openai_codex SSE completed event missing `response`".to_string(),
                     )
-                })?);
+                })?;
+                if response
+                    .get("output")
+                    .and_then(Value::as_array)
+                    .is_none_or(|output| output.is_empty())
+                    && !streamed_output_items.is_empty()
+                {
+                    response["output"] = Value::Array(streamed_output_items.clone());
+                }
+                *completed_response = Some(response);
             }
             "response.failed" => {
                 let error = parsed
@@ -164,6 +175,11 @@ fn parse_codex_event_stream(body: &str) -> Result<Value, LlmError> {
                     .or_else(|| parsed.get("error").and_then(Value::as_str))
                     .unwrap_or("response.failed");
                 *failed_error = Some(error.to_string());
+            }
+            "response.output_item.done" => {
+                if let Some(item) = parsed.get("item").cloned() {
+                    streamed_output_items.push(item);
+                }
             }
             _ => {}
         }
@@ -177,6 +193,7 @@ fn parse_codex_event_stream(body: &str) -> Result<Value, LlmError> {
                 &mut current_data,
                 &mut completed_response,
                 &mut failed_error,
+                &mut streamed_output_items,
             )?;
             continue;
         }
@@ -193,6 +210,7 @@ fn parse_codex_event_stream(body: &str) -> Result<Value, LlmError> {
         &mut current_data,
         &mut completed_response,
         &mut failed_error,
+        &mut streamed_output_items,
     )?;
 
     if let Some(response) = completed_response {
@@ -231,6 +249,25 @@ mod tests {
     }
 
     #[test]
+    fn backfills_empty_completed_output_from_streamed_output_item_done() {
+        let body = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_backfill\",\"output\":[]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_backfill\",\"type\":\"message\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"{\\\"guidance\\\":{\\\"code\\\":100}}\"}],\"role\":\"assistant\"},\"output_index\":0}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_backfill\",\"output\":[]}}\n\n"
+        );
+        let parsed = parse_codex_event_stream(body).expect("parse stream");
+        assert_eq!(
+            parsed
+                .pointer("/output/0/content/0/text")
+                .and_then(|v| v.as_str()),
+            Some("{\"guidance\":{\"code\":100}}")
+        );
+    }
+
+    #[test]
     fn parses_streamed_completed_function_call_response() {
         let body = concat!(
             "event: response.completed\n",
@@ -238,6 +275,27 @@ mod tests {
         );
         let parsed = parse_codex_response_body(body).expect("parse stream body");
         assert_eq!(parsed.get("id").and_then(|v| v.as_str()), Some("resp_2"));
+        assert_eq!(
+            parsed.pointer("/output/0/name").and_then(|v| v.as_str()),
+            Some("ping")
+        );
+        assert_eq!(
+            parsed
+                .pointer("/output/0/arguments")
+                .and_then(|v| v.as_str()),
+            Some("{\"x\":1}")
+        );
+    }
+
+    #[test]
+    fn backfills_empty_completed_output_from_streamed_function_call_item() {
+        let body = concat!(
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"name\":\"ping\",\"arguments\":\"{\\\"x\\\":1}\"},\"output_index\":0}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fc_backfill\",\"output\":[]}}\n\n"
+        );
+        let parsed = parse_codex_event_stream(body).expect("parse stream");
         assert_eq!(
             parsed.pointer("/output/0/name").and_then(|v| v.as_str()),
             Some("ping")
