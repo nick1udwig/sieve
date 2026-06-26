@@ -1,3 +1,4 @@
+use crate::json_util::to_json_string;
 use crate::logging::{ConversationHistoryEntry, ConversationRole};
 use crate::planner_products::PlannerIntermediateProductSummary;
 use crate::planner_progress::summarize_redacted_tool_result;
@@ -51,11 +52,6 @@ enum PlannerToolArgsPayload<'a> {
 #[derive(Serialize)]
 struct BashArgs<'a> {
     cmd: &'a str,
-}
-
-fn to_json_string<T: Serialize>(value: &T, context: &str) -> String {
-    serde_json::to_string(value)
-        .unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 pub(crate) fn build_planner_conversation(

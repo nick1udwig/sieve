@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use crate::json_util::to_json_string;
 use serde_json::Value;
 use sieve_lcm::compaction::CompactionConfig;
 use sieve_lcm::engine::AssembleResult;
@@ -302,8 +303,7 @@ fn planner_context_messages(
             .map(agent_message_to_planner_message),
     );
     if !untrusted_refs.is_empty() {
-        let payload = serde_json::to_string(&untrusted_refs)
-            .unwrap_or_else(|err| panic!("failed to serialize untrusted lcm refs: {err}"));
+        let payload = to_json_string(&untrusted_refs, "untrusted lcm refs");
         messages.push(PlannerConversationMessage {
             role: PlannerConversationRole::User,
             kind: PlannerConversationMessageKind::RedactedInfo,
