@@ -184,3 +184,41 @@ require_trusted_control_for_mutating = true
         other => panic!("expected mainline execution, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn bravesearch_api_key_file_requires_read_capability_with_real_policy() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.search.brave.com/"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+    );
+
+    let disposition = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-bravesearch-key-file".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "bravesearch search --query rust --api-key-file key.txt".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+
+    match disposition {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("missing capability"));
+            assert!(reason.contains("Fs:Read:/tmp/workspace/key.txt"));
+        }
+        other => panic!("expected key file read denial, got {other:?}"),
+    }
+}

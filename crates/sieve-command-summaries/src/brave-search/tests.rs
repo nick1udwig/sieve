@@ -23,6 +23,66 @@ fn web_search_maps_to_net_connect_capability() {
 }
 
 #[test]
+fn search_api_key_file_requires_fs_read_capability() {
+    let out = crate::summarize_argv(&argv(&[
+        "bravesearch",
+        "search",
+        "--query",
+        "rust",
+        "--api-key-file",
+        "/tmp/brave.key",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.search.brave.com/".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/brave.key".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
+fn search_config_file_requires_fs_read_capability() {
+    let out = crate::summarize_argv(&argv(&[
+        "bravesearch",
+        "search",
+        "--query",
+        "rust",
+        "--config",
+        "/tmp/brave.json",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.search.brave.com/".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/brave.json".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn brave_search_alias_is_supported() {
     let out = crate::summarize_argv(&argv(&["brave-search", "news", "--q", "rust"]));
 

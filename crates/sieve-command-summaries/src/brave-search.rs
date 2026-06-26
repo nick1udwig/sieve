@@ -135,7 +135,21 @@ fn summarize_search(argv: &[String], endpoint: &str, flags: SearchFlags) -> Summ
         );
     }
 
-    known_net_connect_outcome(endpoint)
+    let mut required_capabilities = vec![net_connect_capability(endpoint)];
+    for flag in ["api-key-file", "config"] {
+        if let Some(path) = latest_optional_value(&parsed, flag) {
+            required_capabilities.push(Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: path,
+            });
+        }
+    }
+    super::known_outcome(CommandSummary {
+        required_capabilities,
+        sink_checks: Vec::new(),
+        unsupported_flags: Vec::new(),
+    })
 }
 
 fn summarize_config(argv: &[String]) -> SummaryOutcome {
@@ -360,27 +374,26 @@ fn parse_flag_token(arg: &str) -> Option<(&str, Option<&str>)> {
 }
 
 fn latest_value(parsed: &ParsedFlags, key: &str, default: &str) -> String {
+    latest_optional_value(parsed, key).unwrap_or_else(|| default.to_string())
+}
+
+fn latest_optional_value(parsed: &ParsedFlags, key: &str) -> Option<String> {
     parsed
         .values
         .iter()
         .rev()
         .find_map(|(k, v)| if k == key { Some(v.clone()) } else { None })
-        .unwrap_or_else(|| default.to_string())
 }
 
-fn known_net_connect_outcome(scope: &str) -> SummaryOutcome {
+fn net_connect_capability(scope: &str) -> Capability {
     let scope = super::canonicalize_url_connect_scope(scope)
         .map(|sink| sink.0)
         .unwrap_or_else(|| scope.to_string());
-    super::known_outcome(CommandSummary {
-        required_capabilities: vec![Capability {
-            resource: Resource::Net,
-            action: Action::Connect,
-            scope,
-        }],
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
+    Capability {
+        resource: Resource::Net,
+        action: Action::Connect,
+        scope,
+    }
 }
 
 fn known_noop_outcome() -> SummaryOutcome {
