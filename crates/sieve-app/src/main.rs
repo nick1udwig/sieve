@@ -23,90 +23,23 @@ mod sieve_home;
 mod turn;
 
 use agent_loop::{run_agent_loop, AgentLoopDeps};
-#[cfg(test)]
-use async_trait::async_trait;
 use auth_cli::run_auth_command;
 use automation::AutomationManager;
 use clap::Parser;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use cli::{parse_cli_args, AuthCommand, AuthProvider, CliCommand};
 use codex::CodexManager;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use compose_gate::{
-    combine_gate_reasons, compose_gate_followup_signal, compose_gate_requires_retry,
-    compose_quality_followup_signal, compose_quality_requires_retry,
-    extract_trusted_evidence_lines, gate_requires_retry, parse_compose_gate_output,
-    ComposeGateOutput,
-};
 use config::{
     approval_allowances_path, load_approval_allowances, load_dotenv_if_present, parse_sieve_home,
     AppConfig,
 };
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use config::{
-    load_dotenv_from_path, parse_policy_path, parse_telegram_allowed_sender_user_ids,
-    runtime_event_log_path, save_approval_allowances, DEFAULT_POLICY_PATH,
-};
 use ingress::{
     spawn_stdin_prompt_loop, spawn_telegram_loop, IngressPrompt, PromptSource, RuntimeBridge,
 };
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use ingress::{TurnKind, TypingGuard};
 use lcm_integration::LcmIntegration;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use lcm_integration::LcmIntegrationConfig;
 use logging::FanoutRuntimeEventLog;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use logging::{now_ms, ConversationLogRecord, ConversationRole, TelegramLoopEvent};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use planner_conversation::{build_planner_conversation, planner_step_trace_messages};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use planner_feedback::{planner_memory_feedback, planner_policy_feedback};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use planner_products::{PlannerIntermediateProductSummary, PlannerOpaqueHandleStore};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use planner_progress::{
-    classify_bash_action, command_targets_markdown_view, guidance_continue_decision,
-    guidance_requests_continue, has_repeated_bash_outcome, progress_contract_override_signal,
-    url_is_likely_asset, BashActionClass, MIN_PRIMARY_FETCH_STDOUT_BYTES,
-};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use render_refs::{
-    read_artifact_as_string, render_assistant_message, resolve_ref_summary_input, RenderRef,
-};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use response_style::{
-    compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
-    denied_outcomes_only_message, enforce_link_policy, extract_plain_urls_from_text,
-    filter_non_asset_urls, obvious_meta_compose_pattern, strip_asset_urls_from_message,
-    strip_unexpanded_render_tokens, user_requested_detailed_output, user_requested_sources,
-};
 use sieve_command_summaries::DefaultCommandSummarizer;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use sieve_home::{
-    commit_sieve_home_changes_for_bucket, ensure_sieve_home_repo, SieveHomeCommitBucket,
-};
 use sieve_llm::{
     GuidanceModel, OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel,
     OpenAiSummaryModel, ResponseModel, SummaryModel,
-};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use sieve_llm::{
-    ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput, SummaryRequest,
 };
 use sieve_policy::{canonicalize_net_origin_scope, TomlPolicyEngine};
 use sieve_quarantine::BwrapQuarantineRunner;
@@ -114,49 +47,15 @@ use sieve_runtime::{
     AutomationTool, InProcessApprovalBus, RuntimeDeps, RuntimeOrchestrator,
     SystemClock as RuntimeClock,
 };
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use sieve_runtime::{
-    MainlineArtifact, MainlineArtifactKind, MainlineRunReport, PlannerRunResult, PlannerToolResult,
-    RuntimeDisposition, RuntimeEventLog,
-};
 use sieve_shell::BasicShellAnalyzer;
 use sieve_types::{Action, InteractionModality, Resource};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use sieve_types::{
-    ApprovalResolvedEvent, Capability, ModalityOverrideReason, PlannerGuidanceSignal, RunId,
-    RuntimeEvent, UncertainMode, UnknownMode,
-};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use std::path::PathBuf;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tokio::sync::mpsc as tokio_mpsc;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use turn::summarize_with_ref_id_counted;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use turn::{
-    build_response_turn_input, default_modality_contract, override_modality_contract,
-    planner_allowed_tools_for_turn, requires_output_visibility,
-    response_has_visible_selected_output, TurnOutcome,
-};
 use turn::{run_turn, AppMainlineRunner, TurnDeps};
 fn planner_allowed_net_connect_scopes(policy: &TomlPolicyEngine) -> Vec<String> {
     let mut scopes = Vec::new();
