@@ -175,7 +175,10 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             "POST".to_string()
         }
     });
-    if matches!(method.as_str(), "GET" | "HEAD") {
+    let has_payloads = !payloads.is_empty();
+    let method = method.as_str();
+    let is_read_only_method = matches!(method, "GET" | "HEAD");
+    if is_read_only_method && !has_payloads {
         let Some(url) = url_raw else {
             return Some(unknown_outcome("curl request missing URL"));
         };
@@ -192,7 +195,9 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             unsupported_flags: Vec::new(),
         }));
     }
-    if !matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
+    let is_write_method = matches!(method, "POST" | "PUT" | "PATCH" | "DELETE")
+        || (is_read_only_method && has_payloads);
+    if !is_write_method {
         return None;
     }
 

@@ -45,6 +45,39 @@ fn curl_post_with_payload_extracts_sink_check() {
 }
 
 #[test]
+fn curl_explicit_get_with_payload_extracts_sink_check() {
+    let out = summarize_argv(&argv(&[
+        "curl",
+        "-X",
+        "GET",
+        "https://api.example.com/v1/query",
+        "-d",
+        "token=secret",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Net,
+            action: Action::Write,
+            scope: "https://api.example.com/v1/query".to_string(),
+        }]
+    );
+    assert_eq!(summary.sink_checks.len(), 1);
+    assert_eq!(summary.sink_checks[0].argument_name, "-d");
+    assert_eq!(
+        summary.sink_checks[0].sink,
+        SinkKey("https://api.example.com/v1/query".to_string())
+    );
+    assert_eq!(
+        summary.sink_checks[0].value_refs,
+        vec![ValueRef("argv:5".to_string())]
+    );
+}
+
+#[test]
 fn curl_payload_without_explicit_method_defaults_to_post() {
     let out = summarize_argv(&argv(&[
         "curl",

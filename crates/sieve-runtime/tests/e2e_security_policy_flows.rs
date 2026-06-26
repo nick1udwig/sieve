@@ -90,6 +90,48 @@ require_trusted_control_for_mutating = true
 }
 
 #[tokio::test]
+async fn curl_explicit_get_with_payload_requires_write_capability() {
+    let policy_toml = r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.example.com/"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#;
+    let (runtime, _approval_bus, _event_log) = mk_runtime(
+        Arc::new(BasicShellAnalyzer),
+        Arc::new(DefaultCommandSummarizer),
+        policy_toml,
+        Arc::new(RecordingQuarantine::default()),
+    );
+
+    let disposition = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-curl-get-payload".to_string()),
+            cwd: "/tmp".to_string(),
+            script: "curl -X GET https://api.example.com/v1/query -d body".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+
+    match disposition {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("missing capability"));
+            assert!(reason.contains("Net:Write:https://api.example.com/v1/query"));
+        }
+        other => panic!("expected write capability denial, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn curl_post_payload_sink_enforced_then_declassify_allows_flow() {
     let policy_toml = r#"
 [[allow_capabilities]]
