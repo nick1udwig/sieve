@@ -259,6 +259,18 @@ impl AppE2eHarness {
         self
     }
 
+    fn turn_deps(&self) -> TurnDeps {
+        TurnDeps {
+            runtime: self.runtime.clone(),
+            guidance_model: self.guidance_model.clone(),
+            response_model: self.response_model.clone(),
+            summary_model: self.summary_model.clone(),
+            lcm: self.lcm.clone(),
+            event_log: self.event_log.clone(),
+            cfg: self.cfg.clone(),
+        }
+    }
+
     pub(crate) async fn run_prompt_turn(
         &self,
         prompt: IngressPrompt,
@@ -268,19 +280,10 @@ impl AppE2eHarness {
             &prompt.session_key,
             prompt.turn_kind.as_str(),
         );
-        run_turn(
-            &self.runtime,
-            self.guidance_model.as_ref(),
-            self.response_model.as_ref(),
-            self.summary_model.clone(),
-            self.lcm.clone(),
-            &self.event_log,
-            &self.cfg,
-            reserved_turn.run_id,
-            &prompt,
-        )
-        .await
-        .map_err(|err| err.to_string())
+        let turn_deps = self.turn_deps();
+        run_turn(&turn_deps, reserved_turn.run_id, &prompt)
+            .await
+            .map_err(|err| err.to_string())
     }
 
     pub(crate) async fn run_text_turn(&self, prompt: &str) -> Result<(), String> {
@@ -305,7 +308,7 @@ impl AppE2eHarness {
         loop {
             match receiver.try_recv() {
                 Ok(TelegramLoopEvent::Runtime(event)) => adapter
-                    .publish_runtime_event(event)
+                    .publish_runtime_event(*event)
                     .map_err(|err| format!("telegram publish runtime event failed: {err:?}"))?,
                 Ok(TelegramLoopEvent::TypingStart { run_id }) => adapter
                     .start_typing(run_id)
@@ -368,19 +371,10 @@ impl AppE2eHarness {
         )
         .map(Some)
         .unwrap_or(None);
-        run_turn(
-            &self.runtime,
-            self.guidance_model.as_ref(),
-            self.response_model.as_ref(),
-            self.summary_model.clone(),
-            self.lcm.clone(),
-            &self.event_log,
-            &self.cfg,
-            reserved_turn.run_id,
-            &ingress,
-        )
-        .await
-        .map_err(|err| err.to_string())?;
+        let turn_deps = self.turn_deps();
+        run_turn(&turn_deps, reserved_turn.run_id, &ingress)
+            .await
+            .map_err(|err| err.to_string())?;
         drop(typing_guard);
 
         self.drain_telegram_events(&mut adapter)?;

@@ -33,6 +33,50 @@ pub(crate) struct ComposeAssistantOutcome {
     pub(crate) summary_calls: usize,
 }
 
+pub(crate) struct ComposeRequest<'a> {
+    pub(crate) summary_model: &'a dyn SummaryModel,
+    pub(crate) sieve_home: &'a Path,
+    pub(crate) event_log: &'a FanoutRuntimeEventLog,
+    pub(crate) run_id: &'a RunId,
+    pub(crate) trusted_user_message: &'a str,
+    pub(crate) response_input: &'a ResponseTurnInput,
+    pub(crate) render_refs: &'a BTreeMap<String, RenderRef>,
+    pub(crate) draft_message: String,
+    pub(crate) evidence_cache: &'a mut BTreeMap<String, String>,
+    pub(crate) summary_budget: usize,
+}
+
+struct ComposeContext<'a> {
+    summary_model: &'a dyn SummaryModel,
+    sieve_home: &'a Path,
+    event_log: &'a FanoutRuntimeEventLog,
+    run_id: &'a RunId,
+    summary_budget: usize,
+}
+
+struct ComposeAuditRequest<'a> {
+    context: &'a ComposeContext<'a>,
+    attempts: &'a [serde_json::Value],
+    final_message: &'a str,
+    output_ref_ids: &'a [String],
+    source_urls: &'a [String],
+    quality_gate: Option<&'a str>,
+    grounding_gate: Option<&'a str>,
+    planner_followup_signal: Option<PlannerGuidanceSignal>,
+}
+
+struct ComposeGateRequest<'a, 'b> {
+    context: &'a ComposeContext<'a>,
+    trusted_user_message: &'b str,
+    trusted_evidence: &'b [String],
+    trusted_effects: &'b [TrustedToolEffect],
+    composed_message: &'b str,
+    extracted_evidence: &'b [sieve_llm::ResponseEvidenceRecord],
+    evidence_summaries: &'b [String],
+    source_urls: &'b [String],
+    summary_calls: &'b mut usize,
+}
+
 #[derive(Serialize)]
 struct ComposeAuditInputRef {
     ref_id: String,
@@ -146,25 +190,15 @@ fn compose_tool_outcome_payloads<'a>(
         .collect()
 }
 
-async fn write_compose_audit_artifacts(
-    sieve_home: &Path,
-    event_log: &FanoutRuntimeEventLog,
-    run_id: &RunId,
-    attempts: &[serde_json::Value],
-    final_message: &str,
-    output_ref_ids: &[String],
-    source_urls: &[String],
-    quality_gate: Option<&str>,
-    grounding_gate: Option<&str>,
-    planner_followup_signal: Option<PlannerGuidanceSignal>,
-) -> Result<(), String> {
-    let run_dir = sieve_home.join("artifacts").join(&run_id.0);
+async fn write_compose_audit_artifacts(request: ComposeAuditRequest<'_>) -> Result<(), String> {
+    let run_id = request.context.run_id;
+    let run_dir = request.context.sieve_home.join("artifacts").join(&run_id.0);
     tokio::fs::create_dir_all(&run_dir)
         .await
         .map_err(|err| format!("failed to create compose artifact dir: {err}"))?;
 
     let mut input_refs = Vec::new();
-    for (idx, attempt) in attempts.iter().enumerate() {
+    for (idx, attempt) in request.attempts.iter().enumerate() {
         let ref_id = format!("assistant-compose-input:{}:{}", run_id.0, idx + 1);
         let path = run_dir.join(format!("assistant-compose-input-{}.json", idx + 1));
         let content = serde_json::to_vec_pretty(attempt)
@@ -180,7 +214,7 @@ async fn write_compose_audit_artifacts(
 
     let output_ref_id = format!("assistant-compose-output:{}", run_id.0);
     let output_path = run_dir.join("assistant-compose-output.txt");
-    tokio::fs::write(&output_path, final_message.as_bytes())
+    tokio::fs::write(&output_path, request.final_message.as_bytes())
         .await
         .map_err(|err| format!("failed to write compose output artifact: {err}"))?;
 
@@ -191,15 +225,19 @@ async fn write_compose_audit_artifacts(
                 ref_id: output_ref_id,
                 path: output_path.to_string_lossy().into_owned(),
             },
-            output_ref_ids,
-            source_urls,
-            quality_gate,
-            grounding_gate,
-            planner_followup_signal_code: planner_followup_signal.map(PlannerGuidanceSignal::code),
+            output_ref_ids: request.output_ref_ids,
+            source_urls: request.source_urls,
+            quality_gate: request.quality_gate,
+            grounding_gate: request.grounding_gate,
+            planner_followup_signal_code: request
+                .planner_followup_signal
+                .map(PlannerGuidanceSignal::code),
         },
         "compose audit record",
     );
-    event_log
+    request
+        .context
+        .event_log
         .append_app_event("compose", "compose_audit", "info", run_id, now_ms(), record)
         .await
         .map_err(|err| format!("failed to append compose audit event: {err}"))
@@ -273,14 +311,12 @@ fn collect_source_urls_from_extracted_evidence(
 }
 
 async fn build_compose_evidence_summaries(
-    summary_model: &dyn SummaryModel,
-    run_id: &RunId,
+    context: &ComposeContext<'_>,
     trusted_user_message: &str,
     response_input: &ResponseTurnInput,
     render_refs: &BTreeMap<String, RenderRef>,
     evidence_cache: &mut BTreeMap<String, String>,
     summary_calls: &mut usize,
-    summary_budget: usize,
 ) -> Vec<String> {
     let mut summaries = Vec::new();
     let mut seen = BTreeSet::new();
@@ -320,14 +356,18 @@ async fn build_compose_evidence_summaries(
             },
             "compose evidence extract payload",
         );
-        let ref_id = format!("assistant-compose-evidence:{}:{}", run_id.0, idx + 1);
+        let ref_id = format!(
+            "assistant-compose-evidence:{}:{}",
+            context.run_id.0,
+            idx + 1
+        );
         if let Some(summary) = summarize_with_ref_id_counted(
-            summary_model,
-            run_id,
+            context.summary_model,
+            context.run_id,
             &ref_id,
             &payload,
             summary_calls,
-            summary_budget,
+            context.summary_budget,
         )
         .await
         {
@@ -341,41 +381,31 @@ async fn build_compose_evidence_summaries(
     summaries
 }
 
-async fn run_compose_gate(
-    summary_model: &dyn SummaryModel,
-    run_id: &RunId,
-    trusted_user_message: &str,
-    trusted_evidence: &[String],
-    trusted_effects: &[TrustedToolEffect],
-    composed_message: &str,
-    extracted_evidence: &[sieve_llm::ResponseEvidenceRecord],
-    evidence_summaries: &[String],
-    source_urls: &[String],
-    summary_calls: &mut usize,
-    summary_budget: usize,
-) -> Option<ComposeGateOutput> {
+async fn run_compose_gate(request: ComposeGateRequest<'_, '_>) -> Option<ComposeGateOutput> {
     let payload = to_json_value(
         ComposeGatePayload {
             task: "compose_gate",
-            trusted_user_message,
-            user_requested_sources: user_requested_sources(trusted_user_message),
-            user_requested_detailed_output: user_requested_detailed_output(trusted_user_message),
-            trusted_evidence,
-            trusted_effects,
-            composed_message,
-            extracted_evidence,
-            evidence_summaries,
-            source_urls,
+            trusted_user_message: request.trusted_user_message,
+            user_requested_sources: user_requested_sources(request.trusted_user_message),
+            user_requested_detailed_output: user_requested_detailed_output(
+                request.trusted_user_message,
+            ),
+            trusted_evidence: request.trusted_evidence,
+            trusted_effects: request.trusted_effects,
+            composed_message: request.composed_message,
+            extracted_evidence: request.extracted_evidence,
+            evidence_summaries: request.evidence_summaries,
+            source_urls: request.source_urls,
         },
         "compose gate payload",
     );
     let raw = summarize_with_ref_id_counted(
-        summary_model,
-        run_id,
-        &format!("assistant-compose-gate:{}", run_id.0),
+        request.context.summary_model,
+        request.context.run_id,
+        &format!("assistant-compose-gate:{}", request.context.run_id.0),
         &payload,
-        summary_calls,
-        summary_budget,
+        request.summary_calls,
+        request.context.summary_budget,
     )
     .await;
     parse_compose_gate_output(raw.as_deref())
@@ -413,17 +443,27 @@ fn trusted_effect_fallback_message(response_input: &ResponseTurnInput) -> Option
 }
 
 pub(crate) async fn compose_assistant_message(
-    summary_model: &dyn SummaryModel,
-    sieve_home: &Path,
-    event_log: &FanoutRuntimeEventLog,
-    run_id: &RunId,
-    trusted_user_message: &str,
-    response_input: &ResponseTurnInput,
-    render_refs: &BTreeMap<String, RenderRef>,
-    draft_message: String,
-    evidence_cache: &mut BTreeMap<String, String>,
-    summary_budget: usize,
+    request: ComposeRequest<'_>,
 ) -> ComposeAssistantOutcome {
+    let ComposeRequest {
+        summary_model,
+        sieve_home,
+        event_log,
+        run_id,
+        trusted_user_message,
+        response_input,
+        render_refs,
+        draft_message,
+        evidence_cache,
+        summary_budget,
+    } = request;
+    let context = ComposeContext {
+        summary_model,
+        sieve_home,
+        event_log,
+        run_id,
+        summary_budget,
+    };
     let mut summary_calls = 0usize;
     let output_ref_ids: Vec<String> = non_empty_output_ref_ids(response_input)
         .into_iter()
@@ -443,14 +483,12 @@ pub(crate) async fn compose_assistant_message(
     let extracted_evidence = response_input.extracted_evidence.clone();
     let evidence_summaries = if extracted_evidence.is_empty() {
         build_compose_evidence_summaries(
-            summary_model,
-            run_id,
+            &context,
             trusted_user_message,
             response_input,
             render_refs,
             evidence_cache,
             &mut summary_calls,
-            summary_budget,
         )
         .await
     } else {
@@ -489,12 +527,12 @@ pub(crate) async fn compose_assistant_message(
     attempt_payloads.push(payload.clone());
 
     let first_composed = summarize_with_ref_id_counted(
-        summary_model,
-        run_id,
+        context.summary_model,
+        context.run_id,
         &format!("assistant-compose:{}", run_id.0),
         &payload,
         &mut summary_calls,
-        summary_budget,
+        context.summary_budget,
     )
     .await
     .unwrap_or_else(|| {
@@ -506,19 +544,17 @@ pub(crate) async fn compose_assistant_message(
     });
 
     let mut composed = first_composed;
-    let mut gate = run_compose_gate(
-        summary_model,
-        run_id,
+    let mut gate = run_compose_gate(ComposeGateRequest {
+        context: &context,
         trusted_user_message,
-        &trusted_evidence,
-        &response_input.trusted_effects,
-        &composed,
-        &extracted_evidence,
-        &evidence_summaries,
-        &source_urls,
-        &mut summary_calls,
-        summary_budget,
-    )
+        trusted_evidence: &trusted_evidence,
+        trusted_effects: &response_input.trusted_effects,
+        composed_message: &composed,
+        extracted_evidence: &extracted_evidence,
+        evidence_summaries: &evidence_summaries,
+        source_urls: &source_urls,
+        summary_calls: &mut summary_calls,
+    })
     .await;
     let mut retry_diagnostics = Vec::new();
     if let Some(diagnostic) = compose_gate_requires_retry(
@@ -557,12 +593,12 @@ pub(crate) async fn compose_assistant_message(
         );
         attempt_payloads.push(retry_payload.clone());
         composed = summarize_with_ref_id_counted(
-            summary_model,
-            run_id,
+            context.summary_model,
+            context.run_id,
             &format!("assistant-compose-retry:{}", run_id.0),
             &retry_payload,
             &mut summary_calls,
-            summary_budget,
+            context.summary_budget,
         )
         .await
         .unwrap_or_else(|| {
@@ -572,19 +608,17 @@ pub(crate) async fn compose_assistant_message(
                 .unwrap_or_default()
                 .to_string()
         });
-        gate = run_compose_gate(
-            summary_model,
-            run_id,
+        gate = run_compose_gate(ComposeGateRequest {
+            context: &context,
             trusted_user_message,
-            &trusted_evidence,
-            &response_input.trusted_effects,
-            &composed,
-            &extracted_evidence,
-            &evidence_summaries,
-            &source_urls,
-            &mut summary_calls,
-            summary_budget,
-        )
+            trusted_evidence: &trusted_evidence,
+            trusted_effects: &response_input.trusted_effects,
+            composed_message: &composed,
+            extracted_evidence: &extracted_evidence,
+            evidence_summaries: &evidence_summaries,
+            source_urls: &source_urls,
+            summary_calls: &mut summary_calls,
+        })
         .await;
     }
 
@@ -651,18 +685,16 @@ pub(crate) async fn compose_assistant_message(
             composed = fallback;
         }
     }
-    if let Err(err) = write_compose_audit_artifacts(
-        sieve_home,
-        event_log,
-        run_id,
-        &attempt_payloads,
-        &composed,
-        &output_ref_ids,
-        &source_urls,
-        quality_gate.as_deref(),
-        grounding_gate.as_deref(),
+    if let Err(err) = write_compose_audit_artifacts(ComposeAuditRequest {
+        context: &context,
+        attempts: &attempt_payloads,
+        final_message: &composed,
+        output_ref_ids: &output_ref_ids,
+        source_urls: &source_urls,
+        quality_gate: quality_gate.as_deref(),
+        grounding_gate: grounding_gate.as_deref(),
         planner_followup_signal,
-    )
+    })
     .await
     {
         eprintln!("compose audit write failed for {}: {}", run_id.0, err);

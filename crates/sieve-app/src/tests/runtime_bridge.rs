@@ -209,7 +209,7 @@ async fn fanout_runtime_event_log_records_and_forwards_events() {
     assert_eq!(
         rx.recv_timeout(Duration::from_millis(50))
             .expect("forwarded event"),
-        TelegramLoopEvent::Runtime(event.clone())
+        TelegramLoopEvent::Runtime(Box::new(event.clone()))
     );
     let body = fs::read_to_string(&path).expect("read jsonl log");
     assert!(body.contains("policy_evaluated"));

@@ -2,19 +2,18 @@ use super::input::{
     default_modality_contract, override_modality_contract, resolve_trusted_user_message,
 };
 use super::planner_loop::{
-    emit_assistant_error_message, generate_assistant_message, GeneratedAssistantMessage,
+    emit_assistant_error_message, generate_assistant_message, GenerateAssistantRequest,
+    GeneratedAssistantMessage,
 };
 use crate::config::AppConfig;
 use crate::ingress::{IngressPrompt, PromptSource};
-use crate::lcm_integration::LcmIntegration;
-use crate::logging::{now_ms, ConversationLogRecord, ConversationRole, FanoutRuntimeEventLog};
+use crate::logging::{now_ms, ConversationLogRecord, ConversationRole};
 use crate::media;
-use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
-use sieve_runtime::{RuntimeEventLog, RuntimeOrchestrator};
+use crate::turn::TurnDeps;
+use sieve_runtime::RuntimeEventLog;
 use sieve_types::{
     AssistantMessageEvent, InteractionModality, ModalityOverrideReason, RunId, RuntimeEvent,
 };
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TurnOutcome {
@@ -25,13 +24,7 @@ pub(crate) struct TurnOutcome {
 }
 
 pub(crate) async fn run_turn(
-    runtime: &RuntimeOrchestrator,
-    guidance_model: &dyn GuidanceModel,
-    response_model: &dyn ResponseModel,
-    summary_model: Arc<dyn SummaryModel>,
-    lcm: Option<Arc<LcmIntegration>>,
-    event_log: &FanoutRuntimeEventLog,
-    cfg: &AppConfig,
+    deps: &TurnDeps,
     run_id: RunId,
     prompt: &IngressPrompt,
 ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
@@ -44,8 +37,8 @@ pub(crate) async fn run_turn(
         );
     }
     let trusted_user_message = match resolve_trusted_user_message(
-        runtime,
-        cfg,
+        &deps.runtime,
+        &deps.cfg,
         &run_id,
         prompt.modality,
         prompt.media_file_id.as_deref(),
@@ -56,7 +49,7 @@ pub(crate) async fn run_turn(
         Ok(message) => message,
         Err(error_message) => {
             println!("{}: {}", run_id.0, error_message);
-            emit_assistant_error_message(event_log, &run_id, error_message).await?;
+            emit_assistant_error_message(&deps.event_log, &run_id, error_message).await?;
             return Ok(TurnOutcome {
                 trusted_user_message: String::new(),
                 assistant_message: "error".to_string(),
@@ -66,7 +59,7 @@ pub(crate) async fn run_turn(
         }
     };
 
-    if let Some(memory) = lcm.as_ref() {
+    if let Some(memory) = deps.lcm.as_ref() {
         if prompt.turn_kind.ingests_user_message() {
             if let Err(err) = memory
                 .ingest_user_message_for_session(&prompt.session_key, &trusted_user_message)
@@ -75,7 +68,12 @@ pub(crate) async fn run_turn(
                 eprintln!("lcm ingest user failed for {}: {}", run_id.0, err);
             }
             if let Err(err) = memory
-                .compact_session_for_turn(&prompt.session_key, &run_id, summary_model.clone(), None)
+                .compact_session_for_turn(
+                    &prompt.session_key,
+                    &run_id,
+                    deps.summary_model.clone(),
+                    None,
+                )
                 .await
             {
                 eprintln!("lcm compact after user failed for {}: {}", run_id.0, err);
@@ -84,7 +82,7 @@ pub(crate) async fn run_turn(
     }
 
     if prompt.turn_kind.logs_user_conversation() {
-        event_log
+        deps.event_log
             .append_conversation(ConversationLogRecord::new(
                 run_id.clone(),
                 ConversationRole::User,
@@ -94,20 +92,14 @@ pub(crate) async fn run_turn(
             .await?;
     }
 
-    let assistant_message = generate_assistant_message(
-        runtime,
-        guidance_model,
-        response_model,
-        summary_model.clone(),
-        lcm.clone(),
-        event_log,
-        cfg,
-        &run_id,
-        &prompt.session_key,
-        &trusted_user_message,
-        modality_contract.response,
-        &prompt.turn_kind,
-    )
+    let assistant_message = generate_assistant_message(GenerateAssistantRequest {
+        deps,
+        run_id: &run_id,
+        session_key: &prompt.session_key,
+        trusted_user_message: &trusted_user_message,
+        response_modality: modality_contract.response,
+        turn_kind: &prompt.turn_kind,
+    })
     .await?;
 
     let (
@@ -128,7 +120,7 @@ pub(crate) async fn run_turn(
     }
 
     let delivered_audio = deliver_audio_reply_if_requested(
-        cfg,
+        &deps.cfg,
         prompt.source,
         &run_id,
         delivered_text,
@@ -137,7 +129,7 @@ pub(crate) async fn run_turn(
     .await;
 
     if assistant_delivered && !delivered_audio {
-        event_log
+        deps.event_log
             .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
                 schema_version: 1,
                 run_id: run_id.clone(),
@@ -152,7 +144,7 @@ pub(crate) async fn run_turn(
         .turn_kind
         .logs_assistant_conversation(assistant_delivered || delivered_audio)
     {
-        event_log
+        deps.event_log
             .append_conversation(ConversationLogRecord::new(
                 run_id.clone(),
                 ConversationRole::Assistant,
@@ -162,7 +154,7 @@ pub(crate) async fn run_turn(
             .await?;
     }
 
-    if let Some(memory) = lcm.as_ref() {
+    if let Some(memory) = deps.lcm.as_ref() {
         if prompt
             .turn_kind
             .ingests_assistant_message(assistant_delivered || delivered_audio)
@@ -174,7 +166,12 @@ pub(crate) async fn run_turn(
                 eprintln!("lcm ingest assistant failed for {}: {}", run_id.0, err);
             }
             if let Err(err) = memory
-                .compact_session_for_turn(&prompt.session_key, &run_id, summary_model.clone(), None)
+                .compact_session_for_turn(
+                    &prompt.session_key,
+                    &run_id,
+                    deps.summary_model.clone(),
+                    None,
+                )
                 .await
             {
                 eprintln!(

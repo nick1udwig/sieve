@@ -4,8 +4,10 @@ use super::response_refs::{
     response_has_visible_selected_output,
 };
 use crate::automation::{parse_heartbeat_planner_action, HeartbeatPlannerAction};
-use crate::compose::{compose_assistant_message, ComposeAssistantOutcome, ComposePlannerDecision};
-use crate::config::{persist_runtime_approval_allowances, AppConfig};
+use crate::compose::{
+    compose_assistant_message, ComposeAssistantOutcome, ComposePlannerDecision, ComposeRequest,
+};
+use crate::config::persist_runtime_approval_allowances;
 use crate::ingress::TurnKind;
 use crate::logging::{
     append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
@@ -21,12 +23,11 @@ use crate::planner_progress::{
 };
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
+use crate::turn::TurnDeps;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::Serialize;
-use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
 use sieve_runtime::{
     EventLogError, PlannerRunRequest, PlannerRunResult, PlannerToolResult, RuntimeEventLog,
-    RuntimeOrchestrator,
 };
 use sieve_types::PlannerCodexSession;
 use sieve_types::{
@@ -34,7 +35,6 @@ use sieve_types::{
     PlannerGuidanceInput, PlannerGuidanceSignal, RunId, RuntimeEvent,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum GeneratedAssistantMessage {
@@ -43,6 +43,15 @@ pub(super) enum GeneratedAssistantMessage {
         reply_to_session_id: Option<String>,
     },
     SuppressHeartbeat,
+}
+
+pub(super) struct GenerateAssistantRequest<'a> {
+    pub(super) deps: &'a TurnDeps,
+    pub(super) run_id: &'a RunId,
+    pub(super) session_key: &'a str,
+    pub(super) trusted_user_message: &'a str,
+    pub(super) response_modality: InteractionModality,
+    pub(super) turn_kind: &'a TurnKind,
 }
 
 #[derive(Serialize)]
@@ -158,19 +167,22 @@ pub(super) async fn emit_assistant_error_message(
 }
 
 pub(super) async fn generate_assistant_message(
-    runtime: &RuntimeOrchestrator,
-    guidance_model: &dyn GuidanceModel,
-    response_model: &dyn ResponseModel,
-    summary_model: Arc<dyn SummaryModel>,
-    lcm: Option<Arc<crate::lcm_integration::LcmIntegration>>,
-    event_log: &FanoutRuntimeEventLog,
-    cfg: &AppConfig,
-    run_id: &RunId,
-    session_key: &str,
-    trusted_user_message: &str,
-    response_modality: InteractionModality,
-    turn_kind: &TurnKind,
+    request: GenerateAssistantRequest<'_>,
 ) -> Result<GeneratedAssistantMessage, Box<dyn std::error::Error>> {
+    let deps = request.deps;
+    let runtime = deps.runtime.as_ref();
+    let guidance_model = deps.guidance_model.as_ref();
+    let response_model = deps.response_model.as_ref();
+    let summary_model = deps.summary_model.clone();
+    let lcm = deps.lcm.clone();
+    let event_log = deps.event_log.as_ref();
+    let cfg = &deps.cfg;
+    let run_id = request.run_id;
+    let session_key = request.session_key;
+    let trusted_user_message = request.trusted_user_message;
+    let response_modality = request.response_modality;
+    let turn_kind = request.turn_kind;
+
     if matches!(turn_kind, TurnKind::User) {
         let codex_sessions = runtime.planner_codex_sessions().await?;
         if let Some(session) = find_referenced_codex_session(trusted_user_message, &codex_sessions)
@@ -629,18 +641,18 @@ pub(super) async fn generate_assistant_message(
                 summary_calls: 0,
             }
         } else {
-            compose_assistant_message(
-                summary_model.as_ref(),
-                &cfg.sieve_home,
+            compose_assistant_message(ComposeRequest {
+                summary_model: summary_model.as_ref(),
+                sieve_home: &cfg.sieve_home,
                 event_log,
                 run_id,
                 trusted_user_message,
-                &response_input,
-                &render_refs,
+                response_input: &response_input,
+                render_refs: &render_refs,
                 draft_message,
-                &mut compose_evidence_cache,
-                remaining_summary_budget,
-            )
+                evidence_cache: &mut compose_evidence_cache,
+                summary_budget: remaining_summary_budget,
+            })
             .await
         };
         summary_calls_used = summary_calls_used.saturating_add(composed.summary_calls);

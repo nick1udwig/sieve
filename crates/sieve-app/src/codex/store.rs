@@ -23,6 +23,17 @@ pub(crate) struct CodexSessionStore {
     path: PathBuf,
 }
 
+pub(crate) struct CodexTurnRecord<'a> {
+    pub(crate) session_id: &'a str,
+    pub(crate) turn_id: Option<&'a str>,
+    pub(crate) instruction: &'a str,
+    pub(crate) status: &'a str,
+    pub(crate) summary: &'a str,
+    pub(crate) user_visible: Option<&'a str>,
+    pub(crate) created_at_ms: u64,
+    pub(crate) completed_at_ms: u64,
+}
+
 impl CodexSessionStore {
     pub(crate) fn new(path: impl Into<PathBuf>) -> Result<Self, String> {
         let store = Self { path: path.into() };
@@ -105,17 +116,7 @@ impl CodexSessionStore {
         .map_err(|err| format!("load codex session failed: {err}"))
     }
 
-    pub(crate) fn record_turn(
-        &self,
-        session_id: &str,
-        turn_id: Option<&str>,
-        instruction: &str,
-        status: &str,
-        summary: &str,
-        user_visible: Option<&str>,
-        created_at_ms: u64,
-        completed_at_ms: u64,
-    ) -> Result<(), String> {
+    pub(crate) fn record_turn(&self, record: CodexTurnRecord<'_>) -> Result<(), String> {
         let conn = self.open()?;
         conn.execute(
             "INSERT INTO codex_turns (
@@ -123,14 +124,14 @@ impl CodexSessionStore {
                 created_at_ms, completed_at_ms
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                session_id,
-                turn_id,
-                instruction,
-                status,
-                summary,
-                user_visible,
-                created_at_ms as i64,
-                completed_at_ms as i64,
+                record.session_id,
+                record.turn_id,
+                record.instruction,
+                record.status,
+                record.summary,
+                record.user_visible,
+                record.created_at_ms as i64,
+                record.completed_at_ms as i64,
             ],
         )
         .map_err(|err| format!("insert codex turn failed: {err}"))?;

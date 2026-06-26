@@ -1,6 +1,7 @@
 use super::client::{AppServerClient, AppServerClientConfig};
 use super::{
-    session_name_from_instruction, summarize_instruction, CodexSessionStore, StoredCodexSession,
+    session_name_from_instruction, summarize_instruction, CodexSessionStore, CodexTurnRecord,
+    StoredCodexSession,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -527,16 +528,16 @@ impl CodexManager {
                 .session_id
                 .clone()
                 .ok_or_else(|| "missing codex session id".to_string())?;
-            self.store.record_turn(
-                &session_id,
-                parsed.turn_id.as_deref(),
-                &run_ctx.instruction,
-                parsed.status.as_str(),
-                &parsed.summary,
-                parsed.user_visible.as_deref(),
-                run_ctx.created_at_ms,
-                now_ms(),
-            )?;
+            self.store.record_turn(CodexTurnRecord {
+                session_id: &session_id,
+                turn_id: parsed.turn_id.as_deref(),
+                instruction: &run_ctx.instruction,
+                status: parsed.status.as_str(),
+                summary: &parsed.summary,
+                user_visible: parsed.user_visible.as_deref(),
+                created_at_ms: run_ctx.created_at_ms,
+                completed_at_ms: now_ms(),
+            })?;
             self.emit_status_event(
                 &run_ctx,
                 lifecycle_status_from_turn_status(parsed.status.clone()),

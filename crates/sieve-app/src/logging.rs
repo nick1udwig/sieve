@@ -66,7 +66,7 @@ impl ConversationLogRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TelegramLoopEvent {
-    Runtime(RuntimeEvent),
+    Runtime(Box<RuntimeEvent>),
     TypingStart { run_id: String },
     TypingStop { run_id: String },
 }
@@ -461,7 +461,7 @@ impl RuntimeEventLog for FanoutRuntimeEventLog {
         self.telegram_tx
             .lock()
             .map_err(|_| EventLogError::Append("telegram event sender lock poisoned".to_string()))?
-            .send(TelegramLoopEvent::Runtime(event))
+            .send(TelegramLoopEvent::Runtime(Box::new(event)))
             .map_err(|err| {
                 EventLogError::Append(format!("failed to forward runtime event: {err}"))
             })?;

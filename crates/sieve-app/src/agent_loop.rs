@@ -1,35 +1,31 @@
 use crate::automation::AutomationManager;
-use crate::config::AppConfig;
 use crate::ingress::{IngressPrompt, PromptSource, TypingGuard};
-use crate::lcm_integration::LcmIntegration;
 use crate::logging::{
     now_ms, ConversationLogRecord, ConversationRole, FanoutRuntimeEventLog, TelegramLoopEvent,
 };
-use crate::turn::run_turn;
-use sieve_llm::{GuidanceModel, ResponseModel, SummaryModel};
-use sieve_runtime::{RuntimeEventLog, RuntimeOrchestrator};
+use crate::turn::{run_turn, TurnDeps};
+use sieve_runtime::RuntimeEventLog;
 use sieve_types::{AssistantMessageEvent, RuntimeEvent};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tokio::sync::{mpsc as tokio_mpsc, Semaphore};
 
+#[derive(Clone)]
+pub(crate) struct AgentLoopDeps {
+    pub(crate) turn: TurnDeps,
+    pub(crate) automation: Option<Arc<AutomationManager>>,
+    pub(crate) telegram_tx: Sender<TelegramLoopEvent>,
+}
+
 pub(crate) async fn run_agent_loop(
-    runtime: Arc<RuntimeOrchestrator>,
-    guidance_model: Arc<dyn GuidanceModel>,
-    response_model: Arc<dyn ResponseModel>,
-    summary_model: Arc<dyn SummaryModel>,
-    lcm: Option<Arc<LcmIntegration>>,
-    event_log: Arc<FanoutRuntimeEventLog>,
-    cfg: AppConfig,
-    automation: Option<Arc<AutomationManager>>,
-    telegram_tx: Sender<TelegramLoopEvent>,
+    deps: AgentLoopDeps,
     mut prompt_rx: tokio_mpsc::UnboundedReceiver<IngressPrompt>,
 ) {
-    let semaphore = Arc::new(Semaphore::new(cfg.max_concurrent_turns));
+    let semaphore = Arc::new(Semaphore::new(deps.turn.cfg.max_concurrent_turns));
 
     eprintln!(
         "sieve-app agent mode ready; prompts accepted from stdin + Telegram chat {}",
-        cfg.telegram_chat_id
+        deps.turn.cfg.telegram_chat_id
     );
 
     while let Some(prompt) = prompt_rx.recv().await {
@@ -38,16 +34,11 @@ pub(crate) async fn run_agent_loop(
             Err(_) => break,
         };
 
-        let runtime = runtime.clone();
-        let guidance_model = guidance_model.clone();
-        let response_model = response_model.clone();
-        let summary_model = summary_model.clone();
-        let lcm = lcm.clone();
-        let event_log = event_log.clone();
-        let cfg = cfg.clone();
-        let automation = automation.clone();
-        let telegram_tx = telegram_tx.clone();
-        let reserved_turn = event_log.reserve_turn_with_metadata(
+        let turn_deps = deps.turn.clone();
+        let event_log = turn_deps.event_log.clone();
+        let automation = deps.automation.clone();
+        let telegram_tx = deps.telegram_tx.clone();
+        let reserved_turn = turn_deps.event_log.reserve_turn_with_metadata(
             prompt.source.as_str(),
             &prompt.session_key,
             prompt.turn_kind.as_str(),
@@ -107,22 +98,11 @@ pub(crate) async fn run_agent_loop(
                 automation.note_turn_started(&turn_prompt);
             }
 
-            let (outcome_for_automation, error_for_automation) = match run_turn(
-                &runtime,
-                guidance_model.as_ref(),
-                response_model.as_ref(),
-                summary_model.clone(),
-                lcm.clone(),
-                &event_log,
-                &cfg,
-                reserved_turn.run_id.clone(),
-                &turn_prompt,
-            )
-            .await
-            {
-                Ok(outcome) => (Some(outcome), None),
-                Err(err) => (None, Some(err.to_string())),
-            };
+            let (outcome_for_automation, error_for_automation) =
+                match run_turn(&turn_deps, reserved_turn.run_id.clone(), &turn_prompt).await {
+                    Ok(outcome) => (Some(outcome), None),
+                    Err(err) => (None, Some(err.to_string())),
+                };
 
             if let Some(automation) = automation.as_ref() {
                 automation

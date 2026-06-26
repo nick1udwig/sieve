@@ -217,7 +217,7 @@ pub(crate) fn spawn_telegram_loop(
             loop {
                 match event_rx.try_recv() {
                     Ok(TelegramLoopEvent::Runtime(event)) => {
-                        if let Err(err) = adapter.publish_runtime_event(event) {
+                        if let Err(err) = adapter.publish_runtime_event(*event) {
                             eprintln!("telegram publish runtime event failed: {err:?}");
                         }
                     }

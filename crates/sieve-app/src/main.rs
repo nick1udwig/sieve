@@ -21,7 +21,7 @@ mod response_style;
 mod sieve_home;
 mod turn;
 
-use agent_loop::run_agent_loop;
+use agent_loop::{run_agent_loop, AgentLoopDeps};
 #[cfg(test)]
 use async_trait::async_trait;
 use auth_cli::run_auth_command;
@@ -156,7 +156,7 @@ pub(crate) use turn::{
     planner_allowed_tools_for_turn, requires_output_visibility,
     response_has_visible_selected_output, TurnOutcome,
 };
-use turn::{run_turn, AppMainlineRunner};
+use turn::{run_turn, AppMainlineRunner, TurnDeps};
 fn planner_allowed_net_connect_scopes(policy: &TomlPolicyEngine) -> Vec<String> {
     let mut scopes = Vec::new();
     let mut seen = BTreeSet::new();
@@ -297,6 +297,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(automation) = automation.clone() {
         tokio::spawn(automation.run_loop());
     }
+    let turn_deps = TurnDeps {
+        runtime: runtime.clone(),
+        guidance_model: guidance_model.clone(),
+        response_model: response_model.clone(),
+        summary_model: summary_model.clone(),
+        lcm: lcm.clone(),
+        event_log: event_log.clone(),
+        cfg: cfg.clone(),
+    };
     let allowances_path = approval_allowances_path(&cfg.sieve_home);
     match load_approval_allowances(&allowances_path) {
         Ok(allowances) => {
@@ -329,18 +338,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &cli_prompt.session_key,
             cli_prompt.turn_kind.as_str(),
         );
-        run_turn(
-            &runtime,
-            guidance_model.as_ref(),
-            response_model.as_ref(),
-            summary_model.clone(),
-            lcm.clone(),
-            &event_log,
-            &cfg,
-            reserved_turn.run_id,
-            &cli_prompt,
-        )
-        .await?;
+        run_turn(&turn_deps, reserved_turn.run_id, &cli_prompt).await?;
+        drop(turn_deps);
         drop(runtime);
         drop(event_log);
         if let Some(telegram_thread) = telegram_thread {
@@ -348,15 +347,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         run_agent_loop(
-            runtime.clone(),
-            guidance_model.clone(),
-            response_model.clone(),
-            summary_model.clone(),
-            lcm.clone(),
-            event_log.clone(),
-            cfg.clone(),
-            automation.clone(),
-            typing_tx,
+            AgentLoopDeps {
+                turn: turn_deps,
+                automation: automation.clone(),
+                telegram_tx: typing_tx,
+            },
             prompt_rx.expect("agent mode prompt receiver missing"),
         )
         .await;
