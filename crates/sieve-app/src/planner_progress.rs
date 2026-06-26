@@ -1,3 +1,4 @@
+use crate::json_util::to_json_value;
 use crate::response_style::user_requested_sources;
 use crate::turn::{format_integrity, mainline_artifact_kind_name};
 use serde::Serialize;
@@ -215,10 +216,6 @@ struct DeclassifyObservationPayload {
     value_ref_len: usize,
     sink_len: usize,
     applied: bool,
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn first_shell_word(command: &str) -> Option<&str> {

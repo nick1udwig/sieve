@@ -1,3 +1,4 @@
+use crate::json_util::to_json_value;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use serde_json::Value;
@@ -321,10 +322,6 @@ impl AppServerClient {
                 .map_err(|err| format!("codex app-server write failed: {err}")),
         }
     }
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn should_add_codex_app_server_args(program: &str) -> bool {

@@ -3,6 +3,7 @@ use super::{
     session_name_from_instruction, summarize_instruction, CodexSessionStore, CodexTurnRecord,
     StoredCodexSession,
 };
+use crate::json_util::to_json_value;
 use async_trait::async_trait;
 use serde::Serialize;
 use sieve_runtime::{CodexExecToolResult, CodexSessionToolResult, CodexTool, RuntimeEventLog};
@@ -171,10 +172,6 @@ enum SandboxPolicy {
         #[serde(rename = "excludeSlashTmp")]
         exclude_slash_tmp: bool,
     },
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 impl CodexManager {

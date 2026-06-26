@@ -1,4 +1,5 @@
 use super::mainline::{count_newlines, mainline_artifact_kind_name};
+use crate::json_util::to_json_value;
 use crate::render_refs::RenderRef;
 use serde::Serialize;
 use sieve_llm::{
@@ -25,10 +26,6 @@ struct ResponseEvidenceBatchPayload<'a> {
     task: &'static str,
     trusted_user_message: &'a str,
     refs: Vec<ResponseEvidenceBatchRef>,
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 #[derive(Clone)]

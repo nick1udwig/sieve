@@ -3,6 +3,7 @@ use crate::compose_gate::{
     extract_trusted_evidence_lines, message_negates_trusted_effects, parse_compose_gate_output,
     ComposeGateOutput,
 };
+use crate::json_util::to_json_value;
 use crate::logging::{now_ms, FanoutRuntimeEventLog};
 use crate::render_refs::{resolve_ref_summary_input, RenderRef};
 use crate::response_style::{
@@ -14,7 +15,6 @@ use crate::response_style::{
 use crate::turn::{non_empty_output_ref_ids, summarize_with_ref_id_counted};
 use chrono::{TimeZone, Utc};
 use serde::Serialize;
-use serde_json::Value;
 use sieve_llm::{ResponseTurnInput, SummaryModel};
 use sieve_types::{AutomationDeliveryMode, PlannerGuidanceSignal, RunId, TrustedToolEffect};
 use std::collections::{BTreeMap, BTreeSet};
@@ -159,10 +159,6 @@ struct ComposeUserReplyPayload<'a> {
     compose_diagnostic: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_composed_message: Option<&'a str>,
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn compose_tool_outcome_payloads<'a>(

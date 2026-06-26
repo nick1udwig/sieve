@@ -9,6 +9,7 @@ use crate::compose::{
 };
 use crate::config::persist_runtime_approval_allowances;
 use crate::ingress::TurnKind;
+use crate::json_util::to_json_value;
 use crate::logging::{
     append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
     FanoutRuntimeEventLog,
@@ -119,10 +120,6 @@ struct ComposeDecisionPayload {
     continue_block_reason: Option<&'static str>,
     summary_calls_used: usize,
     summary_call_budget: usize,
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> serde_json::Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 fn finalize_heartbeat_message(thoughts: Option<&str>) -> GeneratedAssistantMessage {

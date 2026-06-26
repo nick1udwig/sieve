@@ -9,6 +9,7 @@ mod compose;
 mod compose_gate;
 mod config;
 mod ingress;
+mod json_util;
 mod lcm_integration;
 mod logging;
 mod media;
