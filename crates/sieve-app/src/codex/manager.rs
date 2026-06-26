@@ -64,6 +64,12 @@ struct SessionRunContext {
     created_at_ms: u64,
 }
 
+impl SessionRunContext {
+    fn stored_cwd(&self) -> String {
+        self.cwd.clone().unwrap_or_else(|| ".".to_string())
+    }
+}
+
 #[derive(Debug, Default)]
 struct TurnStreamState {
     agent_delta: String,
@@ -298,40 +304,31 @@ impl CodexManager {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
         let now = now_ms();
-        let (
-            session_id,
-            thread_id,
-            session_name,
-            task_summary,
-            created_at_ms,
-            default_cwd,
-            default_sandbox,
-        ) = if let Some(session_id) = resume_session_id {
-            let stored = self
-                .store
-                .session(&session_id)?
-                .ok_or_else(|| format!("unknown codex session `{session_id}`"))?;
-            (
-                session_id,
-                Some(stored.thread_id),
-                stored.session_name,
-                stored.task_summary,
-                stored.created_at_ms,
-                usable_stored_cwd(&stored.cwd),
-                Some(stored.sandbox),
-            )
-        } else {
-            let existing_names = self.store.existing_session_names()?;
-            (
-                format!("codex-session-{}", Uuid::new_v4()),
-                None,
-                session_name_from_instruction(&request.instruction, &existing_names),
-                summarize_instruction(&request.instruction),
-                now,
-                None,
-                None,
-            )
-        };
+        let (session_id, thread_id, session_name, task_summary, created_at_ms, default_cwd) =
+            if let Some(session_id) = resume_session_id {
+                let stored = self
+                    .store
+                    .session(&session_id)?
+                    .ok_or_else(|| format!("unknown codex session `{session_id}`"))?;
+                (
+                    session_id,
+                    Some(stored.thread_id),
+                    stored.session_name,
+                    stored.task_summary,
+                    stored.created_at_ms,
+                    usable_stored_cwd(&stored.cwd),
+                )
+            } else {
+                let existing_names = self.store.existing_session_names()?;
+                (
+                    format!("codex-session-{}", Uuid::new_v4()),
+                    None,
+                    session_name_from_instruction(&request.instruction, &existing_names),
+                    summarize_instruction(&request.instruction),
+                    now,
+                    None,
+                )
+            };
         let run_ctx = SessionRunContext {
             run_id: RunId(format!("codex-session-{}", Uuid::new_v4())),
             session_id: Some(session_id),
@@ -355,7 +352,7 @@ impl CodexManager {
                             session_id: session_id.clone(),
                             thread_id,
                             session_name: run_ctx.session_name.clone(),
-                            cwd: run_ctx.cwd.clone().unwrap_or_else(|| ".".to_string()),
+                            cwd: run_ctx.stored_cwd(),
                             sandbox: run_ctx.sandbox,
                             task_summary: run_ctx.task_summary.clone(),
                             last_result_summary: Some(err.clone()),
@@ -378,9 +375,6 @@ impl CodexManager {
         if let Some(session_id) = &run_ctx.session_id {
             self.persist_session_result(session_id, &tool_result.result, &run_ctx, now)?;
         }
-        if default_sandbox.is_some() {
-            let _ = default_sandbox;
-        }
         Ok(tool_result)
     }
 
@@ -402,7 +396,7 @@ impl CodexManager {
             session_id: session_id.to_string(),
             thread_id,
             session_name: result.session_name.clone(),
-            cwd: run_ctx.cwd.clone().unwrap_or_else(|| ".".to_string()),
+            cwd: run_ctx.stored_cwd(),
             sandbox: run_ctx.sandbox,
             task_summary: run_ctx.task_summary.clone(),
             last_result_summary: Some(result.summary.clone()),
@@ -437,7 +431,7 @@ impl CodexManager {
                 session_id,
                 thread_id: thread_id.clone(),
                 session_name: run_ctx.session_name.clone(),
-                cwd: run_ctx.cwd.clone().unwrap_or_else(|| ".".to_string()),
+                cwd: run_ctx.stored_cwd(),
                 sandbox: run_ctx.sandbox,
                 task_summary: run_ctx.task_summary.clone(),
                 last_result_summary: None,
