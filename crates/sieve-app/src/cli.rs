@@ -66,7 +66,7 @@ impl Cli {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn parse_cli_args(args: &[String]) -> Result<CliCommand, String> {
     let mut argv = Vec::with_capacity(args.len() + 1);
     argv.push("sieve-app".to_string());
