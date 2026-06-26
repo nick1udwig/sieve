@@ -48,7 +48,7 @@ impl AppConfig {
     pub(crate) fn from_env_with_telegram(require_telegram: bool) -> Result<Self, String> {
         let telegram_bot_token = required_env_if("TELEGRAM_BOT_TOKEN", require_telegram)?;
         let telegram_chat_id = required_i64_env_if("TELEGRAM_CHAT_ID", require_telegram)?;
-        let telegram_poll_timeout_secs = parse_u16_env("SIEVE_TELEGRAM_POLL_TIMEOUT_SECS", 1)?;
+        let telegram_poll_timeout_secs = parse_env("SIEVE_TELEGRAM_POLL_TIMEOUT_SECS", 1_u16)?;
         let telegram_allowed_sender_user_ids = parse_telegram_allowed_sender_user_ids(
             env::var("SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS").ok(),
         )?;
@@ -68,18 +68,10 @@ impl AppConfig {
         if allowed_tools.is_empty() {
             return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
         }
-        let max_concurrent_turns = parse_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
-        if max_concurrent_turns == 0 {
-            return Err("SIEVE_MAX_CONCURRENT_TURNS must be >= 1".to_string());
-        }
-        let max_planner_steps = parse_usize_env("SIEVE_MAX_PLANNER_STEPS", 3)?;
-        if max_planner_steps == 0 {
-            return Err("SIEVE_MAX_PLANNER_STEPS must be >= 1".to_string());
-        }
-        let max_summary_calls_per_turn = parse_usize_env("SIEVE_MAX_SUMMARY_CALLS_PER_TURN", 12)?;
-        if max_summary_calls_per_turn == 0 {
-            return Err("SIEVE_MAX_SUMMARY_CALLS_PER_TURN must be >= 1".to_string());
-        }
+        let max_concurrent_turns = parse_nonzero_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
+        let max_planner_steps = parse_nonzero_usize_env("SIEVE_MAX_PLANNER_STEPS", 3)?;
+        let max_summary_calls_per_turn =
+            parse_nonzero_usize_env("SIEVE_MAX_SUMMARY_CALLS_PER_TURN", 12)?;
         let lcm = LcmIntegrationConfig::from_sieve_home(&sieve_home);
 
         Ok(Self {
@@ -232,19 +224,23 @@ pub(crate) fn persist_runtime_approval_allowances(
     save_approval_allowances(&path, &allowances)
 }
 
-fn parse_u16_env(key: &str, default: u16) -> Result<u16, String> {
-    match env::var(key) {
-        Ok(raw) => raw
-            .parse::<u16>()
-            .map_err(|err| format!("invalid {key}: {err}")),
-        Err(_) => Ok(default),
+fn parse_nonzero_usize_env(key: &str, default: usize) -> Result<usize, String> {
+    let value = parse_env(key, default)?;
+    if value == 0 {
+        Err(format!("{key} must be >= 1"))
+    } else {
+        Ok(value)
     }
 }
 
-fn parse_usize_env(key: &str, default: usize) -> Result<usize, String> {
+fn parse_env<T>(key: &str, default: T) -> Result<T, String>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
     match env::var(key) {
         Ok(raw) => raw
-            .parse::<usize>()
+            .parse::<T>()
             .map_err(|err| format!("invalid {key}: {err}")),
         Err(_) => Ok(default),
     }

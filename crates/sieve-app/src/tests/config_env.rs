@@ -365,6 +365,21 @@ fn app_config_from_env_rejects_invalid_heartbeat_duration() {
 }
 
 #[test]
+fn app_config_from_env_rejects_zero_planner_limit() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    std::env::set_var("TELEGRAM_BOT_TOKEN", "test-bot-token");
+    std::env::set_var("TELEGRAM_CHAT_ID", "42");
+    std::env::set_var("SIEVE_MAX_PLANNER_STEPS", "0");
+    std::env::set_var("SIEVE_LCM_ENABLED", "0");
+
+    let err = AppConfig::from_env().err().expect("zero planner limit");
+    assert!(err.contains("SIEVE_MAX_PLANNER_STEPS must be >= 1"));
+}
+
+#[test]
 fn app_config_from_env_without_telegram_allows_one_shot_mode() {
     let _lock = env_test_lock().lock().expect("env lock");
     let restore = EnvRestore::capture(config_env_keys());
