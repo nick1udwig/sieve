@@ -367,10 +367,7 @@ pub(crate) fn save_automation_store(path: &Path, store: &AutomationStore) -> Res
 }
 
 pub(crate) fn parse_duration_ms(raw: &str) -> Result<u64, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err("duration cannot be empty".to_string());
-    }
+    let trimmed = required_trimmed(raw, "duration")?;
 
     let mut total_ms = 0u64;
     let mut idx = 0usize;
@@ -417,16 +414,21 @@ pub(crate) fn parse_duration_ms(raw: &str) -> Result<u64, String> {
 }
 
 pub(crate) fn parse_at_timestamp_ms(raw: &str) -> Result<u64, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err("timestamp cannot be empty".to_string());
-    }
+    let trimmed = required_trimmed(raw, "timestamp")?;
     if let Ok(unix_ms) = trimmed.parse::<u64>() {
         return Ok(unix_ms);
     }
     DateTime::parse_from_rfc3339(trimmed)
         .map(|dt| dt.timestamp_millis() as u64)
         .map_err(|err| format!("invalid RFC3339 timestamp `{trimmed}`: {err}"))
+}
+
+fn required_trimmed<'a>(raw: &'a str, label: &str) -> Result<&'a str, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{label} cannot be empty"));
+    }
+    Ok(trimmed)
 }
 
 fn next_every_due_ms(anchor_ms: u64, every_ms: u64, now_ms: u64) -> Result<u64, String> {

@@ -10,6 +10,7 @@ fn ts(raw: &str) -> u64 {
 #[test]
 fn parse_duration_ms_supports_compound_units() {
     assert_eq!(parse_duration_ms("90s").expect("90s"), 90_000);
+    assert_eq!(parse_duration_ms(" 90s ").expect("trimmed 90s"), 90_000);
     assert_eq!(parse_duration_ms("1h30m").expect("1h30m"), 5_400_000);
     assert_eq!(parse_duration_ms("2d4h").expect("2d4h"), 187_200_000);
 }
@@ -25,13 +26,19 @@ fn parse_duration_ms_rejects_bad_input() {
 #[test]
 fn parse_at_timestamp_ms_accepts_rfc3339_and_unix_ms() {
     assert_eq!(
-        parse_at_timestamp_ms("1717171717000").expect("unix ms"),
+        parse_at_timestamp_ms(" 1717171717000 ").expect("unix ms"),
         1_717_171_717_000
     );
     assert_eq!(
-        parse_at_timestamp_ms("2026-03-05T10:00:00Z").expect("rfc3339"),
+        parse_at_timestamp_ms(" 2026-03-05T10:00:00Z ").expect("rfc3339"),
         ts("2026-03-05T10:00:00Z")
     );
+}
+
+#[test]
+fn parse_at_timestamp_ms_rejects_blank_input() {
+    assert!(parse_at_timestamp_ms("").is_err());
+    assert!(parse_at_timestamp_ms("   ").is_err());
 }
 
 #[test]
