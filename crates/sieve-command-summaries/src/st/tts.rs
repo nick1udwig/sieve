@@ -6,6 +6,7 @@ pub(super) fn summarize_tts(argv: &[String]) -> SummaryOutcome {
     let mut text_path: Option<String> = None;
     let mut has_txt_input = false;
     let mut output_path: Option<String> = None;
+    let mut config_path: Option<String> = None;
     let mut unsupported_flags = Vec::new();
     let mut missing_value_flag: Option<String> = None;
     let mut saw_end_of_flags = false;
@@ -51,6 +52,14 @@ pub(super) fn summarize_tts(argv: &[String]) -> SummaryOutcome {
             };
             output_path = Some(value.clone());
             i += 2;
+            continue;
+        }
+        if let Some(value) =
+            super::parse_long_value_flag(arg, &mut i, argv, &mut missing_value_flag, "--config")
+        {
+            if !value.is_empty() {
+                config_path = Some(value.to_string());
+            }
             continue;
         }
         if let Some(value) = super::parse_value_flag_inline(arg, "-t", "--txt") {
@@ -100,6 +109,13 @@ pub(super) fn summarize_tts(argv: &[String]) -> SummaryOutcome {
             scope: path,
         });
     }
+    if let Some(path) = config_path {
+        required_capabilities.push(Capability {
+            resource: Resource::Fs,
+            action: Action::Read,
+            scope: path,
+        });
+    }
     if let Some(path) = output_path {
         required_capabilities.push(Capability {
             resource: Resource::Fs,
@@ -126,7 +142,6 @@ fn parse_ignored_tts_flag(
         argv,
         missing_value_flag,
         &[
-            "--config",
             "--provider",
             "--format",
             "--instructions",

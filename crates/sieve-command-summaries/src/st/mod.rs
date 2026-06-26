@@ -57,6 +57,36 @@ fn parse_value_flag_inline<'a>(arg: &'a str, short: &str, long: &str) -> Option<
     arg.strip_prefix(&format!("{long}="))
 }
 
+fn parse_long_value_flag<'a>(
+    arg: &'a str,
+    i: &mut usize,
+    argv: &'a [String],
+    missing_value_flag: &mut Option<String>,
+    long_flag: &str,
+) -> Option<&'a str> {
+    if let Some(value) = arg.strip_prefix(&format!("{long_flag}=")) {
+        if value.is_empty() {
+            *missing_value_flag = Some(arg.to_string());
+        }
+        *i += 1;
+        return Some(value);
+    }
+    if arg == long_flag {
+        match argv.get(*i + 1) {
+            Some(value) => {
+                *i += 2;
+                return Some(value.as_str());
+            }
+            None => {
+                *missing_value_flag = Some(arg.to_string());
+                *i += 1;
+                return Some("");
+            }
+        }
+    }
+    None
+}
+
 fn parse_ignored_value_flag(
     arg: &str,
     i: &mut usize,

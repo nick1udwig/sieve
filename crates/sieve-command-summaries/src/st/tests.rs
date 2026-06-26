@@ -50,6 +50,40 @@ fn st_stt_output_path_adds_fs_write() {
 }
 
 #[test]
+fn st_stt_config_path_adds_fs_read() {
+    let out = summarize_st(&argv(&[
+        "st",
+        "stt",
+        "/tmp/input.ogg",
+        "--config",
+        "/tmp/st.toml",
+    ]))
+    .expect("st summary");
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/input.ogg".to_string(),
+            },
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: OPENAI_CONNECT_SCOPE.to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/st.toml".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn st_tts_text_file_and_output_is_known() {
     let out = summarize_st(&argv(&[
         "st",
@@ -110,6 +144,35 @@ fn st_tts_txt_input_is_known_without_fs_read() {
                 resource: Resource::Fs,
                 action: Action::Write,
                 scope: "/tmp/out.ogg".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
+fn st_tts_config_path_adds_fs_read() {
+    let out = summarize_st(&argv(&[
+        "st",
+        "tts",
+        "--txt",
+        "hello",
+        "--config=/tmp/st.toml",
+    ]))
+    .expect("st summary");
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: OPENAI_CONNECT_SCOPE.to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/st.toml".to_string(),
             }
         ]
     );
