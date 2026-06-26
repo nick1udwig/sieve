@@ -247,19 +247,9 @@ where
 }
 
 fn parse_optional_duration_env(key: &str) -> Result<Option<u64>, String> {
-    match env::var(key) {
-        Ok(raw) => {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                Ok(None)
-            } else {
-                parse_duration_ms(trimmed)
-                    .map(Some)
-                    .map_err(|err| format!("invalid {key}: {err}"))
-            }
-        }
-        Err(_) => Ok(None),
-    }
+    trim_to_non_empty(env::var(key).ok())
+        .map(|raw| parse_duration_ms(&raw).map_err(|err| format!("invalid {key}: {err}")))
+        .transpose()
 }
 
 fn optional_non_empty_env(key: &str) -> Option<String> {

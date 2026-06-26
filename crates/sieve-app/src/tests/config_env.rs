@@ -365,6 +365,23 @@ fn app_config_from_env_rejects_invalid_heartbeat_duration() {
 }
 
 #[test]
+fn app_config_from_env_treats_blank_heartbeat_settings_as_unset() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    std::env::set_var("TELEGRAM_BOT_TOKEN", "test-bot-token");
+    std::env::set_var("TELEGRAM_CHAT_ID", "42");
+    std::env::set_var("SIEVE_HEARTBEAT_EVERY", "   ");
+    std::env::set_var("SIEVE_HEARTBEAT_PROMPT", "   ");
+    std::env::set_var("SIEVE_LCM_ENABLED", "0");
+
+    let cfg = AppConfig::from_env().expect("config");
+    assert_eq!(cfg.heartbeat_interval_ms, None);
+    assert_eq!(cfg.heartbeat_prompt_override, None);
+}
+
+#[test]
 fn app_config_from_env_rejects_zero_planner_limit() {
     let _lock = env_test_lock().lock().expect("env lock");
     let restore = EnvRestore::capture(config_env_keys());
