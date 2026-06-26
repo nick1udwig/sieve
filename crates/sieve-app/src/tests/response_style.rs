@@ -85,6 +85,16 @@ fn extract_plain_urls_from_text_handles_jsonish_tokens() {
 }
 
 #[test]
+fn extract_plain_urls_from_text_preserves_balanced_url_parentheses() {
+    let text = "Source: (https://en.wikipedia.org/wiki/Function_(mathematics))";
+    let urls = extract_plain_urls_from_text(text);
+    assert_eq!(
+        urls,
+        vec!["https://en.wikipedia.org/wiki/Function_(mathematics)".to_string()]
+    );
+}
+
+#[test]
 fn source_and_detail_request_detection() {
     assert!(user_requested_sources("please include links to sources"));
     assert!(user_requested_sources("cite references"));

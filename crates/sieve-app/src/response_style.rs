@@ -23,16 +23,26 @@ fn trim_url_candidate(candidate: &str) -> &str {
         let Some(ch) = candidate[..end].chars().next_back() else {
             break;
         };
-        if matches!(
-            ch,
-            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\'' | '`'
-        ) {
+        let should_trim = match ch {
+            '.' | ',' | ';' | ':' | '!' | '?' | '"' | '\'' | '`' => true,
+            ')' => trailing_closer_is_unmatched(&candidate[..end], '(', ')'),
+            ']' => trailing_closer_is_unmatched(&candidate[..end], '[', ']'),
+            '}' => trailing_closer_is_unmatched(&candidate[..end], '{', '}'),
+            _ => false,
+        };
+        if should_trim {
             end = end.saturating_sub(ch.len_utf8());
             continue;
         }
         break;
     }
     &candidate[..end]
+}
+
+fn trailing_closer_is_unmatched(candidate: &str, open: char, close: char) -> bool {
+    let opens = candidate.chars().filter(|ch| *ch == open).count();
+    let closes = candidate.chars().filter(|ch| *ch == close).count();
+    closes > opens
 }
 
 pub(crate) fn extract_plain_urls_from_text(message: &str) -> Vec<String> {
