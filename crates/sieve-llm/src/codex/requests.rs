@@ -1,3 +1,4 @@
+use crate::json_util::to_json_value;
 use crate::wire::{
     guidance_output_schema, response_output_schema, GUIDANCE_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT,
     RESPONSE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT,
@@ -76,10 +77,6 @@ struct SummaryPayload {
     byte_count: u64,
     line_count: u64,
     content: String,
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 pub(crate) fn build_planner_request(

@@ -1,3 +1,4 @@
+use crate::json_util::to_json_value;
 use crate::wire::{
     decode_planner_output, extract_openai_planner_output_json,
     planner_regeneration_diagnostic_prompt, PlannerDecodeOutcome,
@@ -40,10 +41,6 @@ struct PlannerToolFunction {
 struct PlannerTextMessage {
     role: &'static str,
     content: String,
-}
-
-fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
-    serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
 }
 
 pub(super) async fn run_planner_with_one_regeneration<F, Fut>(

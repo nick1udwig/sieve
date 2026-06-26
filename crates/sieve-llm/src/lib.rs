@@ -13,6 +13,7 @@ mod auth;
 mod codex;
 mod codex_auth;
 mod config;
+mod json_util;
 mod openai;
 mod wire;
 
