@@ -45,13 +45,6 @@ pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
     Some(TelegramApprovalCommand { action, request_id })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn parse_short_action(text: &str) -> Option<TelegramApprovalAction> {
-    parse_inline_approval_action(text)
-        .filter(|parsed| parsed.tail.is_empty())
-        .map(|parsed| parsed.action)
-}
-
 pub(crate) fn parse_inline_approval_action(text: &str) -> Option<TelegramInlineApprovalAction> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -184,38 +177,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_short_action_supports_yes_and_no() {
-        assert_eq!(
-            parse_short_action("yes"),
-            Some(TelegramApprovalAction::ApproveOnce)
-        );
-        assert_eq!(
-            parse_short_action("approved"),
-            Some(TelegramApprovalAction::ApproveOnce)
-        );
-        assert_eq!(
-            parse_short_action("Y"),
-            Some(TelegramApprovalAction::ApproveOnce)
-        );
-        assert_eq!(
-            parse_short_action("👍"),
-            Some(TelegramApprovalAction::ApproveOnce)
-        );
-        assert_eq!(
-            parse_short_action("always"),
-            Some(TelegramApprovalAction::ApproveAlways)
-        );
-        assert_eq!(
-            parse_short_action("a"),
-            Some(TelegramApprovalAction::ApproveAlways)
-        );
-        assert_eq!(
-            parse_short_action("❤️"),
-            Some(TelegramApprovalAction::ApproveAlways)
-        );
-        assert_eq!(parse_short_action("n"), Some(TelegramApprovalAction::Deny));
-        assert_eq!(parse_short_action("👎"), Some(TelegramApprovalAction::Deny));
-        assert_eq!(parse_short_action("maybe"), None);
+    fn parse_inline_approval_action_supports_short_forms() {
+        for (input, expected) in [
+            ("yes", TelegramApprovalAction::ApproveOnce),
+            ("approved", TelegramApprovalAction::ApproveOnce),
+            ("Y", TelegramApprovalAction::ApproveOnce),
+            ("👍", TelegramApprovalAction::ApproveOnce),
+            ("always", TelegramApprovalAction::ApproveAlways),
+            ("a", TelegramApprovalAction::ApproveAlways),
+            ("❤️", TelegramApprovalAction::ApproveAlways),
+            ("n", TelegramApprovalAction::Deny),
+            ("👎", TelegramApprovalAction::Deny),
+        ] {
+            let parsed = parse_inline_approval_action(input).expect("action");
+            assert_eq!(parsed.action, expected);
+            assert!(parsed.tail.is_empty());
+        }
+        assert_eq!(parse_inline_approval_action("maybe"), None);
     }
 
     #[test]
