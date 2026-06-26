@@ -266,10 +266,7 @@ fn scope_field<'a>(scope: &'a str, key: &str) -> Option<&'a str> {
 
 fn should_keep_capability(capability: &Capability, fixture: &FixtureLayout) -> bool {
     match capability.resource {
-        Resource::Fs => {
-            let root = fixture.root.to_string_lossy();
-            capability.scope == root || capability.scope.starts_with(root.as_ref())
-        }
+        Resource::Fs => fixture.is_scope_under_root(&capability.scope),
         Resource::Net | Resource::Ipc => true,
         Resource::Proc | Resource::Env => false,
     }

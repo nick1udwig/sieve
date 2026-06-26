@@ -1,9 +1,24 @@
 use super::support::{CurlNetTraceRunner, StubCaseGenerator, StubTraceRunner};
-use crate::fixture::{TOKEN_IN_FILE, TOKEN_KV, TOKEN_OUT_FILE, TOKEN_TMP_DIR, TOKEN_URL};
-use crate::{render_rust_snippet, CapTraceGenerator, GenerateDefinitionRequest};
+use crate::fixture::{
+    FixtureLayout, TOKEN_IN_FILE, TOKEN_KV, TOKEN_OUT_FILE, TOKEN_TMP_DIR, TOKEN_URL,
+};
+use crate::{
+    derive_summary_from_trace, render_rust_snippet, CapTraceGenerator, GenerateDefinitionRequest,
+};
 use sieve_command_summaries::{CommandSummarizer, DefaultCommandSummarizer};
 use sieve_types::{Action, Capability, CommandKnowledge, Resource};
+use std::path::PathBuf;
 use std::sync::Arc;
+
+fn fixture_at(root: &str) -> FixtureLayout {
+    let root = PathBuf::from(root);
+    FixtureLayout {
+        in_file: root.join("input.txt"),
+        in_file_2: root.join("input-2.txt"),
+        out_file: root.join("output.txt"),
+        root,
+    }
+}
 
 #[tokio::test]
 async fn generates_mkdir_summary_in_sieve_shape() {
@@ -121,6 +136,51 @@ async fn filters_non_fixture_paths_from_cp_trace() {
         .required_capabilities
         .iter()
         .any(|cap| cap.scope == "/etc/ld.so.cache"));
+}
+
+#[test]
+fn fixture_scope_normalization_does_not_template_sibling_paths() {
+    let fixture = fixture_at("/tmp/sieve-captrace-fixture");
+
+    assert_eq!(
+        fixture.normalize_scope_for_definition("/tmp/sieve-captrace-fixture"),
+        TOKEN_TMP_DIR
+    );
+    assert_eq!(
+        fixture.normalize_scope_for_definition("/tmp/sieve-captrace-fixture/subdir/file"),
+        format!("{TOKEN_TMP_DIR}/subdir/file")
+    );
+    assert_eq!(
+        fixture.normalize_scope_for_definition("/tmp/sieve-captrace-fixture-sibling/secret"),
+        "/tmp/sieve-captrace-fixture-sibling/secret"
+    );
+}
+
+#[test]
+fn trace_summary_filters_fs_sibling_paths_outside_fixture_root() {
+    let fixture = fixture_at("/tmp/sieve-captrace-fixture");
+    let summary = derive_summary_from_trace(
+        &[
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/sieve-captrace-fixture/input.txt".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/sieve-captrace-fixture-sibling/secret".to_string(),
+            },
+        ],
+        &fixture,
+    );
+
+    assert!(summary.required_capabilities.contains(&Capability {
+        resource: Resource::Fs,
+        action: Action::Read,
+        scope: TOKEN_IN_FILE.to_string(),
+    }));
+    assert_eq!(summary.required_capabilities.len(), 1);
 }
 
 #[tokio::test]

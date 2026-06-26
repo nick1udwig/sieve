@@ -2,7 +2,7 @@
 
 use crate::error::{io_err, CapTraceError};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const TOKEN_TMP_DIR: &str = "{{TMP_DIR}}";
@@ -41,17 +41,21 @@ impl FixtureLayout {
         if scope == self.out_file.to_string_lossy() {
             return TOKEN_OUT_FILE.to_string();
         }
-        let root = self.root.to_string_lossy();
-        if scope == root {
+        let Some(suffix) = self.root_relative_scope(scope) else {
+            return scope.to_string();
+        };
+        if suffix.as_os_str().is_empty() {
             return TOKEN_TMP_DIR.to_string();
         }
-        if let Some(suffix) = scope.strip_prefix(root.as_ref()) {
-            if suffix.starts_with('/') {
-                return format!("{TOKEN_TMP_DIR}{suffix}");
-            }
-            return format!("{TOKEN_TMP_DIR}/{suffix}");
-        }
-        scope.to_string()
+        format!("{TOKEN_TMP_DIR}/{}", suffix.to_string_lossy())
+    }
+
+    pub(crate) fn is_scope_under_root(&self, scope: &str) -> bool {
+        self.root_relative_scope(scope).is_some()
+    }
+
+    fn root_relative_scope<'a>(&self, scope: &'a str) -> Option<&'a Path> {
+        Path::new(scope).strip_prefix(&self.root).ok()
     }
 
     fn apply_tokens(&self, value: &str) -> String {
