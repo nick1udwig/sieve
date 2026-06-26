@@ -7,6 +7,7 @@ Owned crate: `crates/sieve-command-summaries`
 ## 2026-06-26 update
 
 - `touch -r REF PATH` and `touch --reference=REF PATH` now require `fs.read(REF) + fs.write(PATH)`.
+- `curl -H VALUE` and `curl --header=VALUE` now emit sink checks for outbound header values.
 
 ## 2026-03-05 update
 

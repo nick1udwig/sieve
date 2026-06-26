@@ -5,20 +5,21 @@ use crate::{
 use sieve_policy::{canonicalize_net_origin_scope, canonicalize_sink_key};
 use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
 
+#[derive(Debug, Clone)]
+struct SinkArg {
+    flag: String,
+    value_index: usize,
+}
+
 pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     if !is_curl_command(argv) {
         return None;
     }
 
-    #[derive(Debug, Clone)]
-    struct PayloadArg {
-        flag: String,
-        value_index: usize,
-    }
-
     let mut method: Option<String> = None;
     let mut url_raw: Option<String> = None;
-    let mut payloads: Vec<PayloadArg> = Vec::new();
+    let mut payloads: Vec<SinkArg> = Vec::new();
+    let mut headers: Vec<SinkArg> = Vec::new();
     let mut unsupported_flags: Vec<String> = Vec::new();
     let mut i = 1usize;
     let mut saw_end_of_flags = false;
@@ -79,7 +80,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl payload flag missing value"));
                 }
-                payloads.push(PayloadArg {
+                payloads.push(SinkArg {
                     flag: arg.clone(),
                     value_index: i + 1,
                 });
@@ -88,7 +89,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             }
 
             if arg.starts_with("-d") && arg.len() > 2 {
-                payloads.push(PayloadArg {
+                payloads.push(SinkArg {
                     flag: "-d".to_string(),
                     value_index: i,
                 });
@@ -106,7 +107,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                         | "--data-urlencode"
                         | "--json"
                 ) {
-                    payloads.push(PayloadArg {
+                    payloads.push(SinkArg {
                         flag: flag.to_string(),
                         value_index: i,
                     });
@@ -141,11 +142,22 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl header flag missing value"));
                 }
+                headers.push(SinkArg {
+                    flag: arg.clone(),
+                    value_index: i + 1,
+                });
                 i += 2;
                 continue;
             }
 
-            if arg.starts_with("--header=") {
+            if let Some(raw) = arg.strip_prefix("--header=") {
+                if raw.is_empty() {
+                    return Some(unknown_outcome("curl header flag missing value"));
+                }
+                headers.push(SinkArg {
+                    flag: "--header".to_string(),
+                    value_index: i,
+                });
                 i += 1;
                 continue;
             }
@@ -185,13 +197,21 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         let Some(sink) = canonicalize_url_connect_scope(&url) else {
             return Some(unknown_outcome("curl request has invalid URL sink"));
         };
+        let sink_checks = if headers.is_empty() {
+            Vec::new()
+        } else {
+            let Some(header_sink) = canonicalize_url_sink(&url) else {
+                return Some(unknown_outcome("curl request has invalid URL sink"));
+            };
+            sink_checks_for_args(headers, header_sink)
+        };
         return Some(known_outcome(CommandSummary {
             required_capabilities: vec![Capability {
                 resource: Resource::Net,
                 action: Action::Connect,
                 scope: sink.0.clone(),
             }],
-            sink_checks: Vec::new(),
+            sink_checks,
             unsupported_flags: Vec::new(),
         }));
     }
@@ -210,14 +230,8 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         ));
     };
 
-    let sink_checks = payloads
-        .into_iter()
-        .map(|payload| SinkCheck {
-            argument_name: payload.flag,
-            sink: sink.clone(),
-            value_refs: vec![ValueRef(format!("argv:{}", payload.value_index))],
-        })
-        .collect();
+    headers.extend(payloads);
+    let sink_checks = sink_checks_for_args(headers, sink.clone());
 
     Some(known_outcome(CommandSummary {
         required_capabilities: vec![Capability {
@@ -236,4 +250,14 @@ pub(crate) fn canonicalize_url_connect_scope(raw: &str) -> Option<SinkKey> {
 
 fn canonicalize_url_sink(raw: &str) -> Option<SinkKey> {
     canonicalize_sink_key(raw).ok().map(SinkKey)
+}
+
+fn sink_checks_for_args(args: Vec<SinkArg>, sink: SinkKey) -> Vec<SinkCheck> {
+    args.into_iter()
+        .map(|arg| SinkCheck {
+            argument_name: arg.flag,
+            sink: sink.clone(),
+            value_refs: vec![ValueRef(format!("argv:{}", arg.value_index))],
+        })
+        .collect()
 }

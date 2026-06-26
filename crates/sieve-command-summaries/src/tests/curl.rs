@@ -136,6 +136,35 @@ fn curl_header_flag_missing_value_routes_to_unknown() {
 }
 
 #[test]
+fn curl_get_with_header_extracts_sink_check() {
+    let out = summarize_argv(&argv(&[
+        "curl",
+        "-H",
+        "Authorization: Bearer secret",
+        "https://api.example.com/v1/resource",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: "https://api.example.com/".to_string(),
+        }]
+    );
+    assert_eq!(
+        summary.sink_checks,
+        vec![SinkCheck {
+            argument_name: "-H".to_string(),
+            sink: SinkKey("https://api.example.com/v1/resource".to_string()),
+            value_refs: vec![ValueRef("argv:2".to_string())],
+        }]
+    );
+}
+
+#[test]
 fn curl_unknown_flag_routes_to_unknown() {
     let out = summarize_argv(&argv(&[
         "curl",

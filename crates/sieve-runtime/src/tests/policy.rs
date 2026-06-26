@@ -148,6 +148,46 @@ require_trusted_control_for_mutating = true
 }
 
 #[tokio::test]
+async fn curl_header_value_requires_sink_permission_with_real_policy() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://api.example.com/"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+    );
+
+    let disposition = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-curl-header-sink".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "curl -H 'Authorization: Bearer secret' https://api.example.com/v1/resource"
+                .to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+
+    match disposition {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("cannot flow to sink"));
+            assert!(reason.contains("argv:2"));
+            assert!(reason.contains("https://api.example.com/v1/resource"));
+        }
+        other => panic!("expected header sink denial, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn gws_read_params_with_allowed_connect_executes_without_sink_approval() {
     let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
         r#"
