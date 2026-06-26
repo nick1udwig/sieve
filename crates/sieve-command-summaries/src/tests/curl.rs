@@ -119,6 +119,64 @@ fn curl_put_with_payload_extracts_sink_check() {
 }
 
 #[test]
+fn curl_payload_file_requires_fs_read_capability() {
+    let out = summarize_argv(&argv(&[
+        "curl",
+        "--data-binary",
+        "@secret.txt",
+        "https://api.example.com/v1/upload",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Write,
+                scope: "https://api.example.com/v1/upload".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "secret.txt".to_string(),
+            }
+        ]
+    );
+    assert_eq!(summary.sink_checks[0].argument_name, "--data-binary");
+}
+
+#[test]
+fn curl_data_urlencode_named_file_requires_fs_read_capability() {
+    let out = summarize_argv(&argv(&[
+        "curl",
+        "--data-urlencode",
+        "payload@secret.txt",
+        "https://api.example.com/v1/upload",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Write,
+                scope: "https://api.example.com/v1/upload".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "secret.txt".to_string(),
+            }
+        ]
+    );
+    assert_eq!(summary.sink_checks[0].argument_name, "--data-urlencode");
+}
+
+#[test]
 fn curl_header_flag_missing_value_routes_to_unknown() {
     let out = summarize_argv(&argv(&[
         "curl",
@@ -162,6 +220,34 @@ fn curl_get_with_header_extracts_sink_check() {
             value_refs: vec![ValueRef("argv:2".to_string())],
         }]
     );
+}
+
+#[test]
+fn curl_header_file_requires_fs_read_capability() {
+    let out = summarize_argv(&argv(&[
+        "curl",
+        "--header=@headers.txt",
+        "https://api.example.com/v1/resource",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.example.com/".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "headers.txt".to_string(),
+            }
+        ]
+    );
+    assert_eq!(summary.sink_checks[0].argument_name, "--header");
 }
 
 #[test]
