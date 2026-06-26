@@ -3,6 +3,7 @@ use super::*;
 pub(super) struct TestBridge {
     pub(super) runtime_events: Mutex<Vec<RuntimeEvent>>,
     pub(super) approvals: Mutex<Vec<ApprovalResolvedEvent>>,
+    pub(super) steers: Mutex<Vec<TelegramCodexSteer>>,
     pub(super) prompts: Mutex<Vec<TelegramPrompt>>,
 }
 
@@ -11,6 +12,7 @@ impl TestBridge {
         Self {
             runtime_events: Mutex::new(Vec::new()),
             approvals: Mutex::new(Vec::new()),
+            steers: Mutex::new(Vec::new()),
             prompts: Mutex::new(Vec::new()),
         }
     }
@@ -29,6 +31,13 @@ impl TelegramEventBridge for TestBridge {
             .lock()
             .expect("approvals mutex poisoned")
             .push(approval);
+    }
+
+    fn submit_codex_steer(&self, steer: TelegramCodexSteer) {
+        self.steers
+            .lock()
+            .expect("steers mutex poisoned")
+            .push(steer);
     }
 
     fn submit_prompt(&self, prompt: TelegramPrompt) {

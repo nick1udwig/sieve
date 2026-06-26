@@ -1,10 +1,11 @@
 use crate::{
     message::{
-        format_approval_requested, format_codex_status_card, parse_command, parse_reaction_action,
-        parse_short_action, TelegramApprovalAction,
+        format_approval_requested, format_codex_status_card, parse_command,
+        parse_inline_approval_action, parse_reaction_action, TelegramApprovalAction,
     },
-    Clock, TelegramAdapterConfig, TelegramAdapterError, TelegramEventBridge, TelegramLongPoll,
-    TelegramPrompt, TelegramUpdate, TELEGRAM_IMAGE_PROMPT_PREFIX, TELEGRAM_VOICE_PROMPT_PREFIX,
+    Clock, TelegramAdapterConfig, TelegramAdapterError, TelegramCodexSteer, TelegramEventBridge,
+    TelegramLongPoll, TelegramPrompt, TelegramUpdate, TELEGRAM_IMAGE_PROMPT_PREFIX,
+    TELEGRAM_VOICE_PROMPT_PREFIX,
 };
 use sieve_types::{
     ApprovalAction, ApprovalRequestedEvent, ApprovalResolvedEvent, CodexSessionLifecycleStatus,
@@ -34,6 +35,7 @@ where
     pending_approvals: BTreeMap<String, ApprovalRequestedEvent>,
     pending_approval_message_ids: BTreeMap<i64, String>,
     codex_status_cards: BTreeMap<String, CodexStatusCard>,
+    codex_status_message_ids: BTreeMap<i64, String>,
     active_typing_runs: BTreeSet<String>,
     last_typing_sent_ms: Option<u64>,
 }
@@ -54,6 +56,7 @@ where
             pending_approvals: BTreeMap::new(),
             pending_approval_message_ids: BTreeMap::new(),
             codex_status_cards: BTreeMap::new(),
+            codex_status_message_ids: BTreeMap::new(),
             active_typing_runs: BTreeSet::new(),
             last_typing_sent_ms: None,
         }
@@ -186,26 +189,40 @@ where
                 return Ok(());
             }
 
-            if let Some(action) = parse_short_action(&message.text) {
-                if self.pending_approvals.is_empty() {
-                    self.bridge.submit_prompt(TelegramPrompt {
-                        chat_id: message.chat_id,
-                        text: message.text,
-                        modality: InteractionModality::Text,
-                        media_file_id: None,
-                    });
-                    return Ok(());
-                }
-                if let Some(request_id) =
-                    self.select_request_for_implicit_action(message.reply_to_message_id)
+            if let Some(request_id) =
+                self.select_request_for_implicit_action(message.reply_to_message_id)
+            {
+                if let Some(action) = parse_inline_approval_action(&message.text) {
+                    let session_id = self.resolve_approval(action.action, request_id)?;
+                    if action.action != TelegramApprovalAction::Deny && !action.tail.is_empty() {
+                        if let Some(session_id) = session_id {
+                            self.bridge.submit_codex_steer(TelegramCodexSteer {
+                                session_id,
+                                text: action.tail,
+                            });
+                        }
+                    }
+                } else if let Some(session_id) =
+                    self.reply_to_codex_session_id(message.reply_to_message_id)
                 {
-                    self.resolve_approval(action, request_id)?;
+                    self.bridge.submit_codex_steer(TelegramCodexSteer {
+                        session_id,
+                        text: message.text,
+                    });
                 } else {
                     self.send_to_chat(
                         "approval target unclear; reply to an approval request message or use /approve_once <request_id>, /always <request_id>, or /deny <request_id>",
                         None,
                     )?;
                 }
+                return Ok(());
+            }
+
+            if let Some(session_id) = self.reply_to_codex_session_id(message.reply_to_message_id) {
+                self.bridge.submit_codex_steer(TelegramCodexSteer {
+                    session_id,
+                    text: message.text,
+                });
                 return Ok(());
             }
 
@@ -269,12 +286,13 @@ where
         &mut self,
         action: TelegramApprovalAction,
         request_id: String,
-    ) -> Result<(), TelegramAdapterError> {
+    ) -> Result<Option<String>, TelegramAdapterError> {
         let Some(approval_requested) = self.pending_approvals.remove(&request_id) else {
-            return Ok(());
+            return Ok(None);
         };
         self.pending_approval_message_ids
             .retain(|_, mapped_request_id| mapped_request_id != &request_id);
+        let reply_to_session_id = approval_requested.reply_to_session_id.clone();
 
         let action = match action {
             TelegramApprovalAction::ApproveOnce => ApprovalAction::ApproveOnce,
@@ -290,7 +308,7 @@ where
             created_at_ms: self.clock.now_ms(),
         };
         self.bridge.submit_approval(resolved.clone());
-        Ok(())
+        Ok(reply_to_session_id)
     }
 
     fn send_to_chat(
@@ -319,6 +337,11 @@ where
             .map(|card| card.message_id)
     }
 
+    fn reply_to_codex_session_id(&self, reply_to_message_id: Option<i64>) -> Option<String> {
+        reply_to_message_id
+            .and_then(|message_id| self.codex_status_message_ids.get(&message_id).cloned())
+    }
+
     fn upsert_codex_status_card(
         &mut self,
         event: CodexSessionStatusEvent,
@@ -336,13 +359,18 @@ where
                         let Some(message_id) = self.send_to_chat(&text, None)? else {
                             return Ok(());
                         };
+                        self.codex_status_message_ids.remove(&existing.message_id);
                         existing.message_id = message_id;
+                        self.codex_status_message_ids
+                            .insert(message_id, session_id.clone());
                         existing.last_rendered_text = text;
                     }
                 }
             }
             existing.event = event;
             existing.last_refresh_ms = now_ms;
+            self.codex_status_message_ids
+                .insert(existing.message_id, session_id.clone());
             self.codex_status_cards.insert(session_id, existing);
             return Ok(());
         }
@@ -350,6 +378,8 @@ where
         let Some(message_id) = self.send_to_chat(&text, None)? else {
             return Ok(());
         };
+        self.codex_status_message_ids
+            .insert(message_id, session_id.clone());
         self.codex_status_cards.insert(
             session_id,
             CodexStatusCard {
@@ -388,7 +418,10 @@ where
                     }
                     Err(_) => {
                         if let Some(message_id) = self.send_to_chat(&text, None)? {
+                            self.codex_status_message_ids.remove(&card.message_id);
                             card.message_id = message_id;
+                            self.codex_status_message_ids
+                                .insert(message_id, session_id.clone());
                             card.last_rendered_text = text;
                         }
                     }

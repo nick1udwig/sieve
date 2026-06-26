@@ -170,6 +170,51 @@ fn yes_reply_to_request_message_approves_once() {
 }
 
 #[test]
+fn approve_reply_with_tail_steers_same_codex_session() {
+    let bridge = TestBridge::new();
+    let poller = TestPoller::new(vec![vec![TelegramUpdate {
+        update_id: 6,
+        message: Some(TelegramMessage {
+            chat_id: 42,
+            sender_user_id: Some(1001),
+            message_id: 506,
+            reply_to_message_id: Some(1),
+            text: "approved focus on failing tests first".into(),
+        }),
+        message_reaction: None,
+    }]]);
+    let clock = FixedClock { now: 4040 };
+    let mut adapter = TelegramAdapter::new(test_config(None), bridge, poller, clock);
+
+    adapter
+        .publish_runtime_event(RuntimeEvent::ApprovalRequested(ApprovalRequestedEvent {
+            reply_to_session_id: Some("codex-session-1".into()),
+            ..sample_approval_requested()
+        }))
+        .expect("publish runtime event");
+    adapter.poll_once().expect("poll once");
+
+    let approvals = adapter
+        .bridge
+        .approvals
+        .lock()
+        .expect("approvals mutex poisoned")
+        .clone();
+    assert_eq!(approvals.len(), 1);
+    assert_eq!(approvals[0].action, ApprovalAction::ApproveOnce);
+
+    let steers = adapter
+        .bridge
+        .steers
+        .lock()
+        .expect("steers mutex poisoned")
+        .clone();
+    assert_eq!(steers.len(), 1);
+    assert_eq!(steers[0].session_id, "codex-session-1");
+    assert_eq!(steers[0].text, "focus on failing tests first");
+}
+
+#[test]
 fn thumbs_up_reaction_approves_once() {
     let bridge = TestBridge::new();
     let poller = TestPoller::new(vec![vec![TelegramUpdate {

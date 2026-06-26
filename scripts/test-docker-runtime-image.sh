@@ -39,6 +39,7 @@ for dockerfile in "$repo_root/Dockerfile" "$repo_root/Dockerfile.release"; do
     reject 'SIEVE_HOME=/root/\.sieve' "$dockerfile" "$dockerfile must not default SIEVE_HOME to /root/.sieve"
     reject '/root/\.sieve' "$dockerfile" "$dockerfile must not reference /root/.sieve"
     reject '^USER[[:space:]]+root([[:space:]]|$)' "$dockerfile" "$dockerfile must not run as root"
+    require 'CODEX_HOME=/home/sieve/\.sieve/state/codex-home' "$dockerfile" "$dockerfile must default CODEX_HOME inside SIEVE_HOME"
     require 'HOME=/home/sieve' "$dockerfile" "$dockerfile must default HOME to /home/sieve"
     require 'SIEVE_CODEX_APP_SERVER_WS_URL=ws://127\.0\.0\.1:4500' "$dockerfile" "$dockerfile must default the shared Codex app-server websocket URL"
     require 'SIEVE_HOME=/home/sieve/\.sieve' "$dockerfile" "$dockerfile must default SIEVE_HOME to /home/sieve/.sieve"
@@ -46,6 +47,9 @@ for dockerfile in "$repo_root/Dockerfile" "$repo_root/Dockerfile.release"; do
     require 'sieve-docker-entrypoint' "$dockerfile" "$dockerfile must use the Docker tmux entrypoint"
     require '^USER[[:space:]]+(sieve|1000|1000:1000|\$\{SIEVE_UID\}:\$\{SIEVE_GID\})$' "$dockerfile" "$dockerfile must set a non-root runtime user"
 done
+
+require 'SIEVE_DOCKER_ATTACH' "$repo_root/docker/sieve-docker-entrypoint.sh" "docker entrypoint must use SIEVE_DOCKER_ATTACH for opt-in tmux attach"
+reject 'SIEVE_DOCKER_NO_ATTACH' "$repo_root/docker/sieve-docker-entrypoint.sh" "docker entrypoint must not default to auto-attaching tmux sessions"
 
 build_ctx="$tmp_root/build"
 mkdir -p "$build_ctx/docker" "$build_ctx/docs/policy" "$build_ctx/dist/release/sieve-tools/bin"
@@ -61,7 +65,15 @@ set -euo pipefail
 mkdir -p "$SIEVE_HOME"
 touch "$SIEVE_HOME/owned-by-runtime" "$SIEVE_HOME/sieve-started"
 printf '%s\n' "$*" > "$SIEVE_HOME/sieve-argv"
+if [[ "${1:-}" == "auth" ]]; then
+    printf 'auth-ok\n'
+    exit 0
+fi
 if [[ "${1:-}" != "run" ]]; then
+    exit 0
+fi
+if [[ "${2:-}" == "--prompt" ]]; then
+    printf 'prompt-ok:%s\n' "${3:-}"
     exit 0
 fi
 while true; do sleep 60; done
@@ -74,6 +86,10 @@ set -euo pipefail
 mkdir -p "$SIEVE_HOME"
 touch "$SIEVE_HOME/codex-started"
 printf '%s\n' "$*" > "$SIEVE_HOME/codex-argv"
+printf '%s\n' "${OPENAI_API_KEY:-}" > "$SIEVE_HOME/codex-openai-api-key"
+if [[ -f "${CODEX_HOME}/auth.json" ]]; then
+    touch "$SIEVE_HOME/codex-auth-present"
+fi
 while true; do sleep 60; done
 EOF
 chmod +x "$build_ctx/dist/release/sieve-tools/bin/codex"
@@ -96,10 +112,11 @@ case "$config_user" in
         ;;
 esac
 
-runtime_state="$(docker run --rm --entrypoint /bin/bash "$image_tag" -lc 'printf "%s\n%s\n%s\n" "$HOME" "$SIEVE_HOME" "$(id -u):$(id -g)"')"
+runtime_state="$(docker run --rm --entrypoint /bin/bash "$image_tag" -lc 'printf "%s\n%s\n%s\n%s\n" "$HOME" "$SIEVE_HOME" "$CODEX_HOME" "$(id -u):$(id -g)"')"
 runtime_home="$(printf '%s\n' "$runtime_state" | sed -n '1p')"
 runtime_sieve_home="$(printf '%s\n' "$runtime_state" | sed -n '2p')"
-runtime_ids="$(printf '%s\n' "$runtime_state" | sed -n '3p')"
+runtime_codex_home="$(printf '%s\n' "$runtime_state" | sed -n '3p')"
+runtime_ids="$(printf '%s\n' "$runtime_state" | sed -n '4p')"
 
 [[ "$runtime_home" == "/home/sieve" ]] || {
     echo "runtime HOME must be /home/sieve, got $runtime_home" >&2
@@ -109,6 +126,10 @@ runtime_ids="$(printf '%s\n' "$runtime_state" | sed -n '3p')"
     echo "runtime SIEVE_HOME must be /home/sieve/.sieve, got $runtime_sieve_home" >&2
     exit 1
 }
+[[ "$runtime_codex_home" == "/home/sieve/.sieve/state/codex-home" ]] || {
+    echo "runtime CODEX_HOME must be /home/sieve/.sieve/state/codex-home, got $runtime_codex_home" >&2
+    exit 1
+}
 [[ "$runtime_ids" == "1000:1000" ]] || {
     echo "runtime user must be 1000:1000, got $runtime_ids" >&2
     exit 1
@@ -116,9 +137,20 @@ runtime_ids="$(printf '%s\n' "$runtime_state" | sed -n '3p')"
 
 bind_home="$tmp_root/home"
 mkdir -p "$bind_home"
+mkdir -p "$bind_home/state"
 if [[ "$(id -u)" == "0" ]]; then
-    chown 1000:1000 "$bind_home"
+    chown -R 1000:1000 "$bind_home"
 fi
+cat > "$bind_home/state/auth.json" <<'EOF'
+{
+  "openai-codex": {
+    "type": "oauth",
+    "access": "header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC1kb2NrZXIiLCJjaGF0Z3B0X3BsYW5fdHlwZSI6InBybyIsInVzZXJfaWQiOiJ1c2VyLWRvY2tlciJ9fQ.sig",
+    "refresh": "refresh-token",
+    "accountId": "acct-docker"
+  }
+}
+EOF
 docker run --rm --entrypoint /usr/local/bin/sieve-app -v "$bind_home:/home/sieve/.sieve" "$image_tag" >/dev/null
 
 file_owner="$(stat -c '%u:%g' "$bind_home/owned-by-runtime")"
@@ -139,6 +171,32 @@ done
 }
 [[ -f "$bind_home/sieve-started" ]] || {
     echo "runtime must start the sieve tmux session" >&2
+    exit 1
+}
+[[ -f "$bind_home/codex-auth-present" ]] || {
+    echo "runtime must sync Codex auth into CODEX_HOME before starting the codex tmux session" >&2
+    exit 1
+}
+[[ -f "$bind_home/state/codex-home/auth.json" ]] || {
+    echo "runtime must persist generated Codex auth inside SIEVE_HOME/state/codex-home/auth.json" >&2
+    exit 1
+}
+grep -q '"auth_mode": "chatgpt"' "$bind_home/state/codex-home/auth.json" || {
+    echo "generated Codex auth must preserve refresh-capable chatgpt mode when sieve auth has a refresh token" >&2
+    exit 1
+}
+grep -q '"account_id": "acct-docker"' "$bind_home/state/codex-home/auth.json" || {
+    echo "generated Codex auth must copy the ChatGPT account id from sieve auth" >&2
+    exit 1
+}
+
+prompt_output="$(docker run --rm -v "$bind_home:/home/sieve/.sieve" "$image_tag" run --prompt "review workspace status" 2>&1)"
+printf '%s\n' "$prompt_output" | grep -q 'prompt-ok:review workspace status' || {
+    echo "one-shot run --prompt must emit sieve-app output to the container logs" >&2
+    exit 1
+}
+printf '%s\n' "$prompt_output" | grep -q '^\[codex\] ' || {
+    echo "one-shot run --prompt must still start the codex app-server session" >&2
     exit 1
 }
 
@@ -164,5 +222,28 @@ grep -qx 'app-server --listen ws://127.0.0.1:4500' "$bind_home/codex-argv" || {
 }
 grep -qx 'run' "$bind_home/sieve-argv" || {
     echo "sieve tmux session must run sieve-app with the default 'run' command" >&2
+    exit 1
+}
+
+docker rm -f "$container_name" >/dev/null 2>&1 || true
+
+bind_home_dotenv="$tmp_root/home-dotenv"
+workspace_dotenv="$tmp_root/workspace-dotenv"
+mkdir -p "$bind_home_dotenv" "$workspace_dotenv"
+if [[ "$(id -u)" == "0" ]]; then
+    chown -R 1000:1000 "$bind_home_dotenv"
+fi
+cat > "$workspace_dotenv/.env" <<'EOF'
+OPENAI_API_KEY=sk-from-workspace-dotenv
+EOF
+
+docker run -d --name "$container_name" -v "$bind_home_dotenv:/home/sieve/.sieve" -v "$workspace_dotenv:/workspace" "$image_tag" >/dev/null
+for _ in $(seq 1 20); do
+    [[ -f "$bind_home_dotenv/codex-started" ]] && break
+    sleep 1
+done
+
+grep -qx 'sk-from-workspace-dotenv' "$bind_home_dotenv/codex-openai-api-key" || {
+    echo "runtime must load /workspace/.env before starting the codex tmux session" >&2
     exit 1
 }

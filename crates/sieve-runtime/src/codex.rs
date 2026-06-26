@@ -27,5 +27,9 @@ pub trait CodexTool: Send + Sync {
         request: CodexSessionRequest,
     ) -> Result<CodexSessionToolResult, String>;
 
+    async fn steer_session(&self, _session_id: &str, _text: &str) -> Result<(), String> {
+        Err("codex steer not supported".to_string())
+    }
+
     async fn planner_sessions(&self) -> Result<Vec<PlannerCodexSession>, String>;
 }

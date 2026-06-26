@@ -13,9 +13,10 @@ use sieve_types::{
 };
 use std::collections::HashMap;
 use std::env;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
@@ -42,6 +43,7 @@ pub(crate) struct CodexManager {
     store: CodexSessionStore,
     approval_bus: Arc<dyn ApprovalBus>,
     event_log: Arc<dyn RuntimeEventLog>,
+    active_sessions: Mutex<HashMap<String, ActiveCodexTurn>>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +67,17 @@ struct TurnStreamState {
     agent_delta: String,
     final_agent_text: Option<String>,
     file_change_previews: HashMap<String, String>,
+}
+
+#[derive(Clone)]
+struct ActiveCodexTurn {
+    session_name: String,
+    steer_tx: mpsc::UnboundedSender<SteerCommand>,
+}
+
+struct SteerCommand {
+    text: String,
+    result_tx: oneshot::Sender<Result<(), String>>,
 }
 
 #[derive(Serialize)]
@@ -112,6 +125,15 @@ struct TurnStartParams<'a> {
     model: &'a Option<String>,
     #[serde(rename = "outputSchema")]
     output_schema: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct TurnSteerParams<'a> {
+    #[serde(rename = "threadId")]
+    thread_id: &'a str,
+    input: Vec<TurnInputItem>,
+    #[serde(rename = "expectedTurnId")]
+    expected_turn_id: &'a str,
 }
 
 #[derive(Serialize)]
@@ -194,6 +216,7 @@ impl CodexManager {
             store: CodexSessionStore::new(store_path.into())?,
             approval_bus,
             event_log,
+            active_sessions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -296,7 +319,7 @@ impl CodexManager {
                 stored.session_name,
                 stored.task_summary,
                 stored.created_at_ms,
-                Some(stored.cwd),
+                usable_stored_cwd(&stored.cwd),
                 Some(stored.sandbox),
             )
         } else {
@@ -405,59 +428,7 @@ impl CodexManager {
         self.call_with_timeout("initialize", client.initialize())
             .await?;
 
-        let thread_id = if let Some(thread_id) = &run_ctx.thread_id {
-            let _ = self
-                .call_with_timeout(
-                    "thread/resume",
-                    client.request(
-                        "thread/resume",
-                        to_json_value(
-                            ThreadResumeParams { thread_id },
-                            "codex thread resume params",
-                        ),
-                    ),
-                )
-                .await?;
-            thread_id.clone()
-        } else {
-            let response = self
-                .call_with_timeout(
-                    "thread/start",
-                    client.request(
-                        "thread/start",
-                        to_json_value(
-                            ThreadStartParams {
-                                cwd: run_ctx.cwd.as_deref(),
-                                model: &self.config.model,
-                                approval_policy: "on-request",
-                                ephemeral: !run_ctx.persist_session,
-                            },
-                            "codex thread start params",
-                        ),
-                    ),
-                )
-                .await?;
-            let thread_id = response
-                .pointer("/thread/id")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| "codex thread/start missing thread.id".to_string())?
-                .to_string();
-            self.call_with_timeout(
-                "thread/name/set",
-                client.request(
-                    "thread/name/set",
-                    to_json_value(
-                        ThreadNameSetParams {
-                            thread_id: &thread_id,
-                            name: &run_ctx.session_name,
-                        },
-                        "codex thread name set params",
-                    ),
-                ),
-            )
-            .await?;
-            thread_id
-        };
+        let thread_id = self.start_or_resume_thread(&mut client, &run_ctx).await?;
 
         if run_ctx.persist_session {
             let session_id = run_ctx
@@ -517,13 +488,24 @@ impl CodexManager {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "codex turn/start missing turn.id".to_string())?
             .to_string();
+        let (steer_tx, mut steer_rx) = mpsc::unbounded_channel();
+        if let Some(session_id) = run_ctx.session_id.as_deref() {
+            self.register_active_session(session_id, &run_ctx.session_name, steer_tx)?;
+        }
 
-        let streamed = timeout(
+        let streamed_result = timeout(
             Duration::from_millis(self.config.turn_timeout_ms),
-            self.wait_for_turn_completion(&mut client, &run_ctx, &thread_id, &turn_id),
+            self.wait_for_turn_completion(
+                &mut client,
+                &run_ctx,
+                &thread_id,
+                &turn_id,
+                &mut steer_rx,
+            ),
         )
-        .await
-        .map_err(|_| {
+        .await;
+        self.unregister_active_session(run_ctx.session_id.as_deref());
+        let streamed = streamed_result.map_err(|_| {
             format!(
                 "codex turn timed out after {}ms",
                 self.config.turn_timeout_ms
@@ -570,78 +552,261 @@ impl CodexManager {
         Ok(CodexSessionToolResult { result: parsed })
     }
 
+    async fn start_or_resume_thread(
+        &self,
+        client: &mut AppServerClient,
+        run_ctx: &SessionRunContext,
+    ) -> Result<String, String> {
+        if let Some(thread_id) = &run_ctx.thread_id {
+            match self
+                .call_with_timeout(
+                    "thread/resume",
+                    client.request(
+                        "thread/resume",
+                        to_json_value(
+                            ThreadResumeParams { thread_id },
+                            "codex thread resume params",
+                        ),
+                    ),
+                )
+                .await
+            {
+                Ok(_) => return Ok(thread_id.clone()),
+                Err(err) if is_missing_rollout_error(&err) => {}
+                Err(err) => return Err(err),
+            }
+        }
+        self.start_thread(client, run_ctx).await
+    }
+
+    async fn start_thread(
+        &self,
+        client: &mut AppServerClient,
+        run_ctx: &SessionRunContext,
+    ) -> Result<String, String> {
+        let response = self
+            .call_with_timeout(
+                "thread/start",
+                client.request(
+                    "thread/start",
+                    to_json_value(
+                        ThreadStartParams {
+                            cwd: run_ctx.cwd.as_deref(),
+                            model: &self.config.model,
+                            approval_policy: "on-request",
+                            ephemeral: !run_ctx.persist_session,
+                        },
+                        "codex thread start params",
+                    ),
+                ),
+            )
+            .await?;
+        let thread_id = response
+            .pointer("/thread/id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "codex thread/start missing thread.id".to_string())?
+            .to_string();
+        self.call_with_timeout(
+            "thread/name/set",
+            client.request(
+                "thread/name/set",
+                to_json_value(
+                    ThreadNameSetParams {
+                        thread_id: &thread_id,
+                        name: &run_ctx.session_name,
+                    },
+                    "codex thread name set params",
+                ),
+            ),
+        )
+        .await?;
+        Ok(thread_id)
+    }
+
+    fn register_active_session(
+        &self,
+        session_id: &str,
+        session_name: &str,
+        steer_tx: mpsc::UnboundedSender<SteerCommand>,
+    ) -> Result<(), String> {
+        self.active_sessions
+            .lock()
+            .map_err(|_| "codex active session lock poisoned".to_string())?
+            .insert(
+                session_id.to_string(),
+                ActiveCodexTurn {
+                    session_name: session_name.to_string(),
+                    steer_tx,
+                },
+            );
+        Ok(())
+    }
+
+    fn unregister_active_session(&self, session_id: Option<&str>) {
+        let Some(session_id) = session_id else {
+            return;
+        };
+        if let Ok(mut active) = self.active_sessions.lock() {
+            active.remove(session_id);
+        }
+    }
+
+    async fn steer_session_internal(&self, session_id: &str, text: &str) -> Result<(), String> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err("codex steer text must be non-empty".to_string());
+        }
+        let active = self
+            .active_sessions
+            .lock()
+            .map_err(|_| "codex active session lock poisoned".to_string())?
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("codex session `{session_id}` is not currently running"))?;
+        let (result_tx, result_rx) = oneshot::channel();
+        active
+            .steer_tx
+            .send(SteerCommand {
+                text: trimmed.to_string(),
+                result_tx,
+            })
+            .map_err(|_| {
+                format!(
+                    "codex session `{}` is no longer accepting steer input",
+                    active.session_name
+                )
+            })?;
+        result_rx.await.map_err(|_| {
+            format!(
+                "codex session `{}` dropped steer response channel",
+                active.session_name
+            )
+        })?
+    }
+
     async fn wait_for_turn_completion(
         &self,
         client: &mut AppServerClient,
         run_ctx: &SessionRunContext,
         thread_id: &str,
         turn_id: &str,
+        steer_rx: &mut mpsc::UnboundedReceiver<SteerCommand>,
     ) -> Result<TurnCompletion, String> {
         let mut state = TurnStreamState::default();
         loop {
-            let message = client.next_message().await?;
-            if let Some(method) = message.get("method").and_then(serde_json::Value::as_str) {
-                self.record_session_event(run_ctx, turn_id, method, &message)
-                    .await?;
-                if message.get("id").is_some() {
-                    self.handle_server_request(client, run_ctx, &message, &mut state)
-                        .await?;
-                    continue;
+            tokio::select! {
+                maybe_steer = steer_rx.recv() => {
+                    let Some(steer) = maybe_steer else {
+                        continue;
+                    };
+                    let result = self
+                        .request_turn_steer(client, run_ctx, thread_id, turn_id, &steer.text)
+                        .await;
+                    let _ = steer.result_tx.send(result);
                 }
-                match method {
-                    "item/agentMessage/delta" => {
-                        if let Some(text) = message
-                            .pointer("/params/delta")
-                            .and_then(serde_json::Value::as_str)
-                            .or_else(|| {
-                                message
-                                    .pointer("/params/text")
+                message = client.next_message() => {
+                    let message = message?;
+                    if let Some(method) = message.get("method").and_then(serde_json::Value::as_str) {
+                        self.record_session_event(run_ctx, turn_id, method, &message)
+                            .await?;
+                        if message.get("id").is_some() {
+                            self.handle_server_request(client, run_ctx, &message, &mut state)
+                                .await?;
+                            continue;
+                        }
+                        match method {
+                            "item/agentMessage/delta" => {
+                                if let Some(text) = message
+                                    .pointer("/params/delta")
                                     .and_then(serde_json::Value::as_str)
-                            })
-                        {
-                            state.agent_delta.push_str(text);
+                                    .or_else(|| {
+                                        message
+                                            .pointer("/params/text")
+                                            .and_then(serde_json::Value::as_str)
+                                    })
+                                {
+                                    state.agent_delta.push_str(text);
+                                }
+                            }
+                            "item/started" | "item/completed" => {
+                                handle_item_notification(&message, &mut state);
+                            }
+                            "turn/completed" => {
+                                let completed_thread_id = message
+                                    .pointer("/params/turn/threadId")
+                                    .and_then(serde_json::Value::as_str)
+                                    .or_else(|| {
+                                        message
+                                            .pointer("/params/turn/thread_id")
+                                            .and_then(serde_json::Value::as_str)
+                                    });
+                                let completed_turn_id = message
+                                    .pointer("/params/turn/id")
+                                    .and_then(serde_json::Value::as_str);
+                                if completed_turn_id == Some(turn_id)
+                                    || (completed_thread_id == Some(thread_id)
+                                        && completed_turn_id.is_none())
+                                {
+                                    let final_text = state
+                                        .final_agent_text
+                                        .clone()
+                                        .unwrap_or_else(|| state.agent_delta.trim().to_string());
+                                    return Ok(TurnCompletion {
+                                        final_text,
+                                        turn_status: message
+                                            .pointer("/params/turn/status")
+                                            .and_then(serde_json::Value::as_str)
+                                            .map(ToString::to_string),
+                                        turn_error: message
+                                            .pointer("/params/turn/error/message")
+                                            .and_then(serde_json::Value::as_str)
+                                            .map(ToString::to_string),
+                                    });
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    "item/started" | "item/completed" => {
-                        handle_item_notification(&message, &mut state);
-                    }
-                    "turn/completed" => {
-                        let completed_thread_id = message
-                            .pointer("/params/turn/threadId")
-                            .and_then(serde_json::Value::as_str)
-                            .or_else(|| {
-                                message
-                                    .pointer("/params/turn/thread_id")
-                                    .and_then(serde_json::Value::as_str)
-                            });
-                        let completed_turn_id = message
-                            .pointer("/params/turn/id")
-                            .and_then(serde_json::Value::as_str);
-                        if completed_turn_id == Some(turn_id)
-                            || (completed_thread_id == Some(thread_id)
-                                && completed_turn_id.is_none())
-                        {
-                            let final_text = state
-                                .final_agent_text
-                                .clone()
-                                .unwrap_or_else(|| state.agent_delta.trim().to_string());
-                            return Ok(TurnCompletion {
-                                final_text,
-                                turn_status: message
-                                    .pointer("/params/turn/status")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(ToString::to_string),
-                                turn_error: message
-                                    .pointer("/params/turn/error/message")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(ToString::to_string),
-                            });
-                        }
-                    }
-                    _ => {}
                 }
             }
         }
+    }
+
+    async fn request_turn_steer(
+        &self,
+        client: &mut AppServerClient,
+        run_ctx: &SessionRunContext,
+        thread_id: &str,
+        turn_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        self.call_with_timeout(
+            "turn/steer",
+            client.request(
+                "turn/steer",
+                to_json_value(
+                    TurnSteerParams {
+                        thread_id,
+                        input: vec![TurnInputItem {
+                            item_type: "text",
+                            text: Some(text.to_string()),
+                            path: None,
+                        }],
+                        expected_turn_id: turn_id,
+                    },
+                    "codex turn steer params",
+                ),
+            ),
+        )
+        .await?;
+        self.emit_status_event(
+            run_ctx,
+            CodexSessionLifecycleStatus::Running,
+            format!("received user steer: {}", truncate_preview(text, 160)),
+            None,
+        )
+        .await?;
+        Ok(())
     }
 
     async fn handle_server_request(
@@ -932,6 +1097,10 @@ impl CodexTool for CodexManager {
         self.session_internal(request).await
     }
 
+    async fn steer_session(&self, session_id: &str, text: &str) -> Result<(), String> {
+        self.steer_session_internal(session_id, text).await
+    }
+
     async fn planner_sessions(&self) -> Result<Vec<PlannerCodexSession>, String> {
         self.store.planner_sessions(12)
     }
@@ -986,6 +1155,14 @@ fn normalize_session_request(request: CodexSessionRequest) -> Result<CodexSessio
         writable_roots,
         local_images,
     })
+}
+
+fn usable_stored_cwd(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Path::new(trimmed).exists().then(|| trimmed.to_string())
 }
 
 fn normalize_optional_path(
@@ -1240,6 +1417,10 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
         out.push(ch);
     }
     out
+}
+
+fn is_missing_rollout_error(err: &str) -> bool {
+    err.contains("no rollout found for thread id")
 }
 
 fn approval_action_to_codex_decision(action: ApprovalAction) -> &'static str {
@@ -1661,6 +1842,7 @@ for line in sys.stdin:
             store: CodexSessionStore::new(root.join("state/codex.db")).expect("create codex store"),
             approval_bus,
             event_log,
+            active_sessions: Mutex::new(HashMap::new()),
         };
 
         let started = Instant::now();
@@ -1717,6 +1899,7 @@ for line in sys.stdin:
             store: CodexSessionStore::new(root.join("state/codex.db")).expect("create codex store"),
             approval_bus: approval_bus.clone(),
             event_log,
+            active_sessions: Mutex::new(HashMap::new()),
         });
 
         let prompt = format!(
@@ -1868,6 +2051,179 @@ for line in sys.stdin:
     }
 
     #[tokio::test]
+    async fn codex_manager_restarts_missing_rollout_with_new_thread() {
+        let root = unique_test_root("codex-missing-rollout");
+        let first_script = write_mock_server(
+            &root,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({"id": msg["id"], "result": {"ok": True}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "thread/start":
+        print(json.dumps({"id": msg["id"], "result": {"thread": {"id": "thr_saved_old"}}}), flush=True)
+    elif method == "thread/name/set":
+        print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+    elif method == "turn/start":
+        print(json.dumps({"id": msg["id"], "result": {"turn": {"id": "turn_saved_old"}}}), flush=True)
+        print(json.dumps({"method": "item/completed", "params": {"item": {"type": "agentMessage", "id": "msg_old", "text": "{\"status\":\"completed\",\"summary\":\"phase one done\",\"user_visible\":null}"}}}), flush=True)
+        print(json.dumps({"method": "turn/completed", "params": {"turn": {"id": "turn_saved_old", "threadId": "thr_saved_old", "status": "completed"}}}), flush=True)
+"#,
+        );
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = test_manager(
+            &root,
+            &first_script,
+            approval_bus.clone(),
+            event_log.clone(),
+        );
+        let first = manager
+            .run_session(CodexSessionRequest {
+                session_id: None,
+                instruction: "implement phase one".to_string(),
+                sandbox: CodexSandboxMode::WorkspaceWrite,
+                cwd: Some("/tmp/repo".to_string()),
+                writable_roots: vec!["/tmp/repo".to_string()],
+                local_images: Vec::new(),
+            })
+            .await
+            .expect("first session run");
+        let session_id = first
+            .result
+            .session_id
+            .clone()
+            .expect("persistent session id");
+
+        let second_script = write_mock_server(
+            &root,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({"id": msg["id"], "result": {"ok": True}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "thread/resume":
+        assert msg["params"]["threadId"] == "thr_saved_old"
+        print(json.dumps({"id": msg["id"], "error": {"message": "no rollout found for thread id thr_saved_old"}}), flush=True)
+    elif method == "thread/start":
+        assert msg["params"]["cwd"] == "/tmp/repo"
+        print(json.dumps({"id": msg["id"], "result": {"thread": {"id": "thr_saved_new"}}}), flush=True)
+    elif method == "thread/name/set":
+        print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+    elif method == "turn/start":
+        assert msg["params"]["cwd"] == "/tmp/repo"
+        print(json.dumps({"id": msg["id"], "result": {"turn": {"id": "turn_saved_new"}}}), flush=True)
+        print(json.dumps({"method": "item/completed", "params": {"item": {"type": "agentMessage", "id": "msg_new", "text": "{\"status\":\"completed\",\"summary\":\"restarted on fresh thread\",\"user_visible\":\"restarted\"}"}}}), flush=True)
+        print(json.dumps({"method": "turn/completed", "params": {"turn": {"id": "turn_saved_new", "threadId": "thr_saved_new", "status": "completed"}}}), flush=True)
+"#,
+        );
+        let manager = test_manager(&root, &second_script, approval_bus, event_log);
+        let second = manager
+            .run_session(CodexSessionRequest {
+                session_id: Some(session_id.clone()),
+                instruction: "continue phase two".to_string(),
+                sandbox: CodexSandboxMode::WorkspaceWrite,
+                cwd: Some("/tmp/repo".to_string()),
+                writable_roots: vec!["/tmp/repo".to_string()],
+                local_images: Vec::new(),
+            })
+            .await
+            .expect("second session run");
+
+        assert_eq!(second.result.user_visible.as_deref(), Some("restarted"));
+        let stored = manager.planner_sessions().await.expect("planner sessions");
+        assert_eq!(stored[0].session_id, session_id);
+        let persisted = manager
+            .store
+            .session(&stored[0].session_id)
+            .expect("load stored session")
+            .expect("stored session row");
+        assert_eq!(persisted.thread_id, "thr_saved_new");
+    }
+
+    #[tokio::test]
+    async fn codex_manager_accepts_live_steer_for_active_session() {
+        let root = unique_test_root("codex-steer");
+        let script = write_mock_server(
+            &root,
+            r#"#!/usr/bin/env python3
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        print(json.dumps({"id": msg["id"], "result": {"ok": True}}), flush=True)
+    elif method == "initialized":
+        continue
+    elif method == "thread/start":
+        print(json.dumps({"id": msg["id"], "result": {"thread": {"id": "thr_steer"}}}), flush=True)
+    elif method == "thread/name/set":
+        print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+    elif method == "turn/start":
+        print(json.dumps({"id": msg["id"], "result": {"turn": {"id": "turn_steer"}}}), flush=True)
+        steer = json.loads(sys.stdin.readline())
+        assert steer["method"] == "turn/steer"
+        assert steer["params"]["threadId"] == "thr_steer"
+        assert steer["params"]["expectedTurnId"] == "turn_steer"
+        assert steer["params"]["input"][0]["text"] == "focus on failing tests first"
+        print(json.dumps({"id": steer["id"], "result": {"turnId": "turn_steer"}}), flush=True)
+        print(json.dumps({"method": "item/completed", "params": {"item": {"type": "agentMessage", "id": "msg_steer", "text": "{\"status\":\"completed\",\"summary\":\"steer received\",\"user_visible\":\"steer ok\"}"}}}), flush=True)
+        print(json.dumps({"method": "turn/completed", "params": {"turn": {"id": "turn_steer", "threadId": "thr_steer", "status": "completed"}}}), flush=True)
+"#,
+        );
+        let approval_bus = Arc::new(InProcessApprovalBus::new());
+        let event_log = Arc::new(RecordingEventLog::default());
+        let manager = Arc::new(test_manager(
+            &root,
+            &script,
+            approval_bus,
+            event_log.clone(),
+        ));
+        let manager_task = {
+            let manager = manager.clone();
+            tokio::spawn(async move {
+                manager
+                    .run_session(CodexSessionRequest {
+                        session_id: None,
+                        instruction: "inspect the repo".to_string(),
+                        sandbox: CodexSandboxMode::WorkspaceWrite,
+                        cwd: Some("/tmp/repo".to_string()),
+                        writable_roots: vec!["/tmp/repo".to_string()],
+                        local_images: Vec::new(),
+                    })
+                    .await
+            })
+        };
+
+        let session = wait_for_planner_session(manager.as_ref()).await;
+        manager
+            .steer_session(&session.session_id, "focus on failing tests first")
+            .await
+            .expect("steer session");
+
+        let result = manager_task
+            .await
+            .expect("join manager task")
+            .expect("manager result");
+        assert_eq!(result.result.user_visible.as_deref(), Some("steer ok"));
+
+        let events = event_log.events.lock().expect("event log lock");
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::CodexSessionStatus(status)
+                if status.last_step.contains("received user steer")
+        )));
+    }
+
+    #[tokio::test]
     async fn codex_manager_file_change_approval_uses_session_prefix_and_preview() {
         let root = unique_test_root("codex-approval");
         let script = write_mock_server(
@@ -1985,7 +2341,20 @@ for line in sys.stdin:
             store: CodexSessionStore::new(root.join("state/codex.db")).expect("create codex store"),
             approval_bus,
             event_log,
+            active_sessions: Mutex::new(HashMap::new()),
         }
+    }
+
+    async fn wait_for_planner_session(manager: &CodexManager) -> PlannerCodexSession {
+        for _ in 0..200 {
+            if let Ok(sessions) = manager.planner_sessions().await {
+                if let Some(session) = sessions.first() {
+                    return session.clone();
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        panic!("planner session was not published");
     }
 
     async fn wait_for_published_approval(bus: &InProcessApprovalBus) -> ApprovalRequestedEvent {

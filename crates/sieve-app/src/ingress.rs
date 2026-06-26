@@ -2,15 +2,16 @@ use crate::config::AppConfig;
 use crate::logging::TelegramLoopEvent;
 use sieve_interface_telegram::{
     SystemClock as TelegramClock, TelegramAdapter, TelegramAdapterConfig, TelegramBotApiLongPoll,
-    TelegramEventBridge, TelegramPrompt,
+    TelegramCodexSteer, TelegramEventBridge, TelegramPrompt,
 };
-use sieve_runtime::{ApprovalBusError, InProcessApprovalBus};
+use sieve_runtime::{ApprovalBusError, CodexTool, InProcessApprovalBus};
 use sieve_types::{ApprovalResolvedEvent, InteractionModality, RuntimeEvent};
 use std::io::{self, BufRead};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use tokio::runtime::Handle;
 use tokio::sync::mpsc as tokio_mpsc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,24 +106,35 @@ impl IngressPrompt {
 
 pub(crate) struct RuntimeBridge {
     approval_bus: Arc<InProcessApprovalBus>,
+    codex: Option<Arc<dyn CodexTool>>,
     prompt_tx: Option<tokio_mpsc::UnboundedSender<IngressPrompt>>,
+    runtime_handle: Handle,
 }
 
 impl RuntimeBridge {
-    pub(crate) fn new(approval_bus: Arc<InProcessApprovalBus>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new(
+        approval_bus: Arc<InProcessApprovalBus>,
+        codex: Option<Arc<dyn CodexTool>>,
+    ) -> Self {
         Self {
             approval_bus,
+            codex,
             prompt_tx: None,
+            runtime_handle: Handle::current(),
         }
     }
 
     pub(crate) fn with_prompt_tx(
         approval_bus: Arc<InProcessApprovalBus>,
+        codex: Option<Arc<dyn CodexTool>>,
         prompt_tx: tokio_mpsc::UnboundedSender<IngressPrompt>,
     ) -> Self {
         Self {
             approval_bus,
+            codex,
             prompt_tx: Some(prompt_tx),
+            runtime_handle: Handle::current(),
         }
     }
 }
@@ -137,6 +149,23 @@ impl TelegramEventBridge for RuntimeBridge {
                 format_approval_bus_error(&err)
             );
         }
+    }
+
+    fn submit_codex_steer(&self, steer: TelegramCodexSteer) {
+        let text = steer.text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let Some(codex) = self.codex.clone() else {
+            eprintln!("telegram bridge ignored codex steer: codex unavailable");
+            return;
+        };
+        let session_id = steer.session_id;
+        self.runtime_handle.spawn(async move {
+            if let Err(err) = codex.steer_session(&session_id, &text).await {
+                eprintln!("telegram bridge failed to steer codex session {session_id}: {err}");
+            }
+        });
     }
 
     fn submit_prompt(&self, prompt: TelegramPrompt) {

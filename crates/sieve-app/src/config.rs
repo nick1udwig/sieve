@@ -40,11 +40,14 @@ pub(crate) struct AppConfig {
 }
 
 impl AppConfig {
+    #[cfg(test)]
     pub(crate) fn from_env() -> Result<Self, String> {
-        let telegram_bot_token = required_env("TELEGRAM_BOT_TOKEN")?;
-        let telegram_chat_id = required_env("TELEGRAM_CHAT_ID")?
-            .parse::<i64>()
-            .map_err(|err| format!("invalid TELEGRAM_CHAT_ID: {err}"))?;
+        Self::from_env_with_telegram(true)
+    }
+
+    pub(crate) fn from_env_with_telegram(require_telegram: bool) -> Result<Self, String> {
+        let telegram_bot_token = required_env_if("TELEGRAM_BOT_TOKEN", require_telegram)?;
+        let telegram_chat_id = required_i64_env_if("TELEGRAM_CHAT_ID", require_telegram)?;
         let telegram_poll_timeout_secs = parse_u16_env("SIEVE_TELEGRAM_POLL_TIMEOUT_SECS", 1)?;
         let telegram_allowed_sender_user_ids = parse_telegram_allowed_sender_user_ids(
             env::var("SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS").ok(),
@@ -113,6 +116,29 @@ struct ApprovalAllowancesFile {
 
 fn required_env(key: &str) -> Result<String, String> {
     env::var(key).map_err(|_| format!("missing required environment variable `{key}`"))
+}
+
+fn required_env_if(key: &str, required: bool) -> Result<String, String> {
+    if required {
+        required_env(key)
+    } else {
+        Ok(env::var(key).unwrap_or_default())
+    }
+}
+
+fn required_i64_env_if(key: &str, required: bool) -> Result<i64, String> {
+    if required {
+        required_env(key)?
+            .parse::<i64>()
+            .map_err(|err| format!("invalid {key}: {err}"))
+    } else {
+        match env::var(key) {
+            Ok(raw) if !raw.trim().is_empty() => raw
+                .parse::<i64>()
+                .map_err(|err| format!("invalid {key}: {err}")),
+            _ => Ok(0),
+        }
+    }
 }
 
 pub(crate) fn parse_policy_path(raw: Option<String>) -> PathBuf {

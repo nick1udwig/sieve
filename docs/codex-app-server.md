@@ -18,10 +18,14 @@ Read when: touching Codex tool wiring, OCR ingress, approval passthrough, or Cod
 - Most Codex events are logged but not surfaced directly to the user.
 - Telegram now keeps one editable status card per persistent Codex session and threads session-related assistant replies beneath that card.
 - Codex approval prompts stay separate Telegram messages, but they reply to the session status card when one exists.
+- Replying to a Codex status card in Telegram with plain text now sends `turn/steer` to the active Codex turn for that saved session.
+- Replying `yes <note>`, `approve <note>`, or `always <note>` to a Codex approval message now resolves the approval and then forwards `<note>` to Codex through `turn/steer`.
 - Simple natural-language status questions about a saved Codex session are answered directly from trusted saved session metadata instead of going back through planner tool selection.
 - Old `codex exec` command-summary/catalog handling was removed from `sieve-command-summaries`.
 - `sieve-app` can now talk to a shared websocket app-server via `SIEVE_CODEX_APP_SERVER_WS_URL` instead of always spawning a fresh stdio child.
 - The Docker image defaults that websocket URL to `ws://127.0.0.1:4500` and runs the shared server in tmux session `codex`.
+- If a saved `thread_id` no longer exists in the app-server, Sieve now starts a fresh thread for that saved session instead of hard-failing on `thread/resume`.
+- Saved session cwd only wins when that path still exists locally; otherwise the current runtime cwd can take over.
 
 ## Tool Semantics
 
@@ -34,16 +38,16 @@ Read when: touching Codex tool wiring, OCR ingress, approval passthrough, or Cod
 
 ## Current Limits
 
-- No `turn/steer` support yet for in-flight Codex turns.
 - When `SIEVE_CODEX_APP_SERVER_WS_URL` is unset, Sieve still spawns a fresh stdio app-server process per Codex request and relies on saved `thread_id` for continuity.
 - Resume policy is still mostly prompt-driven from stored metadata.
 - Open-loop working state currently only materializes automatically from zero-tool `continue_need_preference_or_constraint` turns.
 - No Codex web search or network-enabled mode yet.
 - No live env-gated e2e against a real Codex app-server binary yet.
+- `turn/steer` currently only targets active persistent Codex sessions, not completed sessions or transient OCR tasks.
 
 ## Likely Next Steps
 
-- Add `turn/steer` and interrupt wiring for long-running Codex tasks.
+- Add `turn/interrupt` wiring for long-running Codex tasks.
 - Add richer session-policy metadata so Sieve can decide resume vs fork vs start-new more reliably.
 - Consider pooling multiple shared app-server connections if one websocket listener becomes a bottleneck.
 - Add live integration tests behind env gates once a stable Codex test setup exists.

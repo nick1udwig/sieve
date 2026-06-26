@@ -174,6 +174,51 @@ fn codex_assistant_message_replies_to_status_card_message() {
 }
 
 #[test]
+fn reply_to_codex_status_card_is_forwarded_as_steer() {
+    let bridge = TestBridge::new();
+    let poller = TestPoller::new(vec![vec![TelegramUpdate {
+        update_id: 9,
+        message: Some(TelegramMessage {
+            chat_id: 42,
+            sender_user_id: Some(1001),
+            message_id: 507,
+            reply_to_message_id: Some(1),
+            text: "focus on failing tests first".into(),
+        }),
+        message_reaction: None,
+    }]]);
+    let clock = FixedClock { now: 61_000 };
+    let mut adapter = TelegramAdapter::new(test_config(None), bridge, poller, clock);
+
+    adapter
+        .publish_runtime_event(RuntimeEvent::CodexSessionStatus(CodexSessionStatusEvent {
+            schema_version: 1,
+            run_id: RunId("run_codex".into()),
+            session_id: "codex-session-1".into(),
+            session_name: "you-are-starting".into(),
+            cwd: Some("/workspace".into()),
+            status: CodexSessionLifecycleStatus::Running,
+            started_at_ms: 1_000,
+            updated_at_ms: 61_000,
+            last_step: "working in /workspace".into(),
+            summary: None,
+        }))
+        .expect("publish codex status");
+
+    adapter.poll_once().expect("poll once");
+
+    let steers = adapter
+        .bridge
+        .steers
+        .lock()
+        .expect("steers mutex poisoned")
+        .clone();
+    assert_eq!(steers.len(), 1);
+    assert_eq!(steers[0].session_id, "codex-session-1");
+    assert_eq!(steers[0].text, "focus on failing tests first");
+}
+
+#[test]
 fn non_approval_message_is_forwarded_as_prompt() {
     let bridge = TestBridge::new();
     let poller = TestPoller::new(vec![vec![TelegramUpdate {

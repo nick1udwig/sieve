@@ -53,6 +53,10 @@ Work style: telegraph; noun-phrases ok; drop grammar; min tokens.
 - Sieve runtime: tmux session `sieve-app` with command `cargo build --release && SIEVE_PLANNER_MODEL=gpt-5.4 SIEVE_QUARANTINE_MODEL=gpt-5.4 ./target/release/sieve-app`.
 - Docker env files: keep scalar `.env` values unquoted; Docker `--env-file` keeps quotes literal. Prefer mounting the repo and letting Sieve load `/workspace/.env`.
 - Docker runtime image: tmux session `codex` runs `codex app-server`; tmux session `sieve` runs `sieve-app`.
+- Docker runtime image: startup loads `/workspace/.env` before tmux launch and mirrors `$SIEVE_HOME/state/auth.json` into `$CODEX_HOME/auth.json` when shared Codex app-server auth is otherwise missing.
+- Docker runtime image: no tmux auto-attach by default; opt in with `SIEVE_DOCKER_ATTACH=1`.
+- Docker runtime image: if Codex should work on a repo other than mounted `$PWD`, mount that repo and set `SIEVE_RUNTIME_CWD` to the in-container path.
+- Telegram Codex steering: reply to a Codex status card with plain text to steer the active turn; reply `yes <note>` / `approve <note>` / `always <note>` on a Codex approval to both resolve approval and steer.
 - Testing workflow: always look for running sieve process and stop it before tests.
 - Post-change workflow: look for and stop sieve, then build and start sieve in `sr`.
 

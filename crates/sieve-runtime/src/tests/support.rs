@@ -294,6 +294,7 @@ pub(crate) struct CapturingCodex {
     exec_requests: StdMutex<Vec<CodexExecRequest>>,
     task_requests: StdMutex<Vec<CodexSessionRequest>>,
     session_requests: StdMutex<Vec<CodexSessionRequest>>,
+    steer_requests: StdMutex<Vec<(String, String)>>,
     planner_sessions: StdMutex<Vec<PlannerCodexSession>>,
 }
 
@@ -309,6 +310,7 @@ impl CapturingCodex {
             exec_requests: StdMutex::new(Vec::new()),
             task_requests: StdMutex::new(Vec::new()),
             session_requests: StdMutex::new(Vec::new()),
+            steer_requests: StdMutex::new(Vec::new()),
             planner_sessions: StdMutex::new(Vec::new()),
         }
     }
@@ -366,6 +368,14 @@ impl CodexTool for CapturingCodex {
             .map_err(|_| "codex session lock poisoned".to_string())?
             .push(request);
         self.session_result.clone()
+    }
+
+    async fn steer_session(&self, session_id: &str, text: &str) -> Result<(), String> {
+        self.steer_requests
+            .lock()
+            .map_err(|_| "codex steer lock poisoned".to_string())?
+            .push((session_id.to_string(), text.to_string()));
+        Ok(())
     }
 
     async fn planner_sessions(&self) -> Result<Vec<PlannerCodexSession>, String> {

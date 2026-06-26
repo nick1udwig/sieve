@@ -160,6 +160,8 @@ impl RuntimeOrchestrator {
                             "codex tool is not configured for this runtime".to_string(),
                         )
                     })?;
+                    let codex_request =
+                        codex_exec_request_with_default_cwd(codex_request, &request.cwd);
                     match codex.exec(codex_request.clone()).await {
                         Ok(result) => tool_results.push(PlannerToolResult::CodexExec {
                             request: codex_request,
@@ -179,6 +181,8 @@ impl RuntimeOrchestrator {
                             "codex tool is not configured for this runtime".to_string(),
                         )
                     })?;
+                    let codex_request =
+                        codex_session_request_with_default_cwd(codex_request, &request.cwd);
                     match codex.run_session(codex_request.clone()).await {
                         Ok(result) => tool_results.push(PlannerToolResult::CodexSession {
                             request: codex_request,
@@ -267,4 +271,32 @@ impl RuntimeOrchestrator {
             eprintln!("sieve-runtime contract validation failure");
         }
     }
+}
+
+fn codex_session_request_with_default_cwd(
+    mut request: sieve_types::CodexSessionRequest,
+    runtime_cwd: &str,
+) -> sieve_types::CodexSessionRequest {
+    if request
+        .cwd
+        .as_deref()
+        .is_none_or(|cwd| cwd.trim().is_empty())
+    {
+        request.cwd = Some(runtime_cwd.to_string());
+    }
+    request
+}
+
+fn codex_exec_request_with_default_cwd(
+    mut request: sieve_types::CodexExecRequest,
+    runtime_cwd: &str,
+) -> sieve_types::CodexExecRequest {
+    if request
+        .cwd
+        .as_deref()
+        .is_none_or(|cwd| cwd.trim().is_empty())
+    {
+        request.cwd = Some(runtime_cwd.to_string());
+    }
+    request
 }

@@ -78,6 +78,7 @@ LABEL org.opencontainers.image.title="sieve" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 ENV LANG=C.UTF-8 \
+    CODEX_HOME=/home/sieve/.sieve/state/codex-home \
     HOME=/home/sieve \
     PATH=/opt/sieve-tools/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
     SIEVE_CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:4500 \
@@ -89,7 +90,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends bash bubblewrap ca-certificates curl ffmpeg git jq libssl3 python3 strace tini tmux trash-cli \
     && if ! getent group "${SIEVE_GID}" >/dev/null; then groupadd --gid "${SIEVE_GID}" sieve; fi \
     && if ! getent passwd "${SIEVE_UID}" >/dev/null; then useradd --uid "${SIEVE_UID}" --gid "${SIEVE_GID}" --create-home --home-dir /home/sieve --shell /bin/bash sieve; fi \
-    && mkdir -p /workspace /home/sieve/.sieve \
+    && mkdir -p /workspace /home/sieve/.sieve /home/sieve/.sieve/state/codex-home \
     && chown -R "${SIEVE_UID}:${SIEVE_GID}" /workspace /home/sieve \
     && rm -rf /var/lib/apt/lists/*
 

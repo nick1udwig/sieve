@@ -35,6 +35,8 @@ pub trait TelegramEventBridge: Send + Sync {
 
     fn submit_approval(&self, approval: ApprovalResolvedEvent);
 
+    fn submit_codex_steer(&self, _steer: TelegramCodexSteer) {}
+
     fn submit_prompt(&self, _prompt: TelegramPrompt) {}
 }
 
@@ -103,6 +105,12 @@ pub struct TelegramPrompt {
     pub text: String,
     pub modality: InteractionModality,
     pub media_file_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramCodexSteer {
+    pub session_id: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

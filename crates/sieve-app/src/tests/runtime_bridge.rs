@@ -1,4 +1,57 @@
 use super::*;
+use async_trait::async_trait;
+
+struct TestSteerCodex {
+    steers: std::sync::Mutex<Vec<(String, String)>>,
+}
+
+impl TestSteerCodex {
+    fn new() -> Self {
+        Self {
+            steers: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn steers(&self) -> Vec<(String, String)> {
+        self.steers.lock().expect("codex steer lock").clone()
+    }
+}
+
+#[async_trait]
+impl sieve_runtime::CodexTool for TestSteerCodex {
+    async fn exec(
+        &self,
+        _request: sieve_types::CodexExecRequest,
+    ) -> Result<sieve_runtime::CodexExecToolResult, String> {
+        Err("unused".to_string())
+    }
+
+    async fn run_task(
+        &self,
+        _request: sieve_types::CodexSessionRequest,
+    ) -> Result<sieve_runtime::CodexSessionToolResult, String> {
+        Err("unused".to_string())
+    }
+
+    async fn run_session(
+        &self,
+        _request: sieve_types::CodexSessionRequest,
+    ) -> Result<sieve_runtime::CodexSessionToolResult, String> {
+        Err("unused".to_string())
+    }
+
+    async fn steer_session(&self, session_id: &str, text: &str) -> Result<(), String> {
+        self.steers
+            .lock()
+            .expect("codex steer lock")
+            .push((session_id.to_string(), text.to_string()));
+        Ok(())
+    }
+
+    async fn planner_sessions(&self) -> Result<Vec<sieve_types::PlannerCodexSession>, String> {
+        Ok(Vec::new())
+    }
+}
 
 #[test]
 fn fanout_runtime_event_log_allocates_session_scoped_turn_ids() {
@@ -33,7 +86,7 @@ fn fanout_runtime_event_log_allocates_session_scoped_turn_ids() {
 #[tokio::test]
 async fn runtime_bridge_submit_approval_resolves_pending_request() {
     let approval_bus = Arc::new(InProcessApprovalBus::new());
-    let bridge = RuntimeBridge::new(approval_bus.clone());
+    let bridge = RuntimeBridge::new(approval_bus.clone(), None);
     let request_id = ApprovalRequestId("approval-test".to_string());
     approval_bus
         .publish_requested(ApprovalRequestedEvent {
@@ -80,7 +133,7 @@ async fn runtime_bridge_submit_approval_resolves_pending_request() {
 async fn runtime_bridge_submit_prompt_enqueues_telegram_input() {
     let approval_bus = Arc::new(InProcessApprovalBus::new());
     let (tx, mut rx) = tokio_mpsc::unbounded_channel();
-    let bridge = RuntimeBridge::with_prompt_tx(approval_bus, tx);
+    let bridge = RuntimeBridge::with_prompt_tx(approval_bus, None, tx);
 
     bridge.submit_prompt(TelegramPrompt {
         chat_id: 42,
@@ -96,6 +149,37 @@ async fn runtime_bridge_submit_prompt_enqueues_telegram_input() {
     assert_eq!(prompt.text, "check logs");
     assert_eq!(prompt.modality, InteractionModality::Text);
     assert!(prompt.media_file_id.is_none());
+}
+
+#[tokio::test]
+async fn runtime_bridge_submit_codex_steer_forwards_to_codex_tool() {
+    let approval_bus = Arc::new(InProcessApprovalBus::new());
+    let codex = Arc::new(TestSteerCodex::new());
+    let bridge = RuntimeBridge::new(approval_bus, Some(codex.clone()));
+
+    bridge.submit_codex_steer(sieve_interface_telegram::TelegramCodexSteer {
+        session_id: "codex-session-1".to_string(),
+        text: "focus on failing tests first".to_string(),
+    });
+
+    timeout(Duration::from_millis(200), async {
+        loop {
+            if !codex.steers().is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("steer request should be forwarded");
+
+    assert_eq!(
+        codex.steers(),
+        vec![(
+            "codex-session-1".to_string(),
+            "focus on failing tests first".to_string()
+        )]
+    );
 }
 
 #[tokio::test]

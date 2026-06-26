@@ -176,6 +176,25 @@ fn planner_net_connect_scope(scope: &str) -> String {
     canonicalize_net_origin_scope(scope).unwrap_or_else(|| scope.to_string())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IngressMode {
+    spawn_stdin_loop: bool,
+    spawn_telegram_loop: bool,
+}
+
+fn ingress_mode_for_command(command: &cli::CliCommand) -> IngressMode {
+    match command {
+        cli::CliCommand::Agent => IngressMode {
+            spawn_stdin_loop: true,
+            spawn_telegram_loop: true,
+        },
+        cli::CliCommand::Run { .. } | cli::CliCommand::Auth(_) => IngressMode {
+            spawn_stdin_loop: false,
+            spawn_telegram_loop: false,
+        },
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_dotenv_if_present().map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
@@ -193,10 +212,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CliCommand::Run { prompt } => Some(prompt.clone()),
         _ => None,
     };
+    let ingress_mode = ingress_mode_for_command(&cli_command);
     let single_command_mode = cli_prompt.is_some();
 
-    let mut cfg =
-        AppConfig::from_env().map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    let mut cfg = AppConfig::from_env_with_telegram(ingress_mode.spawn_telegram_loop)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
     let policy_toml = fs::read_to_string(&cfg.policy_path)?;
     let policy = TomlPolicyEngine::from_toml_str(&policy_toml)?;
     cfg.allowed_net_connect_scopes = planner_allowed_net_connect_scopes(&policy);
@@ -215,24 +235,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let summary_model: Arc<dyn SummaryModel> = Arc::new(OpenAiSummaryModel::from_env()?);
     let approval_bus = Arc::new(InProcessApprovalBus::new());
     let (event_tx, event_rx) = mpsc::channel();
-    let (prompt_tx, prompt_rx, _stdin_thread, bridge) = if single_command_mode {
-        (None, None, None, RuntimeBridge::new(approval_bus.clone()))
-    } else {
+    let event_log = Arc::new(FanoutRuntimeEventLog::new(
+        cfg.event_log_path.clone(),
+        event_tx.clone(),
+    )?);
+    let codex: Arc<dyn sieve_runtime::CodexTool> = Arc::new(CodexManager::new(
+        cfg.codex_store_path.clone(),
+        approval_bus.clone(),
+        event_log.clone(),
+    )?);
+    let (prompt_tx, prompt_rx, _stdin_thread, bridge) = if ingress_mode.spawn_stdin_loop {
         let (prompt_tx, prompt_rx) = tokio_mpsc::unbounded_channel();
         let stdin_thread = spawn_stdin_prompt_loop(prompt_tx.clone());
         (
             Some(prompt_tx.clone()),
             Some(prompt_rx),
             Some(stdin_thread),
-            RuntimeBridge::with_prompt_tx(approval_bus.clone(), prompt_tx),
+            Some(RuntimeBridge::with_prompt_tx(
+                approval_bus.clone(),
+                Some(codex.clone()),
+                prompt_tx,
+            )),
         )
+    } else {
+        (None, None, None, None)
     };
-    let telegram_thread = spawn_telegram_loop(&cfg, bridge, event_rx);
+    let telegram_thread = if ingress_mode.spawn_telegram_loop {
+        Some(spawn_telegram_loop(
+            &cfg,
+            bridge.expect("telegram ingress bridge missing"),
+            event_rx,
+        ))
+    } else {
+        None
+    };
     let typing_tx = event_tx.clone();
-    let event_log = Arc::new(FanoutRuntimeEventLog::new(
-        cfg.event_log_path.clone(),
-        event_tx,
-    )?);
     let _sieve_home_watcher = sieve_home::spawn_sieve_home_git_watcher(cfg.sieve_home.clone());
 
     let automation = match prompt_tx {
@@ -243,11 +280,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?)),
         None => None,
     };
-    let codex = Arc::new(CodexManager::new(
-        cfg.codex_store_path.clone(),
-        approval_bus.clone(),
-        event_log.clone(),
-    )?);
     let runtime = Arc::new(RuntimeOrchestrator::new(RuntimeDeps {
         shell: Arc::new(BasicShellAnalyzer),
         summaries: Arc::new(DefaultCommandSummarizer),
@@ -312,7 +344,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
         drop(runtime);
         drop(event_log);
-        let _ = telegram_thread.join();
+        if let Some(telegram_thread) = telegram_thread {
+            let _ = telegram_thread.join();
+        }
     } else {
         run_agent_loop(
             runtime.clone(),

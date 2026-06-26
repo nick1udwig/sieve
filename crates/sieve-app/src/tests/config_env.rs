@@ -357,6 +357,25 @@ fn app_config_from_env_rejects_invalid_heartbeat_duration() {
 }
 
 #[test]
+fn app_config_from_env_without_telegram_allows_one_shot_mode() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    std::env::set_var("SIEVE_HOME", "/tmp/sieve-config-home");
+    std::env::set_var("SIEVE_RUNTIME_CWD", "/tmp/sieve-runtime");
+    std::env::set_var("SIEVE_LCM_ENABLED", "0");
+
+    let cfg = AppConfig::from_env_with_telegram(false).expect("config");
+    assert_eq!(cfg.telegram_bot_token, "");
+    assert_eq!(cfg.telegram_chat_id, 0);
+    assert_eq!(
+        cfg.heartbeat_file_path,
+        PathBuf::from("/tmp/sieve-runtime/HEARTBEAT.md")
+    );
+}
+
+#[test]
 fn initialize_sieve_home_from_env_seeds_default_home_before_model_config_errors() {
     let _lock = env_test_lock().lock().expect("env lock");
     let restore = EnvRestore::capture(config_env_keys());

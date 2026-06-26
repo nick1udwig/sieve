@@ -319,7 +319,7 @@ impl AppE2eHarness {
     ) -> Result<TelegramFlowResult, String> {
         let poller = SharedTelegramPoller::default();
         let (prompt_tx, mut prompt_rx) = tokio_mpsc::unbounded_channel();
-        let bridge = RuntimeBridge::with_prompt_tx(self.approval_bus.clone(), prompt_tx);
+        let bridge = RuntimeBridge::with_prompt_tx(self.approval_bus.clone(), None, prompt_tx);
         let mut adapter = TestTelegramAdapter::new(
             TelegramAdapterConfig {
                 chat_id: self.cfg.telegram_chat_id,

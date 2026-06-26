@@ -73,11 +73,14 @@ Commands and coverage notes: [docs/running.md](docs/running.md#testing).
 ## Docker
 
 A multi-arch Docker image is published to Docker Hub as `nick1udwig/sieve`.
-The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, a non-root `1000:1000` runtime user, and `SIEVE_CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:4500`.
+The container defaults to `HOME=/home/sieve`, `SIEVE_HOME=/home/sieve/.sieve`, `CODEX_HOME=/home/sieve/.sieve/state/codex-home`, a non-root `1000:1000` runtime user, and `SIEVE_CODEX_APP_SERVER_WS_URL=ws://127.0.0.1:4500`.
 Startup creates tmux session `codex` for `codex app-server` and tmux session `sieve` for `sieve-app`.
 Create the host state dir as the real user before first run so Docker does not create it as `root`.
-Sieve loads `/workspace/.env` itself on startup, so the safest Docker path is to mount the repo and not pass `--env-file`.
+Docker startup loads `/workspace/.env` before either tmux session starts, so the safest Docker path is to mount the repo and not pass `--env-file`.
+If `CODEX_HOME/auth.json` is missing, Docker startup mirrors Sieve Codex auth from `$SIEVE_HOME/state/auth.json` into `$CODEX_HOME/auth.json` so the shared Codex app-server can authenticate.
 If you do use `--env-file`, keep scalar values unquoted because Docker keeps quotes literal.
+If you want Codex to work on a repo other than the mounted `$PWD`, mount that repo too and set `SIEVE_RUNTIME_CWD` to the mounted path inside the container.
+`run --prompt` is one-shot mode; it skips Telegram ingress, does not require Telegram env, and exits after printing the answer.
 
 Pull once:
 
@@ -97,11 +100,21 @@ Run long-lived mode:
 HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run -d --restart unless-stopped --name sieve-local --security-opt seccomp=unconfined -v "$PWD:/workspace" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest
 ```
 
+Run against another repo mounted from `~/git`:
+
+```bash
+HOST_HOME="$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)" && if [ -n "${SUDO_USER:-}" ]; then sudo -u "$SUDO_USER" mkdir -p "$HOST_HOME/.sieve"; else mkdir -p "$HOST_HOME/.sieve"; fi && docker run --rm -it --name sieve-local --security-opt seccomp=unconfined -e SIEVE_RUNTIME_CWD=/worktrees/sieve-x-scrape -v "$HOME/git:/worktrees" -v "$HOST_HOME/.sieve:/home/sieve/.sieve" nick1udwig/sieve:latest run --prompt "review workspace status"
+```
+
 `seccomp` is Docker's Linux syscall filter.
 `--security-opt seccomp=unconfined` disables the default filter so `bubblewrap` and `strace` work inside the container.
+Docker defaults to foreground logs without auto-attaching tmux.
+Set `-e SIEVE_DOCKER_ATTACH=1` if you want startup to attach directly to the `sieve` tmux session.
 Inspect tmux sessions with `docker exec -it sieve-local tmux list-sessions`.
 Attach to Sieve with `docker exec -it sieve-local tmux attach -t sieve`.
 Attach to the shared Codex app-server with `docker exec -it sieve-local tmux attach -t codex`.
+Reply to a Codex status card in Telegram with plain text to steer the active Codex turn.
+Reply `yes <note>`, `approve <note>`, or `always <note>` to a Codex approval message to resolve approval and pass the note through to Codex in the same turn.
 
 ## Ansible
 

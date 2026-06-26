@@ -1,6 +1,6 @@
 use sieve_types::{ApprovalRequestedEvent, CodexSessionLifecycleStatus, CodexSessionStatusEvent};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TelegramApprovalAction {
     ApproveOnce,
     ApproveAlways,
@@ -11,6 +11,12 @@ pub(crate) enum TelegramApprovalAction {
 pub(crate) struct TelegramApprovalCommand {
     pub(crate) action: TelegramApprovalAction,
     pub(crate) request_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TelegramInlineApprovalAction {
+    pub(crate) action: TelegramApprovalAction,
+    pub(crate) tail: String,
 }
 
 pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
@@ -39,13 +45,35 @@ pub(crate) fn parse_command(text: &str) -> Option<TelegramApprovalCommand> {
     Some(TelegramApprovalCommand { action, request_id })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_short_action(text: &str) -> Option<TelegramApprovalAction> {
-    match text.trim().to_ascii_lowercase().as_str() {
-        "yes" | "y" | "👍" => Some(TelegramApprovalAction::ApproveOnce),
-        "always" | "a" | "❤️" | "❤" | "♥️" => Some(TelegramApprovalAction::ApproveAlways),
-        "no" | "n" | "👎" => Some(TelegramApprovalAction::Deny),
-        _ => None,
+    parse_inline_approval_action(text)
+        .filter(|parsed| parsed.tail.is_empty())
+        .map(|parsed| parsed.action)
+}
+
+pub(crate) fn parse_inline_approval_action(text: &str) -> Option<TelegramInlineApprovalAction> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
     }
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let head = parts
+        .next()?
+        .trim_end_matches(|ch: char| matches!(ch, ':' | ',' | ';'));
+    let tail = parts.next().unwrap_or_default().trim().to_string();
+    let action = match head.to_ascii_lowercase().as_str() {
+        "yes" | "y" | "approve" | "approved" => TelegramApprovalAction::ApproveOnce,
+        "always" | "a" => TelegramApprovalAction::ApproveAlways,
+        "no" | "n" | "deny" | "denied" => TelegramApprovalAction::Deny,
+        _ => match head {
+            "👍" => TelegramApprovalAction::ApproveOnce,
+            "❤️" | "❤" | "♥️" => TelegramApprovalAction::ApproveAlways,
+            "👎" => TelegramApprovalAction::Deny,
+            _ => return None,
+        },
+    };
+    Some(TelegramInlineApprovalAction { action, tail })
 }
 
 pub(crate) fn parse_reaction_action(emoji: &[String]) -> Option<TelegramApprovalAction> {
@@ -164,6 +192,10 @@ mod tests {
             Some(TelegramApprovalAction::ApproveOnce)
         );
         assert_eq!(
+            parse_short_action("approved"),
+            Some(TelegramApprovalAction::ApproveOnce)
+        );
+        assert_eq!(
             parse_short_action("Y"),
             Some(TelegramApprovalAction::ApproveOnce)
         );
@@ -186,6 +218,14 @@ mod tests {
         assert_eq!(parse_short_action("n"), Some(TelegramApprovalAction::Deny));
         assert_eq!(parse_short_action("👎"), Some(TelegramApprovalAction::Deny));
         assert_eq!(parse_short_action("maybe"), None);
+    }
+
+    #[test]
+    fn parse_inline_approval_action_preserves_steer_tail() {
+        let parsed =
+            parse_inline_approval_action("approve focus on failing tests first").expect("action");
+        assert_eq!(parsed.action, TelegramApprovalAction::ApproveOnce);
+        assert_eq!(parsed.tail, "focus on failing tests first");
     }
 
     #[test]
