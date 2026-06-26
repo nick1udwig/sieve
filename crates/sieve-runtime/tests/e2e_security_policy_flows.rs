@@ -175,6 +175,54 @@ require_trusted_control_for_mutating = true
 }
 
 #[tokio::test]
+async fn gws_sanitize_template_requires_modelarmor_sink_permission() {
+    let policy_toml = r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://www.googleapis.com/"
+
+[[allow_capabilities]]
+resource = "net"
+action = "write"
+scope = "https://modelarmor.googleapis.com/"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#;
+    let (runtime, _approval_bus, _event_log) = mk_runtime(
+        Arc::new(BasicShellAnalyzer),
+        Arc::new(DefaultCommandSummarizer),
+        policy_toml,
+        Arc::new(RecordingQuarantine::default()),
+    );
+
+    let disposition = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-gws-sanitize".to_string()),
+            cwd: "/tmp".to_string(),
+            script: "gws drive files list --sanitize projects/p/locations/l/templates/t"
+                .to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+
+    match disposition {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("value argv:5 cannot flow to sink"));
+            assert!(reason.contains("https://modelarmor.googleapis.com/"));
+        }
+        other => panic!("expected modelarmor sink denial, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn curl_post_payload_sink_enforced_then_declassify_allows_flow() {
     let policy_toml = r#"
 [[allow_capabilities]]

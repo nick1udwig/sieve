@@ -203,6 +203,14 @@ fn gws_sanitize_adds_modelarmor_write_capability() {
             }
         ]
     );
+    assert_eq!(
+        summary.sink_checks,
+        vec![SinkCheck {
+            argument_name: "--sanitize".to_string(),
+            sink: SinkKey("https://modelarmor.googleapis.com/".to_string()),
+            value_refs: vec![ValueRef("argv:5".to_string())],
+        }]
+    );
 }
 
 #[test]

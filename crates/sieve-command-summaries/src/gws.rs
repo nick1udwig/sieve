@@ -43,7 +43,7 @@ struct ParsedFlags {
     json: Option<FlagArg>,
     upload_path: Option<String>,
     output_path: Option<String>,
-    sanitize_template: Option<String>,
+    sanitize_template: Option<FlagArg>,
     unsupported_flags: Vec<String>,
     missing_value_flag: Option<String>,
     positionals: Vec<String>,
@@ -147,6 +147,9 @@ fn summarize_service(argv: &[String]) -> crate::SummaryOutcome {
             sink_checks.push(net_sink_check(flag, primary_origin));
         }
     }
+    if let Some(flag) = parsed.sanitize_template {
+        sink_checks.push(net_sink_check(flag, GWS_MODELARMOR_ORIGIN));
+    }
 
     known_outcome(CommandSummary {
         required_capabilities,
@@ -223,8 +226,9 @@ fn parse_flags(argv: &[String], start: usize, allow_resolve_refs: bool) -> Parse
             continue;
         }
         if let Some(parsed) = parse_flag_value(arg, "", "--sanitize", i, argv) {
-            handle_string_flag(
+            handle_tracked_flag(
                 parsed,
+                "--sanitize",
                 &mut out.sanitize_template,
                 &mut out.missing_value_flag,
             );
