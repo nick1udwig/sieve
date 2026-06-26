@@ -40,25 +40,14 @@ pub(crate) fn parse_automation_command(
         return Ok(Some(AutomationCommand::CronList));
     }
 
-    if let Some(rest) = trimmed.strip_prefix("/cron rm ") {
-        return Ok(Some(AutomationCommand::CronRemove {
-            job_id: rest.trim().to_string(),
-        }));
+    if let Some(job_id) = parse_cron_job_id_command(trimmed, &["/cron rm ", "/cron remove "]) {
+        return Ok(Some(AutomationCommand::CronRemove { job_id }));
     }
-    if let Some(rest) = trimmed.strip_prefix("/cron remove ") {
-        return Ok(Some(AutomationCommand::CronRemove {
-            job_id: rest.trim().to_string(),
-        }));
+    if let Some(job_id) = parse_cron_job_id_command(trimmed, &["/cron pause "]) {
+        return Ok(Some(AutomationCommand::CronPause { job_id }));
     }
-    if let Some(rest) = trimmed.strip_prefix("/cron pause ") {
-        return Ok(Some(AutomationCommand::CronPause {
-            job_id: rest.trim().to_string(),
-        }));
-    }
-    if let Some(rest) = trimmed.strip_prefix("/cron resume ") {
-        return Ok(Some(AutomationCommand::CronResume {
-            job_id: rest.trim().to_string(),
-        }));
+    if let Some(job_id) = parse_cron_job_id_command(trimmed, &["/cron resume "]) {
+        return Ok(Some(AutomationCommand::CronResume { job_id }));
     }
 
     let Some(rest) = trimmed.strip_prefix("/cron add ") else {
@@ -144,6 +133,13 @@ pub(crate) fn parse_automation_command(
         schedule,
         prompt: prompt.to_string(),
     }))
+}
+
+fn parse_cron_job_id_command(trimmed: &str, prefixes: &[&str]) -> Option<String> {
+    prefixes
+        .iter()
+        .find_map(|prefix| trimmed.strip_prefix(prefix))
+        .map(|rest| rest.trim().to_string())
 }
 
 pub(crate) fn automation_command_from_request(
@@ -286,6 +282,12 @@ mod tests {
         );
         assert_eq!(
             parse_automation_command("/cron rm cron-1", 1_000).expect("rm"),
+            Some(AutomationCommand::CronRemove {
+                job_id: "cron-1".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_automation_command("/cron remove cron-1", 1_000).expect("remove"),
             Some(AutomationCommand::CronRemove {
                 job_id: "cron-1".to_string(),
             })
