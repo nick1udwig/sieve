@@ -117,3 +117,39 @@ fn cron_schedule_produces_future_occurrence() {
         .expect("cron due");
     assert!(next > ts("2026-03-05T10:00:00Z"));
 }
+
+#[test]
+fn cron_schedule_describes_every_duration_with_largest_exact_unit() {
+    assert_eq!(
+        CronJobSchedule::Every {
+            every_ms: 86_400_000,
+            anchor_ms: 0,
+        }
+        .describe(),
+        "every 1d"
+    );
+    assert_eq!(
+        CronJobSchedule::Every {
+            every_ms: 3_600_000,
+            anchor_ms: 0,
+        }
+        .describe(),
+        "every 1h"
+    );
+    assert_eq!(
+        CronJobSchedule::Every {
+            every_ms: 90_000,
+            anchor_ms: 0,
+        }
+        .describe(),
+        "every 90s"
+    );
+    assert_eq!(
+        CronJobSchedule::Every {
+            every_ms: 1500,
+            anchor_ms: 0,
+        }
+        .describe(),
+        "every 1500ms"
+    );
+}

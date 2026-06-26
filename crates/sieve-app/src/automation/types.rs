@@ -474,17 +474,15 @@ fn normalize_context_key(context_key: Option<&str>) -> Option<String> {
 }
 
 fn render_duration_ms(duration_ms: u64) -> String {
-    if duration_ms.is_multiple_of(24 * 60 * 60_000) {
-        return format!("{}d", duration_ms / (24 * 60 * 60_000));
-    }
-    if duration_ms.is_multiple_of(60 * 60_000) {
-        return format!("{}h", duration_ms / (60 * 60_000));
-    }
-    if duration_ms.is_multiple_of(60_000) {
-        return format!("{}m", duration_ms / 60_000);
-    }
-    if duration_ms.is_multiple_of(1_000) {
-        return format!("{}s", duration_ms / 1_000);
+    for (factor_ms, suffix) in [
+        (86_400_000_u64, "d"),
+        (3_600_000_u64, "h"),
+        (60_000_u64, "m"),
+        (1_000_u64, "s"),
+    ] {
+        if duration_ms.is_multiple_of(factor_ms) {
+            return format!("{}{suffix}", duration_ms / factor_ms);
+        }
     }
     format!("{duration_ms}ms")
 }
