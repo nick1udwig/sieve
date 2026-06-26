@@ -101,7 +101,8 @@ fn summarize_service(argv: &[String]) -> crate::SummaryOutcome {
         GWS_API_ORIGIN
     };
 
-    let primary_action = if parsed.upload_path.is_some() || method_is_mutating(&method) {
+    let has_request_body = parsed.upload_path.is_some() || parsed.json.is_some();
+    let primary_action = if has_request_body || method_is_mutating(&method) {
         Action::Write
     } else {
         Action::Connect
