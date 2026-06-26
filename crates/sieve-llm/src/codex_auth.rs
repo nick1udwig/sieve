@@ -1,3 +1,4 @@
+use crate::clock::now_ms;
 use crate::LlmError;
 use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
@@ -387,13 +388,6 @@ fn extract_account_id(access_token: &str) -> Option<String> {
 pub(crate) fn trim_to_non_empty(raw: Option<String>) -> Option<String> {
     raw.map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn truncate_for_error(input: &str) -> String {

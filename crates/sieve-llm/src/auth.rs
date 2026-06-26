@@ -1,3 +1,4 @@
+use crate::clock::now_ms;
 use crate::codex_auth::{
     read_openai_codex_auth_file, refresh_openai_codex_access_token,
     resolve_openai_codex_auth_json_path, trim_to_non_empty, write_openai_codex_auth_file,
@@ -195,11 +196,4 @@ where
 {
     keys.into_iter()
         .find_map(|key| trim_to_non_empty(getter(&key)))
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }

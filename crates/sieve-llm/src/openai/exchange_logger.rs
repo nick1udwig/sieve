@@ -1,9 +1,9 @@
+use crate::clock::now_ms;
 use serde::Serialize;
 use serde_json::Value;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
 pub(crate) struct LlmExchangeLogger {
@@ -136,11 +136,4 @@ impl LlmExchangeLogger {
             );
         }
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
