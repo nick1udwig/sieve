@@ -4,6 +4,7 @@ use super::{
     StoredCodexSession,
 };
 use crate::json_util::to_json_value;
+use crate::logging::now_ms;
 use async_trait::async_trait;
 use serde::Serialize;
 use sieve_runtime::{CodexExecToolResult, CodexSessionToolResult, CodexTool, RuntimeEventLog};
@@ -17,7 +18,6 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
@@ -1425,13 +1425,6 @@ fn approval_action_to_codex_decision(action: ApprovalAction) -> &'static str {
 
 fn format_event_log_error(err: EventLogError) -> String {
     err.to_string()
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
