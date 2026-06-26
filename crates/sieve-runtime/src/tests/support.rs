@@ -289,13 +289,10 @@ impl AutomationTool for FailingAutomation {
 
 pub(crate) struct CapturingCodex {
     exec_result: Result<CodexExecToolResult, String>,
-    task_result: Result<CodexSessionToolResult, String>,
     session_result: Result<CodexSessionToolResult, String>,
     exec_requests: StdMutex<Vec<CodexExecRequest>>,
-    task_requests: StdMutex<Vec<CodexSessionRequest>>,
     session_requests: StdMutex<Vec<CodexSessionRequest>>,
     steer_requests: StdMutex<Vec<(String, String)>>,
-    planner_sessions: StdMutex<Vec<PlannerCodexSession>>,
 }
 
 impl CapturingCodex {
@@ -304,18 +301,14 @@ impl CapturingCodex {
         session_result: Result<CodexSessionToolResult, String>,
     ) -> Self {
         Self {
-            task_result: session_result.clone(),
             exec_result,
             session_result,
             exec_requests: StdMutex::new(Vec::new()),
-            task_requests: StdMutex::new(Vec::new()),
             session_requests: StdMutex::new(Vec::new()),
             steer_requests: StdMutex::new(Vec::new()),
-            planner_sessions: StdMutex::new(Vec::new()),
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn exec_requests(&self) -> Vec<CodexExecRequest> {
         self.exec_requests.lock().expect("codex exec lock").clone()
     }
@@ -325,16 +318,6 @@ impl CapturingCodex {
             .lock()
             .expect("codex session lock")
             .clone()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn task_requests(&self) -> Vec<CodexSessionRequest> {
-        self.task_requests.lock().expect("codex task lock").clone()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn set_planner_sessions(&self, sessions: Vec<PlannerCodexSession>) {
-        *self.planner_sessions.lock().expect("codex planner lock") = sessions;
     }
 }
 
@@ -350,13 +333,9 @@ impl CodexTool for CapturingCodex {
 
     async fn run_task(
         &self,
-        request: CodexSessionRequest,
+        _request: CodexSessionRequest,
     ) -> Result<CodexSessionToolResult, String> {
-        self.task_requests
-            .lock()
-            .map_err(|_| "codex task lock poisoned".to_string())?
-            .push(request);
-        self.task_result.clone()
+        self.session_result.clone()
     }
 
     async fn run_session(
@@ -379,11 +358,7 @@ impl CodexTool for CapturingCodex {
     }
 
     async fn planner_sessions(&self) -> Result<Vec<PlannerCodexSession>, String> {
-        Ok(self
-            .planner_sessions
-            .lock()
-            .map_err(|_| "codex planner lock poisoned".to_string())?
-            .clone())
+        Ok(Vec::new())
     }
 }
 
