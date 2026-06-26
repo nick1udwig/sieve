@@ -163,6 +163,28 @@ fn load_openai_api_key_from_env_falls_back_when_scoped_key_blank() {
 }
 
 #[test]
+fn load_provider_auth_trims_openai_api_key() {
+    let mut env_map = BTreeMap::new();
+    env_map.insert(
+        "SIEVE_PLANNER_OPENAI_API_KEY".to_string(),
+        "  scoped-key \n".to_string(),
+    );
+    env_map.insert("OPENAI_API_KEY".to_string(), "fallback-key".to_string());
+
+    let auth = load_provider_auth(
+        &["SIEVE_PLANNER"],
+        LlmProvider::OpenAi,
+        &map_getter(&env_map),
+    )
+    .unwrap();
+
+    let ProviderAuth::OpenAi { api_key } = auth else {
+        panic!("expected openai auth");
+    };
+    assert_eq!(api_key, "scoped-key");
+}
+
+#[test]
 fn load_provider_auth_reads_openai_codex_env() {
     let mut env_map = BTreeMap::new();
     env_map.insert(

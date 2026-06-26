@@ -119,22 +119,20 @@ fn load_openai_api_key(
     prefixes: &[&str],
     getter: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, LlmError> {
-    for prefix in prefixes {
-        let key_name = format!("{prefix}_OPENAI_API_KEY");
-        if let Some(key) = getter(&key_name).filter(|value| !value.trim().is_empty()) {
-            return Ok(key);
-        }
-    }
-
-    getter("OPENAI_API_KEY")
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            let first_prefix = prefixes.first().copied().unwrap_or("SIEVE_PLANNER");
-            let scoped_key_name = format!("{first_prefix}_OPENAI_API_KEY");
-            LlmError::Config(format!(
-                "missing OpenAI API key; set `{scoped_key_name}` or `OPENAI_API_KEY`"
-            ))
-        })
+    first_non_empty(
+        prefixes
+            .iter()
+            .map(|prefix| format!("{prefix}_OPENAI_API_KEY"))
+            .chain(std::iter::once("OPENAI_API_KEY".to_string())),
+        getter,
+    )
+    .ok_or_else(|| {
+        let first_prefix = prefixes.first().copied().unwrap_or("SIEVE_PLANNER");
+        let scoped_key_name = format!("{first_prefix}_OPENAI_API_KEY");
+        LlmError::Config(format!(
+            "missing OpenAI API key; set `{scoped_key_name}` or `OPENAI_API_KEY`"
+        ))
+    })
 }
 
 fn load_openai_codex_auth(
