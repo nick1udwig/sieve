@@ -1,4 +1,5 @@
 use super::heartbeat::build_heartbeat_prompt;
+use super::types::render_timestamp_ms;
 use super::{
     automation_command_from_request, load_automation_store, parse_automation_command,
     save_automation_store, AutomationCommand, AutomationStore, CronJob, CronJobStatus,
@@ -8,7 +9,6 @@ use crate::config::AppConfig;
 use crate::ingress::{IngressPrompt, PromptSource, TurnKind};
 use crate::turn::TurnOutcome;
 use async_trait::async_trait;
-use chrono::TimeZone;
 use sieve_runtime::{AutomationTool, AutomationToolResult, Clock};
 use sieve_types::{AutomationDeliveryMode, AutomationRequest, AutomationTarget, TrustedToolEffect};
 use std::path::PathBuf;
@@ -508,13 +508,7 @@ fn trusted_effect_for_added_job(job: &CronJob) -> TrustedToolEffect {
 
 fn render_optional_timestamp(value: Option<u64>) -> String {
     value
-        .map(|timestamp_ms| {
-            chrono::Utc
-                .timestamp_millis_opt(timestamp_ms as i64)
-                .single()
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_else(|| timestamp_ms.to_string())
-        })
+        .map(render_timestamp_ms)
         .unwrap_or_else(|| "disabled".to_string())
 }
 
