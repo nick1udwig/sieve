@@ -1,5 +1,4 @@
-use super::{AutomationStore, MAIN_SESSION_KEY};
-use chrono::{TimeZone, Utc};
+use super::{types::render_timestamp_ms, AutomationStore, MAIN_SESSION_KEY};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -56,11 +55,7 @@ pub(crate) fn build_heartbeat_prompt(
         return Ok(None);
     }
 
-    let now = Utc
-        .timestamp_millis_opt(now_ms as i64)
-        .single()
-        .map(|dt| dt.to_rfc3339())
-        .unwrap_or_else(|| now_ms.to_string());
+    let now = render_timestamp_ms(now_ms);
 
     let prompt = if queued_events.is_empty() {
         HEARTBEAT_IDLE_PROMPT
@@ -124,13 +119,6 @@ fn load_heartbeat_instructions(
             heartbeat_file_path.display()
         )),
     }
-}
-
-fn render_timestamp_ms(timestamp_ms: u64) -> String {
-    Utc.timestamp_millis_opt(timestamp_ms as i64)
-        .single()
-        .map(|dt| dt.to_rfc3339())
-        .unwrap_or_else(|| timestamp_ms.to_string())
 }
 
 #[cfg(test)]

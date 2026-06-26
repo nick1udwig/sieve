@@ -487,7 +487,7 @@ fn render_duration_ms(duration_ms: u64) -> String {
     format!("{duration_ms}ms")
 }
 
-fn render_timestamp_ms(timestamp_ms: u64) -> String {
+pub(super) fn render_timestamp_ms(timestamp_ms: u64) -> String {
     Utc.timestamp_millis_opt(timestamp_ms as i64)
         .single()
         .map(|dt| dt.to_rfc3339())
