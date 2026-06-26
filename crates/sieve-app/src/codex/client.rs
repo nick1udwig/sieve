@@ -30,8 +30,7 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 enum AppServerTransport {
     Stdio {
-        #[allow(dead_code)]
-        child: Child,
+        _child: Child,
         stdin: ChildStdin,
         stdout: Lines<BufReader<ChildStdout>>,
     },
@@ -146,7 +145,7 @@ impl AppServerClient {
 
         Ok(Self {
             transport: AppServerTransport::Stdio {
-                child,
+                _child: child,
                 stdin,
                 stdout: BufReader::new(stdout).lines(),
             },
