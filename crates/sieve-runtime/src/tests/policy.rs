@@ -27,7 +27,45 @@ require_trusted_control_for_mutating = true
     match disposition {
         RuntimeDisposition::Denied { reason } => {
             assert!(reason.contains("missing capability"));
-            assert!(reason.contains("dst.txt"));
+            assert!(reason.contains("src.txt"));
+        }
+        other => panic!("expected denied disposition, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cp_requires_source_read_capability_with_real_policy() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+        r#"
+[[allow_capabilities]]
+resource = "fs"
+action = "write"
+scope = "/tmp/workspace/dst.txt"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = true
+"#,
+    );
+
+    let disposition = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-cp-read".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "cp src.txt dst.txt".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("runtime ok");
+
+    match disposition {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("missing capability"));
+            assert!(reason.contains("src.txt"));
         }
         other => panic!("expected denied disposition, got {other:?}"),
     }
@@ -37,6 +75,11 @@ require_trusted_control_for_mutating = true
 async fn cp_relative_destination_matches_absolute_policy_scope() {
     let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
         r#"
+[[allow_capabilities]]
+resource = "fs"
+action = "read"
+scope = "/tmp/workspace/src.txt"
+
 [[allow_capabilities]]
 resource = "fs"
 action = "write"

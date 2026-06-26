@@ -268,6 +268,11 @@ async fn n_mainline_execution_runs_real_command_and_reports_exit_code() {
         r#"
 [[allow_capabilities]]
 resource = "fs"
+action = "read"
+scope = "{}"
+
+[[allow_capabilities]]
+resource = "fs"
 action = "write"
 scope = "{}"
 
@@ -276,6 +281,7 @@ violation_mode = "deny"
 trusted_control = true
 require_trusted_control_for_mutating = true
 "#,
+        src.to_string_lossy(),
         dst.to_string_lossy()
     );
     let (runtime, _approval_bus, _event_log) = mk_runtime(

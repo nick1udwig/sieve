@@ -60,18 +60,25 @@ fn trash_unknown_flag_routes_to_unknown() {
 }
 
 #[test]
-fn cp_maps_destination_to_fs_write_capability() {
+fn cp_maps_source_read_and_destination_write_capabilities() {
     let out = summarize_argv(&argv(&["cp", "a.txt", "b.txt"]));
 
     assert_eq!(out.knowledge, CommandKnowledge::Known);
     let summary = out.summary.expect("expected summary");
     assert_eq!(
         summary.required_capabilities,
-        vec![Capability {
-            resource: Resource::Fs,
-            action: Action::Write,
-            scope: "b.txt".to_string(),
-        }]
+        vec![
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "a.txt".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "b.txt".to_string(),
+            }
+        ]
     );
 }
 

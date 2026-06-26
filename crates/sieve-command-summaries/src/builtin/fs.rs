@@ -170,7 +170,24 @@ fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {
     }
 
     let destination = positionals.last().cloned().expect("checked above");
-    Some(known_fs_outcome(vec![destination], Action::Write))
+    let mut required_capabilities = Vec::with_capacity(positionals.len());
+    required_capabilities.extend(positionals[..positionals.len() - 1].iter().map(|scope| {
+        Capability {
+            resource: Resource::Fs,
+            action: Action::Read,
+            scope: scope.clone(),
+        }
+    }));
+    required_capabilities.push(Capability {
+        resource: Resource::Fs,
+        action: Action::Write,
+        scope: destination,
+    });
+    Some(known_outcome(CommandSummary {
+        required_capabilities,
+        sink_checks: Vec::new(),
+        unsupported_flags: Vec::new(),
+    }))
 }
 
 fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {

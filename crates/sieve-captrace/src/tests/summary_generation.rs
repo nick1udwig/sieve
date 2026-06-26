@@ -116,11 +116,16 @@ async fn filters_non_fixture_paths_from_cp_trace() {
 
     assert!(summary.required_capabilities.contains(&Capability {
         resource: Resource::Fs,
+        action: Action::Read,
+        scope: TOKEN_IN_FILE.to_string(),
+    }));
+    assert!(summary.required_capabilities.contains(&Capability {
+        resource: Resource::Fs,
         action: Action::Write,
         scope: TOKEN_OUT_FILE.to_string(),
     }));
-    assert_eq!(summary.required_capabilities.len(), 1);
-    assert!(cp_variant.matches_existing_summary == Some(false));
+    assert_eq!(summary.required_capabilities.len(), 2);
+    assert!(cp_variant.matches_existing_summary == Some(true));
 
     assert!(trace_summary.required_capabilities.contains(&Capability {
         resource: Resource::Fs,
