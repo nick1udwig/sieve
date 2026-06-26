@@ -131,6 +131,36 @@ fn touch_with_time_flag_maps_to_fs_write() {
 }
 
 #[test]
+fn touch_with_reference_maps_reference_read_and_target_write() {
+    for args in [
+        &["touch", "-r", "template.txt", "file.txt"][..],
+        &["touch", "-rtemplate.txt", "file.txt"],
+        &["touch", "--reference", "template.txt", "file.txt"],
+        &["touch", "--reference=template.txt", "file.txt"],
+    ] {
+        let out = summarize_argv(&argv(args));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![
+                Capability {
+                    resource: Resource::Fs,
+                    action: Action::Read,
+                    scope: "template.txt".to_string(),
+                },
+                Capability {
+                    resource: Resource::Fs,
+                    action: Action::Write,
+                    scope: "file.txt".to_string(),
+                }
+            ]
+        );
+    }
+}
+
+#[test]
 fn chmod_maps_targets_to_fs_write() {
     let out = summarize_argv(&argv(&["chmod", "-R", "755", "bin", "out"]));
 

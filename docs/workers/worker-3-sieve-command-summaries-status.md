@@ -4,6 +4,10 @@ Date: 2026-02-26
 Worker: 3
 Owned crate: `crates/sieve-command-summaries`
 
+## 2026-06-26 update
+
+- `touch -r REF PATH` and `touch --reference=REF PATH` now require `fs.read(REF) + fs.write(PATH)`.
+
 ## 2026-03-05 update
 
 - Added `gws` command summary support for `schema` and generic service/resource/method API calls.
@@ -54,6 +58,7 @@ Owned crate: `crates/sieve-command-summaries`
   - `mv SRC DST` -> `fs.write(SRC) + fs.write(DST)`
   - `mkdir PATH` -> `fs.write(PATH)`
   - `touch PATH` -> `fs.write(PATH)`
+  - `touch -r REF PATH` -> `fs.read(REF) + fs.write(PATH)`
   - `chmod MODE PATH...` -> `fs.write(PATH...)`
   - `chown OWNER PATH...` -> `fs.write(PATH...)`
   - `tee FILE...` -> `fs.write(FILE...)`; `tee -a FILE...` -> `fs.append(FILE...)`
