@@ -196,6 +196,14 @@ fn parse_event_log_path_uses_sieve_home_when_set() {
 }
 
 #[test]
+fn parse_sieve_home_falls_back_when_sieve_home_blank() {
+    assert_eq!(
+        parse_sieve_home(Some("   ".to_string()), Some("/home/alice".to_string())),
+        PathBuf::from("/home/alice/.sieve")
+    );
+}
+
+#[test]
 fn automation_store_path_uses_sieve_home_state_dir() {
     assert_eq!(
         crate::config::automation_store_path(Path::new("/var/sieve")),

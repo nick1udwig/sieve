@@ -142,23 +142,22 @@ fn required_i64_env_if(key: &str, required: bool) -> Result<i64, String> {
 }
 
 pub(crate) fn parse_policy_path(raw: Option<String>) -> PathBuf {
-    match raw.map(|value| value.trim().to_string()) {
-        Some(value) if !value.is_empty() => PathBuf::from(value),
-        _ => PathBuf::from(DEFAULT_POLICY_PATH),
-    }
+    trim_to_non_empty(raw)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_POLICY_PATH))
 }
 
 pub(crate) fn parse_sieve_home(
     raw_sieve_home: Option<String>,
     raw_home: Option<String>,
 ) -> PathBuf {
-    match raw_sieve_home.map(|value| value.trim().to_string()) {
-        Some(value) if !value.is_empty() => PathBuf::from(value),
-        _ => match raw_home.map(|value| value.trim().to_string()) {
-            Some(value) if !value.is_empty() => PathBuf::from(value).join(DEFAULT_SIEVE_DIR_NAME),
-            _ => PathBuf::from(DEFAULT_SIEVE_DIR_NAME),
-        },
-    }
+    trim_to_non_empty(raw_sieve_home)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            trim_to_non_empty(raw_home)
+                .map(|home| PathBuf::from(home).join(DEFAULT_SIEVE_DIR_NAME))
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_SIEVE_DIR_NAME))
+        })
 }
 
 pub(crate) fn runtime_event_log_path(sieve_home: &Path) -> PathBuf {
@@ -268,9 +267,11 @@ fn parse_optional_duration_env(key: &str) -> Result<Option<u64>, String> {
 }
 
 fn optional_non_empty_env(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
+    trim_to_non_empty(env::var(key).ok())
+}
+
+fn trim_to_non_empty(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
