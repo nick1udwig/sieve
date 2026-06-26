@@ -390,11 +390,16 @@ fn untrack_never_commit_paths(sieve_home: &Path) -> Result<Vec<String>, String> 
 }
 
 fn matches_bucket(class: SieveHomePathClass, bucket: SieveHomeCommitBucket) -> bool {
-    match (class, bucket) {
-        (SieveHomePathClass::Immediate, SieveHomeCommitBucket::Immediate) => true,
-        (SieveHomePathClass::Periodic, SieveHomeCommitBucket::Periodic) => true,
-        _ => false,
-    }
+    matches!(
+        (class, bucket),
+        (
+            SieveHomePathClass::Immediate,
+            SieveHomeCommitBucket::Immediate
+        ) | (
+            SieveHomePathClass::Periodic,
+            SieveHomeCommitBucket::Periodic
+        )
+    )
 }
 
 fn staged_commit_message(bucket: SieveHomeCommitBucket, paths: &[String]) -> String {

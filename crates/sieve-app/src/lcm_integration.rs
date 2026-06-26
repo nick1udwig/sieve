@@ -223,7 +223,7 @@ fn build_compaction_summarize(
             run_id: run_id.clone(),
             ref_id: format!("lcm-compaction:{lane}:{}", Uuid::new_v4()),
             content: render_compaction_request(&text, aggressive, options.as_ref()),
-            byte_count: text.as_bytes().len() as u64,
+            byte_count: text.len() as u64,
             line_count: text.lines().count() as u64,
         };
         let model = model.clone();

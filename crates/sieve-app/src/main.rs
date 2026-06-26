@@ -222,8 +222,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cfg.allowed_net_connect_scopes = planner_allowed_net_connect_scopes(&policy);
     let lcm = if cfg.lcm.enabled {
         Some(Arc::new(
-            LcmIntegration::new(cfg.lcm.clone())
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
+            LcmIntegration::new(cfg.lcm.clone()).map_err(io::Error::other)?,
         ))
     } else {
         None

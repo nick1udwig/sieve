@@ -316,9 +316,7 @@ impl AppServerClient {
                     .map_err(|err| format!("flush codex app-server request failed: {err}"))
             }
             AppServerTransport::WebSocket { socket } => socket
-                .send(tokio_tungstenite::tungstenite::Message::Text(
-                    encoded.into(),
-                ))
+                .send(tokio_tungstenite::tungstenite::Message::Text(encoded))
                 .await
                 .map_err(|err| format!("codex app-server write failed: {err}")),
         }

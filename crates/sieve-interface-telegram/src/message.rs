@@ -58,9 +58,7 @@ pub(crate) fn parse_inline_approval_action(text: &str) -> Option<TelegramInlineA
         return None;
     }
     let mut parts = trimmed.splitn(2, char::is_whitespace);
-    let head = parts
-        .next()?
-        .trim_end_matches([':', ',', ';']);
+    let head = parts.next()?.trim_end_matches([':', ',', ';']);
     let tail = parts.next().unwrap_or_default().trim().to_string();
     let action = match head.to_ascii_lowercase().as_str() {
         "yes" | "y" | "approve" | "approved" => TelegramApprovalAction::ApproveOnce,

@@ -38,7 +38,7 @@ fn planner_step_trace_includes_opaque_handle_products_without_raw_ids() {
     };
 
     let mut store = PlannerOpaqueHandleStore::default();
-    let products = store.record_step_products(&[tool_result.clone()]);
+    let products = store.record_step_products(std::slice::from_ref(&tool_result));
     let trace = planner_step_trace_messages(
         1,
         &[tool_result],
@@ -83,7 +83,7 @@ fn planner_step_trace_includes_gws_schema_cli_shape_product() {
     };
 
     let mut store = PlannerOpaqueHandleStore::default();
-    let products = store.record_step_products(&[tool_result.clone()]);
+    let products = store.record_step_products(std::slice::from_ref(&tool_result));
     let trace = planner_step_trace_messages(
         2,
         &[tool_result],

@@ -1611,14 +1611,28 @@ for line in sys.stdin:
 
     #[tokio::test]
     async fn codex_manager_session_normalizes_tilde_paths_before_turn_start() {
-        let _env_guard = crate::tests::env_test_lock()
-            .lock()
-            .expect("env test lock poisoned");
         let root = unique_test_root("codex-session-paths");
-        let expected = format!(
-            "{}/git/modex",
-            env::var("HOME").unwrap_or_else(|_| "/root".to_string())
-        );
+        let (expected, request) = {
+            let _env_guard = crate::tests::env_test_lock()
+                .lock()
+                .expect("env test lock poisoned");
+            let expected = format!(
+                "{}/git/modex",
+                env::var("HOME").unwrap_or_else(|_| "/root".to_string())
+            );
+            let request = normalize_session_request(CodexSessionRequest {
+                session_id: None,
+                instruction: "start the mobile codex project".to_string(),
+                sandbox: CodexSandboxMode::WorkspaceWrite,
+                cwd: Some("~/git/modex".to_string()),
+                writable_roots: vec!["~/git/modex".to_string()],
+                local_images: Vec::new(),
+            })
+            .expect("normalize session request");
+            assert_eq!(request.cwd.as_deref(), Some(expected.as_str()));
+            assert_eq!(request.writable_roots, vec![expected.clone()]);
+            (expected, request)
+        };
         let script = write_mock_server(
             &root,
             &format!(
@@ -1653,17 +1667,7 @@ for line in sys.stdin:
         let event_log = Arc::new(RecordingEventLog::default());
         let manager = test_manager(&root, &script, approval_bus, event_log);
 
-        let result = manager
-            .run_session(CodexSessionRequest {
-                session_id: None,
-                instruction: "start the mobile codex project".to_string(),
-                sandbox: CodexSandboxMode::WorkspaceWrite,
-                cwd: Some("~/git/modex".to_string()),
-                writable_roots: vec!["~/git/modex".to_string()],
-                local_images: Vec::new(),
-            })
-            .await
-            .expect("codex session");
+        let result = manager.run_session(request).await.expect("codex session");
 
         assert_eq!(result.result.status, CodexTurnStatus::Completed);
         assert!(result.result.summary.contains("paths ok"));
@@ -2327,8 +2331,8 @@ for line in sys.stdin:
     }
 
     fn test_manager(
-        root: &PathBuf,
-        script: &PathBuf,
+        root: &Path,
+        script: &Path,
         approval_bus: Arc<InProcessApprovalBus>,
         event_log: Arc<RecordingEventLog>,
     ) -> CodexManager {
@@ -2404,7 +2408,7 @@ for line in sys.stdin:
         }
     }
 
-    fn write_mock_server(root: &PathBuf, body: &str) -> PathBuf {
+    fn write_mock_server(root: &Path, body: &str) -> PathBuf {
         let path = root.join(format!("mock-codex-server-{}.py", Uuid::new_v4()));
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("create mock server dir");

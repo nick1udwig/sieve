@@ -1,14 +1,19 @@
 use super::*;
-#[tokio::test]
-async fn live_e2e_greeting_stays_chat_only_env_gated() {
+
+fn live_openai_harness_or_skip() -> Option<AppE2eHarness> {
     let _guard = env_test_lock()
         .lock()
         .expect("live e2e env test lock poisoned");
-    let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
+    AppE2eHarness::live_openai_or_skip(vec![
         "bash".to_string(),
         "endorse".to_string(),
         "declassify".to_string(),
-    ]) else {
+    ])
+}
+
+#[tokio::test]
+async fn live_e2e_greeting_stays_chat_only_env_gated() {
+    let Some(harness) = live_openai_harness_or_skip() else {
         return;
     };
 
@@ -40,14 +45,7 @@ async fn live_e2e_greeting_stays_chat_only_env_gated() {
 
 #[tokio::test]
 async fn live_telegram_full_flow_greeting_env_gated() {
-    let _guard = env_test_lock()
-        .lock()
-        .expect("live e2e env test lock poisoned");
-    let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
-        "bash".to_string(),
-        "endorse".to_string(),
-        "declassify".to_string(),
-    ]) else {
+    let Some(harness) = live_openai_harness_or_skip() else {
         return;
     };
 
@@ -76,14 +74,7 @@ async fn live_telegram_full_flow_greeting_env_gated() {
 
 #[tokio::test]
 async fn live_telegram_full_flow_weather_today_env_gated() {
-    let _guard = env_test_lock()
-        .lock()
-        .expect("live e2e env test lock poisoned");
-    let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
-        "bash".to_string(),
-        "endorse".to_string(),
-        "declassify".to_string(),
-    ]) else {
+    let Some(harness) = live_openai_harness_or_skip() else {
         return;
     };
 
@@ -115,14 +106,7 @@ async fn live_telegram_full_flow_weather_today_env_gated() {
 
 #[tokio::test]
 async fn live_telegram_full_flow_weather_tomorrow_env_gated() {
-    let _guard = env_test_lock()
-        .lock()
-        .expect("live e2e env test lock poisoned");
-    let Some(harness) = AppE2eHarness::live_openai_or_skip(vec![
-        "bash".to_string(),
-        "endorse".to_string(),
-        "declassify".to_string(),
-    ]) else {
+    let Some(harness) = live_openai_harness_or_skip() else {
         return;
     };
 

@@ -385,7 +385,7 @@ fn trusted_effect_fallback_message(response_input: &ResponseTurnInput) -> Option
     response_input
         .trusted_effects
         .iter()
-        .find_map(|effect| match effect {
+        .map(|effect| match effect {
             TrustedToolEffect::CronAdded {
                 prompt,
                 run_at_ms,
@@ -401,14 +401,15 @@ fn trusted_effect_fallback_message(response_input: &ResponseTurnInput) -> Option
                     AutomationDeliveryMode::MainSessionMessage => "here",
                     AutomationDeliveryMode::IsolatedTurn => "in a separate turn",
                 };
-                Some(format!(
+                format!(
                     "Scheduled. I'll send `{}` {} at {}.",
                     prompt.trim(),
                     destination,
                     when
-                ))
+                )
             }
         })
+        .next()
 }
 
 pub(crate) async fn compose_assistant_message(
@@ -603,7 +604,7 @@ pub(crate) async fn compose_assistant_message(
         None => Some("REVISE: missing gate verdict".to_string()),
     };
     let grounding_gate: Option<String> = None;
-    let combined_gate = combine_gate_reasons(&[quality_gate.clone()]);
+    let combined_gate = combine_gate_reasons(std::slice::from_ref(&quality_gate));
     let planner_followup_signal = if summary_calls >= summary_budget {
         None
     } else {

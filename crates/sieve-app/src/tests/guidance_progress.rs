@@ -320,5 +320,5 @@ fn build_guidance_prompt_does_not_mark_youtube_results_with_signin_links_as_inte
     );
     assert!(payload
         .pointer("/observed_step_results/0/browser_observation/interstitial_kind")
-        .map_or(true, serde_json::Value::is_null));
+        .is_none_or(serde_json::Value::is_null));
 }
