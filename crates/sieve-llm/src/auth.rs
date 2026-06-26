@@ -1,7 +1,8 @@
 use crate::codex_auth::{
     read_openai_codex_auth_file, refresh_openai_codex_access_token,
-    resolve_openai_codex_auth_json_path, write_openai_codex_auth_file, OpenAiCodexStoredAuth,
-    OPENAI_CODEX_ACCESS_TOKEN_ENV, OPENAI_CODEX_ACCOUNT_ID_ENV, OPENAI_CODEX_AUTH_PATH_ENV,
+    resolve_openai_codex_auth_json_path, trim_to_non_empty, write_openai_codex_auth_file,
+    OpenAiCodexStoredAuth, OPENAI_CODEX_ACCESS_TOKEN_ENV, OPENAI_CODEX_ACCOUNT_ID_ENV,
+    OPENAI_CODEX_AUTH_PATH_ENV,
 };
 use crate::LlmError;
 use reqwest::Client;
@@ -195,8 +196,7 @@ where
     I: IntoIterator<Item = String>,
 {
     keys.into_iter()
-        .find_map(|key| getter(&key).map(|value| value.trim().to_string()))
-        .filter(|value| !value.is_empty())
+        .find_map(|key| trim_to_non_empty(getter(&key)))
 }
 
 fn now_ms() -> u64 {

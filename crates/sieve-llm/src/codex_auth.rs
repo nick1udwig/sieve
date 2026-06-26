@@ -384,7 +384,7 @@ fn extract_account_id(access_token: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn trim_to_non_empty(raw: Option<String>) -> Option<String> {
+pub(crate) fn trim_to_non_empty(raw: Option<String>) -> Option<String> {
     raw.map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
