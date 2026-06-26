@@ -61,19 +61,29 @@ pub(crate) fn build_planner_conversation(
     planner_trace: &[PlannerConversationMessage],
 ) -> Vec<PlannerConversationMessage> {
     let mut conversation = Vec::new();
-    if let Some(feedback) = policy_feedback.filter(|value| !value.trim().is_empty()) {
-        conversation.push(redacted_user_message(format!(
-            "TRUSTED_POLICY_FEEDBACK\n{feedback}"
-        )));
-    }
-    if let Some(feedback) = memory_feedback.filter(|value| !value.trim().is_empty()) {
-        conversation.push(redacted_user_message(format!(
-            "TRUSTED_MEMORY_FEEDBACK\n{feedback}"
-        )));
-    }
+    push_feedback_message(
+        &mut conversation,
+        "TRUSTED_POLICY_FEEDBACK",
+        policy_feedback,
+    );
+    push_feedback_message(
+        &mut conversation,
+        "TRUSTED_MEMORY_FEEDBACK",
+        memory_feedback,
+    );
     conversation.extend(history_messages.iter().cloned());
     conversation.extend(planner_trace.iter().cloned());
     conversation
+}
+
+fn push_feedback_message(
+    conversation: &mut Vec<PlannerConversationMessage>,
+    label: &str,
+    feedback: Option<&str>,
+) {
+    if let Some(feedback) = feedback.filter(|value| !value.trim().is_empty()) {
+        conversation.push(redacted_user_message(format!("{label}\n{feedback}")));
+    }
 }
 
 pub(crate) fn planner_step_trace_messages(

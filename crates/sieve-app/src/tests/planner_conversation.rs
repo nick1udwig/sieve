@@ -1,4 +1,25 @@
 use super::*;
+use sieve_types::{
+    PlannerConversationMessage, PlannerConversationMessageKind, PlannerConversationRole,
+};
+
+#[test]
+fn build_planner_conversation_skips_blank_feedback_blocks() {
+    let history = vec![PlannerConversationMessage {
+        role: PlannerConversationRole::User,
+        kind: PlannerConversationMessageKind::FullText,
+        content: "hello".to_string(),
+    }];
+
+    let conversation =
+        build_planner_conversation(&history, Some("   "), Some("memory says hi"), &[]);
+
+    assert_eq!(conversation.len(), 2);
+    assert!(conversation[0]
+        .content
+        .starts_with("TRUSTED_MEMORY_FEEDBACK\n"));
+    assert_eq!(conversation[1].content, "hello");
+}
 
 #[test]
 fn planner_step_trace_redacts_raw_artifact_contents() {
