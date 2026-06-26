@@ -71,6 +71,56 @@ enum GateVerdict {
     Revise(String),
 }
 
+fn is_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+const NEGATING_PASS_WORDS: &[&str] = &[
+    "not", "no", "never", "cannot", "can't", "cant", "don't", "dont", "doesn't", "doesnt", "isn't",
+    "isnt", "won't", "wont",
+];
+
+fn word_matches_at(text: &str, idx: usize, word: &str) -> bool {
+    let before = text[..idx]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !is_word_char(ch));
+    let after = text[idx + word.len()..]
+        .chars()
+        .next()
+        .is_none_or(|ch| !is_word_char(ch));
+    before && after
+}
+
+fn starts_with_word(text: &str, word: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with(word) && word_matches_at(trimmed, 0, word)
+}
+
+fn pass_word_is_negated(text: &str, pass_idx: usize) -> bool {
+    text[..pass_idx]
+        .split(|ch: char| !is_word_char(ch) && ch != '\'')
+        .rev()
+        .find(|word| !word.is_empty())
+        .map(|word| NEGATING_PASS_WORDS.contains(&word))
+        .unwrap_or(false)
+}
+
+fn is_pass_verdict_text(gate: &str) -> bool {
+    let lower = gate.to_ascii_lowercase();
+    if starts_with_word(&lower, "pass") {
+        return true;
+    }
+    lower.match_indices("pass").any(|(idx, _)| {
+        word_matches_at(&lower, idx, "pass")
+            && !pass_word_is_negated(&lower, idx)
+            && lower[..idx]
+                .rsplit(['\n', '.', ';'])
+                .next()
+                .is_some_and(|prefix| prefix.contains("verdict"))
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ComposeGateOutput {
     pub(crate) verdict: String,
@@ -95,7 +145,7 @@ fn parse_gate_verdict(gate: Option<&str>) -> Option<GateVerdict> {
         }
         return Some(GateVerdict::Revise(reason.to_string()));
     }
-    if lower.starts_with("pass") || (lower.contains("pass") && !lower.contains("revise")) {
+    if is_pass_verdict_text(gate) {
         return Some(GateVerdict::Pass);
     }
     Some(GateVerdict::Revise(format!(
