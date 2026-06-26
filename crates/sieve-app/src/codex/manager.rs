@@ -1866,7 +1866,10 @@ for line in sys.stdin:
         .expect("manager should not hang")
         .expect_err("startup timeout should surface as error");
 
-        assert!(err.contains("thread/name/set timed out after 100ms"));
+        assert!(
+            err.contains("thread/name/set timed out after 100ms"),
+            "unexpected startup timeout error: {err}"
+        );
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
