@@ -20,6 +20,8 @@ use sieve_types::{AutomationDeliveryMode, PlannerGuidanceSignal, RunId, TrustedT
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+const MAX_SOURCE_URLS: usize = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComposePlannerDecision {
     Finalize,
@@ -256,10 +258,7 @@ async fn collect_source_urls_from_refs(
                 continue;
             };
             for url in extract_plain_urls_from_text(&content) {
-                if seen.insert(url.clone()) {
-                    urls.push(url);
-                }
-                if urls.len() >= 8 {
+                if push_unique_source_url(&mut urls, &mut seen, url) {
                     return urls;
                 }
             }
@@ -275,35 +274,38 @@ fn collect_source_urls_from_extracted_evidence(
     let mut seen = BTreeSet::new();
     for record in evidence_records {
         for url in &record.source_urls {
-            if seen.insert(url.clone()) {
-                urls.push(url.clone());
-            }
-            if urls.len() >= 8 {
+            if push_unique_source_url(&mut urls, &mut seen, url.as_str()) {
                 return urls;
             }
         }
         if let Some(candidate) = &record.answer_candidate {
             if let Some(url) = &candidate.url {
-                if seen.insert(url.clone()) {
-                    urls.push(url.clone());
-                }
-                if urls.len() >= 8 {
+                if push_unique_source_url(&mut urls, &mut seen, url.as_str()) {
                     return urls;
                 }
             }
         }
         for item in &record.items {
             if let Some(url) = &item.url {
-                if seen.insert(url.clone()) {
-                    urls.push(url.clone());
-                }
-                if urls.len() >= 8 {
+                if push_unique_source_url(&mut urls, &mut seen, url.as_str()) {
                     return urls;
                 }
             }
         }
     }
     urls
+}
+
+fn push_unique_source_url(
+    urls: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    url: impl Into<String>,
+) -> bool {
+    let url = url.into();
+    if seen.insert(url.clone()) {
+        urls.push(url);
+    }
+    urls.len() >= MAX_SOURCE_URLS
 }
 
 async fn build_compose_evidence_summaries(
