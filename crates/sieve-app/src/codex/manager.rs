@@ -1611,6 +1611,9 @@ for line in sys.stdin:
 
     #[tokio::test]
     async fn codex_manager_session_normalizes_tilde_paths_before_turn_start() {
+        let _env_guard = crate::tests::env_test_lock()
+            .lock()
+            .expect("env test lock poisoned");
         let root = unique_test_root("codex-session-paths");
         let expected = format!(
             "{}/git/modex",
@@ -2203,7 +2206,7 @@ for line in sys.stdin:
             })
         };
 
-        let session = wait_for_planner_session(manager.as_ref()).await;
+        let session = wait_for_active_planner_session(manager.as_ref()).await;
         manager
             .steer_session(&session.session_id, "focus on failing tests first")
             .await
@@ -2345,16 +2348,23 @@ for line in sys.stdin:
         }
     }
 
-    async fn wait_for_planner_session(manager: &CodexManager) -> PlannerCodexSession {
+    async fn wait_for_active_planner_session(manager: &CodexManager) -> PlannerCodexSession {
         for _ in 0..200 {
             if let Ok(sessions) = manager.planner_sessions().await {
-                if let Some(session) = sessions.first() {
-                    return session.clone();
+                for session in sessions {
+                    let is_active = manager
+                        .active_sessions
+                        .lock()
+                        .expect("active session lock")
+                        .contains_key(&session.session_id);
+                    if is_active {
+                        return session;
+                    }
                 }
             }
             sleep(Duration::from_millis(10)).await;
         }
-        panic!("planner session was not published");
+        panic!("planner session was not active");
     }
 
     async fn wait_for_published_approval(bus: &InProcessApprovalBus) -> ApprovalRequestedEvent {
