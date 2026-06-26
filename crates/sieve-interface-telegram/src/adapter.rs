@@ -189,10 +189,11 @@ where
                 return Ok(());
             }
 
+            let inline_approval_action = parse_inline_approval_action(&message.text);
             if let Some(request_id) =
                 self.select_request_for_implicit_action(message.reply_to_message_id)
             {
-                if let Some(action) = parse_inline_approval_action(&message.text) {
+                if let Some(action) = inline_approval_action {
                     let session_id = self.resolve_approval(action.action, request_id)?;
                     if action.action != TelegramApprovalAction::Deny && !action.tail.is_empty() {
                         if let Some(session_id) = session_id {
@@ -215,6 +216,14 @@ where
                         None,
                     )?;
                 }
+                return Ok(());
+            }
+
+            if inline_approval_action.is_some() && !self.pending_approvals.is_empty() {
+                self.send_to_chat(
+                    "approval target unclear; reply to an approval request message or use /approve_once <request_id>, /always <request_id>, or /deny <request_id>",
+                    None,
+                )?;
                 return Ok(());
             }
 
