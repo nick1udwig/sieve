@@ -264,13 +264,9 @@ fn trim_to_non_empty(raw: Option<String>) -> Option<String> {
 pub(crate) fn parse_telegram_allowed_sender_user_ids(
     raw: Option<String>,
 ) -> Result<Option<BTreeSet<i64>>, String> {
-    let Some(raw) = raw else {
+    let Some(trimmed) = trim_to_non_empty(raw) else {
         return Ok(None);
     };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
 
     let mut parsed = BTreeSet::new();
     for entry in trimmed
