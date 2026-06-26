@@ -60,7 +60,7 @@ pub(crate) fn parse_inline_approval_action(text: &str) -> Option<TelegramInlineA
     let mut parts = trimmed.splitn(2, char::is_whitespace);
     let head = parts
         .next()?
-        .trim_end_matches(|ch: char| matches!(ch, ':' | ',' | ';'));
+        .trim_end_matches([':', ',', ';']);
     let tail = parts.next().unwrap_or_default().trim().to_string();
     let action = match head.to_ascii_lowercase().as_str() {
         "yes" | "y" | "approve" | "approved" => TelegramApprovalAction::ApproveOnce,
@@ -226,6 +226,13 @@ mod tests {
             parse_inline_approval_action("approve focus on failing tests first").expect("action");
         assert_eq!(parsed.action, TelegramApprovalAction::ApproveOnce);
         assert_eq!(parsed.tail, "focus on failing tests first");
+    }
+
+    #[test]
+    fn parse_inline_approval_action_trims_action_punctuation() {
+        let parsed = parse_inline_approval_action("yes: rerun tests").expect("action");
+        assert_eq!(parsed.action, TelegramApprovalAction::ApproveOnce);
+        assert_eq!(parsed.tail, "rerun tests");
     }
 
     #[test]

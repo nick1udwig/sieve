@@ -1,5 +1,10 @@
 use super::*;
 
+type Shared<T> = Arc<Mutex<T>>;
+type SentMessages = Vec<(i64, String, Option<i64>)>;
+type EditedMessages = Vec<(i64, i64, String)>;
+type ChatActions = Vec<(i64, String)>;
+
 pub(super) struct TestBridge {
     pub(super) runtime_events: Mutex<Vec<RuntimeEvent>>,
     pub(super) approvals: Mutex<Vec<ApprovalResolvedEvent>>,
@@ -175,11 +180,11 @@ pub(super) fn test_config(allowed_sender_user_ids: Option<BTreeSet<i64>>) -> Tel
 
 #[derive(Clone, Default)]
 pub(super) struct SharedPoller {
-    updates: Arc<Mutex<VecDeque<Vec<TelegramUpdate>>>>,
-    sent_messages: Arc<Mutex<Vec<(i64, String, Option<i64>)>>>,
-    edited_messages: Arc<Mutex<Vec<(i64, i64, String)>>>,
-    sent_chat_actions: Arc<Mutex<Vec<(i64, String)>>>,
-    next_message_id: Arc<Mutex<i64>>,
+    updates: Shared<VecDeque<Vec<TelegramUpdate>>>,
+    sent_messages: Shared<SentMessages>,
+    edited_messages: Shared<EditedMessages>,
+    sent_chat_actions: Shared<ChatActions>,
+    next_message_id: Shared<i64>,
 }
 
 impl SharedPoller {
