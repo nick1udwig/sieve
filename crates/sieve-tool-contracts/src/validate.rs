@@ -1,7 +1,7 @@
 use crate::{
     make_error, supported_tools, AutomationArgs, BashArgs, CodexExecArgs, CodexSessionArgs,
-    ContractError, ToolContractErrorCode, TypedCall, TOOL_AUTOMATION, TOOL_BASH, TOOL_CODEX_EXEC,
-    TOOL_CODEX_SESSION, TOOL_DECLASSIFY, TOOL_ENDORSE,
+    ContractError, ContractErrorParts, ToolContractErrorCode, TypedCall, TOOL_AUTOMATION,
+    TOOL_BASH, TOOL_CODEX_EXEC, TOOL_CODEX_SESSION, TOOL_DECLASSIFY, TOOL_ENDORSE,
 };
 use serde_json::{Map, Value};
 use sieve_types::{
@@ -38,14 +38,16 @@ pub fn validate_at_index(
             parse_declassify(tool_call_index, tool_name, args_json).map(TypedCall::Declassify)
         }
         _ => Err(make_error(
-            ToolContractErrorCode::UnknownTool,
             tool_call_index,
             tool_name,
-            "/",
-            Some(format!("one of {}", supported_tools().join(", "))),
-            Some(tool_name.to_string()),
-            format!("unknown tool `{tool_name}`"),
-            Some("use one of ALLOWED_TOOLS"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::UnknownTool,
+                "/",
+                format!("unknown tool `{tool_name}`"),
+            )
+            .expected(format!("one of {}", supported_tools().join(", ")))
+            .found(tool_name)
+            .hint("use one of ALLOWED_TOOLS"),
         )),
     }
 }
@@ -78,14 +80,16 @@ fn parse_automation(
         "cron_resume" => AutomationAction::CronResume,
         _ => {
             return Err(make_error(
-                ToolContractErrorCode::InvalidEnumVariant,
                 tool_call_index,
                 tool_name,
-                "/action",
-                Some("cron_list|cron_add|cron_remove|cron_pause|cron_resume".to_string()),
-                Some(args.action),
-                "action is not a supported variant".to_string(),
-                Some("use a supported automation action"),
+                ContractErrorParts::new(
+                    ToolContractErrorCode::InvalidEnumVariant,
+                    "/action",
+                    "action is not a supported variant",
+                )
+                .expected("cron_list|cron_add|cron_remove|cron_pause|cron_resume")
+                .found(args.action)
+                .hint("use a supported automation action"),
             ))
         }
     };
@@ -96,14 +100,16 @@ fn parse_automation(
             "isolated" => AutomationTarget::Isolated,
             _ => {
                 return Err(make_error(
-                    ToolContractErrorCode::InvalidEnumVariant,
                     tool_call_index,
                     tool_name,
-                    "/target",
-                    Some("main|isolated".to_string()),
-                    Some(target),
-                    "target is not a supported variant".to_string(),
-                    Some("use `main` or `isolated`"),
+                    ContractErrorParts::new(
+                        ToolContractErrorCode::InvalidEnumVariant,
+                        "/target",
+                        "target is not a supported variant",
+                    )
+                    .expected("main|isolated")
+                    .found(target)
+                    .hint("use `main` or `isolated`"),
                 ))
             }
         }),
@@ -171,14 +177,16 @@ fn parse_automation_schedule(
         Value::Object(obj) => obj,
         other => {
             return Err(make_error(
-                ToolContractErrorCode::InvalidType,
                 tool_call_index,
                 tool_name,
-                "/schedule",
-                Some("object".to_string()),
-                Some(json_type(other).to_string()),
-                "schedule must be an object".to_string(),
-                Some("use a typed schedule object"),
+                ContractErrorParts::new(
+                    ToolContractErrorCode::InvalidType,
+                    "/schedule",
+                    "schedule must be an object",
+                )
+                .expected("object")
+                .found(json_type(other))
+                .hint("use a typed schedule object"),
             ))
         }
     };
@@ -203,14 +211,16 @@ fn parse_automation_schedule(
             expr: required_string(tool_call_index, tool_name, obj, "expr")?,
         }),
         _ => Err(make_error(
-            ToolContractErrorCode::InvalidEnumVariant,
             tool_call_index,
             tool_name,
-            "/schedule/kind",
-            Some("after|at|every|cron".to_string()),
-            Some(kind),
-            "schedule kind is not a supported variant".to_string(),
-            Some("use `after`, `at`, `every`, or `cron`"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidEnumVariant,
+                "/schedule/kind",
+                "schedule kind is not a supported variant",
+            )
+            .expected("after|at|every|cron")
+            .found(kind)
+            .hint("use `after`, `at`, `every`, or `cron`"),
         )),
     }
 }
@@ -225,14 +235,16 @@ fn parse_bash(
     let cmd = required_string(tool_call_index, tool_name, obj, "cmd")?;
     if cmd.trim().is_empty() {
         return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
             tool_call_index,
             tool_name,
-            "/cmd",
-            Some("non-empty string".to_string()),
-            Some("empty string".to_string()),
-            "bash cmd must be non-empty".to_string(),
-            Some("pass executable shell command text"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidValue,
+                "/cmd",
+                "bash cmd must be non-empty",
+            )
+            .expected("non-empty string")
+            .found("empty string")
+            .hint("pass executable shell command text"),
         ));
     }
     Ok(BashArgs { cmd })
@@ -311,14 +323,16 @@ fn non_empty_instruction(
     let trimmed = instruction.trim();
     if trimmed.is_empty() {
         return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
             tool_call_index,
             tool_name,
-            "/instruction",
-            Some("non-empty string".to_string()),
-            Some("empty string".to_string()),
-            "instruction must be non-empty".to_string(),
-            Some("pass task instructions for Codex"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidValue,
+                "/instruction",
+                "instruction must be non-empty",
+            )
+            .expected("non-empty string")
+            .found("empty string")
+            .hint("pass task instructions for Codex"),
         ));
     }
     Ok(trimmed.to_string())
@@ -331,14 +345,16 @@ fn non_empty_command(
 ) -> Result<Vec<String>, ContractError> {
     if command.is_empty() {
         return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
             tool_call_index,
             tool_name,
-            "/command",
-            Some("non-empty array".to_string()),
-            Some("empty array".to_string()),
-            "command must include at least one argv entry".to_string(),
-            Some("pass command as argv array, for example [\"git\",\"status\"]"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidValue,
+                "/command",
+                "command must include at least one argv entry",
+            )
+            .expected("non-empty array")
+            .found("empty array")
+            .hint("pass command as argv array, for example [\"git\",\"status\"]"),
         ));
     }
     Ok(command.to_vec())
@@ -354,14 +370,16 @@ fn parse_codex_sandbox(
         "read_only" => Ok(CodexSandboxMode::ReadOnly),
         "workspace_write" => Ok(CodexSandboxMode::WorkspaceWrite),
         _ => Err(make_error(
-            ToolContractErrorCode::InvalidEnumVariant,
             tool_call_index,
             tool_name,
-            argument_path,
-            Some("read_only|workspace_write".to_string()),
-            Some(raw.to_string()),
-            "sandbox is not a supported variant".to_string(),
-            Some("use `read_only` or `workspace_write`"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidEnumVariant,
+                argument_path,
+                "sandbox is not a supported variant",
+            )
+            .expected("read_only|workspace_write")
+            .found(raw)
+            .hint("use `read_only` or `workspace_write`"),
         )),
     }
 }
@@ -377,14 +395,14 @@ fn require_present<T>(
         return Ok(());
     }
     Err(make_error(
-        ToolContractErrorCode::MissingRequiredField,
         tool_call_index,
         tool_name,
-        argument_path,
-        Some("present".to_string()),
-        None,
-        message.to_string(),
-        None,
+        ContractErrorParts::new(
+            ToolContractErrorCode::MissingRequiredField,
+            argument_path,
+            message,
+        )
+        .expected("present"),
     ))
 }
 
@@ -404,14 +422,15 @@ fn parse_endorse(
     let value_ref = required_string(tool_call_index, tool_name, obj, "value_ref")?;
     if value_ref.trim().is_empty() {
         return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
             tool_call_index,
             tool_name,
-            "/value_ref",
-            Some("non-empty string".to_string()),
-            Some("empty string".to_string()),
-            "value_ref must be non-empty".to_string(),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidValue,
+                "/value_ref",
+                "value_ref must be non-empty",
+            )
+            .expected("non-empty string")
+            .found("empty string"),
         ));
     }
 
@@ -421,14 +440,16 @@ fn parse_endorse(
         "untrusted" => Integrity::Untrusted,
         _ => {
             return Err(make_error(
-                ToolContractErrorCode::InvalidEnumVariant,
                 tool_call_index,
                 tool_name,
-                "/target_integrity",
-                Some("trusted|untrusted".to_string()),
-                Some(integrity_raw),
-                "target_integrity is not a supported variant".to_string(),
-                Some("use `trusted` or `untrusted`"),
+                ContractErrorParts::new(
+                    ToolContractErrorCode::InvalidEnumVariant,
+                    "/target_integrity",
+                    "target_integrity is not a supported variant",
+                )
+                .expected("trusted|untrusted")
+                .found(integrity_raw)
+                .hint("use `trusted` or `untrusted`"),
             ))
         }
     };
@@ -457,14 +478,15 @@ fn parse_declassify(
     let value_ref = required_string(tool_call_index, tool_name, obj, "value_ref")?;
     if value_ref.trim().is_empty() {
         return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
             tool_call_index,
             tool_name,
-            "/value_ref",
-            Some("non-empty string".to_string()),
-            Some("empty string".to_string()),
-            "value_ref must be non-empty".to_string(),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidValue,
+                "/value_ref",
+                "value_ref must be non-empty",
+            )
+            .expected("non-empty string")
+            .found("empty string"),
         ));
     }
 
@@ -482,27 +504,31 @@ fn parse_declassify(
 fn validate_sink(tool_call_index: usize, tool_name: &str, sink: &str) -> Result<(), ContractError> {
     let parsed = Url::parse(sink).map_err(|_| {
         make_error(
-            ToolContractErrorCode::InvalidValue,
             tool_call_index,
             tool_name,
-            "/sink",
-            Some("absolute URL".to_string()),
-            Some(sink.to_string()),
-            "sink must be a valid absolute URL".to_string(),
-            Some("example: https://api.example.com/v1/upload"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidValue,
+                "/sink",
+                "sink must be a valid absolute URL",
+            )
+            .expected("absolute URL")
+            .found(sink)
+            .hint("example: https://api.example.com/v1/upload"),
         )
     })?;
 
     if parsed.host_str().is_none() {
         return Err(make_error(
-            ToolContractErrorCode::InvalidValue,
             tool_call_index,
             tool_name,
-            "/sink",
-            Some("URL with host".to_string()),
-            Some(sink.to_string()),
-            "sink URL must include host".to_string(),
-            Some("example: https://api.example.com/v1/upload"),
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidValue,
+                "/sink",
+                "sink URL must include host",
+            )
+            .expected("URL with host")
+            .found(sink)
+            .hint("example: https://api.example.com/v1/upload"),
         ));
     }
 
@@ -516,14 +542,15 @@ fn expect_object<'a>(
 ) -> Result<&'a Map<String, Value>, ContractError> {
     args_json.as_object().ok_or_else(|| {
         make_error(
-            ToolContractErrorCode::InvalidType,
             tool_call_index,
             tool_name,
-            "/",
-            Some("object".to_string()),
-            Some(json_type(args_json).to_string()),
-            "tool args must be a JSON object".to_string(),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidType,
+                "/",
+                "tool args must be a JSON object",
+            )
+            .expected("object")
+            .found(json_type(args_json)),
         )
     })
 }
@@ -537,14 +564,15 @@ fn reject_unknown_fields(
     for key in object.keys() {
         if !allowed.contains(&key.as_str()) {
             return Err(make_error(
-                ToolContractErrorCode::UnknownField,
                 tool_call_index,
                 tool_name,
-                &format!("/{key}"),
-                Some(format!("one of {}", allowed.join(", "))),
-                Some(key.clone()),
-                format!("unknown field `{key}`"),
-                None,
+                ContractErrorParts::new(
+                    ToolContractErrorCode::UnknownField,
+                    format!("/{key}"),
+                    format!("unknown field `{key}`"),
+                )
+                .expected(format!("one of {}", allowed.join(", ")))
+                .found(key.clone()),
             ));
         }
     }
@@ -559,27 +587,28 @@ fn required_string(
 ) -> Result<String, ContractError> {
     let value = object.get(field).ok_or_else(|| {
         make_error(
-            ToolContractErrorCode::MissingRequiredField,
             tool_call_index,
             tool_name,
-            &format!("/{field}"),
-            Some("string".to_string()),
-            None,
-            format!("missing required field `{field}`"),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::MissingRequiredField,
+                format!("/{field}"),
+                format!("missing required field `{field}`"),
+            )
+            .expected("string"),
         )
     })?;
 
     let value = value.as_str().ok_or_else(|| {
         make_error(
-            ToolContractErrorCode::InvalidType,
             tool_call_index,
             tool_name,
-            &format!("/{field}"),
-            Some("string".to_string()),
-            Some(json_type(value).to_string()),
-            format!("field `{field}` must be a string"),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidType,
+                format!("/{field}"),
+                format!("field `{field}` must be a string"),
+            )
+            .expected("string")
+            .found(json_type(value)),
         )
     })?;
 
@@ -602,14 +631,15 @@ fn optional_string(
 
     let value = value.as_str().ok_or_else(|| {
         make_error(
-            ToolContractErrorCode::InvalidType,
             tool_call_index,
             tool_name,
-            &format!("/{field}"),
-            Some("string|null".to_string()),
-            Some(json_type(value).to_string()),
-            format!("field `{field}` must be string or null"),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidType,
+                format!("/{field}"),
+                format!("field `{field}` must be string or null"),
+            )
+            .expected("string|null")
+            .found(json_type(value)),
         )
     })?;
 
@@ -640,14 +670,15 @@ fn optional_string_array(
         Value::Array(array) => array,
         other => {
             return Err(make_error(
-                ToolContractErrorCode::InvalidType,
                 tool_call_index,
                 tool_name,
-                &format!("/{field_name}"),
-                Some("array".to_string()),
-                Some(json_type(other).to_string()),
-                format!("{field_name} must be an array"),
-                None,
+                ContractErrorParts::new(
+                    ToolContractErrorCode::InvalidType,
+                    format!("/{field_name}"),
+                    format!("{field_name} must be an array"),
+                )
+                .expected("array")
+                .found(json_type(other)),
             ))
         }
     };
@@ -655,27 +686,29 @@ fn optional_string_array(
     for (index, value) in array.iter().enumerate() {
         let item = value.as_str().ok_or_else(|| {
             make_error(
-                ToolContractErrorCode::InvalidType,
                 tool_call_index,
                 tool_name,
-                &format!("/{field_name}/{index}"),
-                Some("string".to_string()),
-                Some(json_type(value).to_string()),
-                format!("{field_name} entries must be strings"),
-                None,
+                ContractErrorParts::new(
+                    ToolContractErrorCode::InvalidType,
+                    format!("/{field_name}/{index}"),
+                    format!("{field_name} entries must be strings"),
+                )
+                .expected("string")
+                .found(json_type(value)),
             )
         })?;
         let trimmed = item.trim();
         if trimmed.is_empty() {
             return Err(make_error(
-                ToolContractErrorCode::InvalidValue,
                 tool_call_index,
                 tool_name,
-                &format!("/{field_name}/{index}"),
-                Some("non-empty string".to_string()),
-                Some("empty string".to_string()),
-                format!("{field_name} entries must be non-empty"),
-                None,
+                ContractErrorParts::new(
+                    ToolContractErrorCode::InvalidValue,
+                    format!("/{field_name}/{index}"),
+                    format!("{field_name} entries must be non-empty"),
+                )
+                .expected("non-empty string")
+                .found("empty string"),
             ));
         }
         out.push(trimmed.to_string());
@@ -691,14 +724,14 @@ fn required_string_array(
 ) -> Result<Vec<String>, ContractError> {
     if !obj.contains_key(field_name) {
         return Err(make_error(
-            ToolContractErrorCode::MissingRequiredField,
             tool_call_index,
             tool_name,
-            &format!("/{field_name}"),
-            Some("array".to_string()),
-            None,
-            format!("missing required field `{field_name}`"),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::MissingRequiredField,
+                format!("/{field_name}"),
+                format!("missing required field `{field_name}`"),
+            )
+            .expected("array"),
         ));
     }
     optional_string_array(tool_call_index, tool_name, obj, field_name)
@@ -718,14 +751,15 @@ fn optional_u64(
     }
     let number = value.as_u64().ok_or_else(|| {
         make_error(
-            ToolContractErrorCode::InvalidType,
             tool_call_index,
             tool_name,
-            &format!("/{field}"),
-            Some("integer|null".to_string()),
-            Some(json_type(value).to_string()),
-            format!("field `{field}` must be integer or null"),
-            None,
+            ContractErrorParts::new(
+                ToolContractErrorCode::InvalidType,
+                format!("/{field}"),
+                format!("field `{field}` must be integer or null"),
+            )
+            .expected("integer|null")
+            .found(json_type(value)),
         )
     })?;
     Ok(Some(number))

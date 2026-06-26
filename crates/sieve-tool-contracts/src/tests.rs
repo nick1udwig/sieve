@@ -9,7 +9,13 @@ use sieve_types::{
     ToolContractErrorCode, ValueRef,
 };
 use std::fs;
+use std::mem;
 use std::path::PathBuf;
+
+#[test]
+fn contract_error_is_small_enough_for_result_err() {
+    assert!(mem::size_of::<ContractError>() <= mem::size_of::<usize>() * 2);
+}
 
 #[test]
 fn validate_bash_success() {

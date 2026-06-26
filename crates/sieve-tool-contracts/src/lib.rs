@@ -9,7 +9,8 @@ use sieve_types::{
     AutomationRequest, CodexExecRequest, CodexSessionRequest, DeclassifyRequest, EndorseRequest,
     Integrity, ToolContractErrorCode, ToolContractValidationError, TOOL_CONTRACTS_VERSION_V1,
 };
-use thiserror::Error;
+use std::fmt;
+use std::ops::Deref;
 
 pub use descriptors::{
     is_native_planner_tool, planner_exposed_tool_names, supported_tool_descriptors,
@@ -111,9 +112,13 @@ pub enum TypedCall {
     Declassify(DeclassifyRequest),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("{message}")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractError {
+    inner: Box<ContractErrorFields>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractErrorFields {
     pub code: ToolContractErrorCode,
     pub tool_call_index: usize,
     pub tool_name: String,
@@ -124,9 +129,25 @@ pub struct ContractError {
     pub hint: Option<String>,
 }
 
+impl Deref for ContractError {
+    type Target = ContractErrorFields;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl fmt::Display for ContractError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ContractError {}
+
 impl ContractError {
     pub fn with_tool_call_index(mut self, tool_call_index: usize) -> Self {
-        self.tool_call_index = tool_call_index;
+        self.inner.tool_call_index = tool_call_index;
         self
     }
 
@@ -145,6 +166,48 @@ impl ContractError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContractErrorParts {
+    code: ToolContractErrorCode,
+    argument_path: String,
+    expected: Option<String>,
+    found: Option<String>,
+    message: String,
+    hint: Option<String>,
+}
+
+impl ContractErrorParts {
+    pub(crate) fn new(
+        code: ToolContractErrorCode,
+        argument_path: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            code,
+            argument_path: argument_path.into(),
+            expected: None,
+            found: None,
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    pub(crate) fn expected(mut self, expected: impl Into<String>) -> Self {
+        self.expected = Some(expected.into());
+        self
+    }
+
+    pub(crate) fn found(mut self, found: impl Into<String>) -> Self {
+        self.found = Some(found.into());
+        self
+    }
+
+    pub(crate) fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+}
+
 pub fn supported_tools() -> Vec<&'static str> {
     supported_tool_descriptors()
         .iter()
@@ -153,24 +216,21 @@ pub fn supported_tools() -> Vec<&'static str> {
 }
 
 pub(crate) fn make_error(
-    code: ToolContractErrorCode,
     tool_call_index: usize,
     tool_name: &str,
-    argument_path: &str,
-    expected: Option<String>,
-    found: Option<String>,
-    message: String,
-    hint: Option<&str>,
+    parts: ContractErrorParts,
 ) -> ContractError {
     ContractError {
-        code,
-        tool_call_index,
-        tool_name: tool_name.to_string(),
-        argument_path: argument_path.to_string(),
-        expected,
-        found,
-        message,
-        hint: hint.map(str::to_string),
+        inner: Box::new(ContractErrorFields {
+            code: parts.code,
+            tool_call_index,
+            tool_name: tool_name.to_string(),
+            argument_path: parts.argument_path,
+            expected: parts.expected,
+            found: parts.found,
+            message: parts.message,
+            hint: parts.hint,
+        }),
     }
 }
 
