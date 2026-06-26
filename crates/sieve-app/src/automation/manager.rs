@@ -1,5 +1,7 @@
 use super::heartbeat::build_heartbeat_prompt;
-use super::types::render_timestamp_ms;
+use super::manager_format::{
+    format_cron_job_list, render_optional_timestamp, target_label, trusted_effect_for_added_job,
+};
 use super::{
     automation_command_from_request, load_automation_store, parse_automation_command,
     save_automation_store, AutomationCommand, AutomationStore, CronJob, CronJobStatus,
@@ -10,7 +12,7 @@ use crate::ingress::{IngressPrompt, PromptSource, TurnKind};
 use crate::turn::TurnOutcome;
 use async_trait::async_trait;
 use sieve_runtime::{AutomationTool, AutomationToolResult, Clock};
-use sieve_types::{AutomationDeliveryMode, AutomationRequest, AutomationTarget, TrustedToolEffect};
+use sieve_types::{AutomationRequest, TrustedToolEffect};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -464,52 +466,6 @@ impl AutomationTool for AutomationManager {
     ) -> Result<AutomationToolResult, String> {
         self.handle_tool_request(request).await
     }
-}
-
-fn format_cron_job_list(jobs: &[CronJob]) -> String {
-    if jobs.is_empty() {
-        return "no cron jobs".to_string();
-    }
-    let mut lines = Vec::with_capacity(jobs.len());
-    for job in jobs {
-        lines.push(format!(
-            "{} {} {} next {}",
-            job.id,
-            target_label(&job.target),
-            job.schedule.describe(),
-            render_optional_timestamp(job.next_run_at_ms)
-        ));
-    }
-    lines.join("\n")
-}
-
-fn target_label(target: &CronSessionTarget) -> &'static str {
-    match target {
-        CronSessionTarget::Main => "main",
-        CronSessionTarget::Isolated => "isolated",
-    }
-}
-
-fn trusted_effect_for_added_job(job: &CronJob) -> TrustedToolEffect {
-    TrustedToolEffect::CronAdded {
-        job_id: job.id.clone(),
-        target: match job.target {
-            CronSessionTarget::Main => AutomationTarget::Main,
-            CronSessionTarget::Isolated => AutomationTarget::Isolated,
-        },
-        run_at_ms: job.next_run_at_ms.unwrap_or(job.created_at_ms),
-        prompt: job.prompt.clone(),
-        delivery_mode: match job.target {
-            CronSessionTarget::Main => AutomationDeliveryMode::MainSessionMessage,
-            CronSessionTarget::Isolated => AutomationDeliveryMode::IsolatedTurn,
-        },
-    }
-}
-
-fn render_optional_timestamp(value: Option<u64>) -> String {
-    value
-        .map(render_timestamp_ms)
-        .unwrap_or_else(|| "disabled".to_string())
 }
 
 #[cfg(test)]

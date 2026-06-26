@@ -1,6 +1,7 @@
 mod commands;
 mod heartbeat;
 mod manager;
+mod manager_format;
 mod types;
 
 pub(crate) use commands::{
