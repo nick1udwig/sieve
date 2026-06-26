@@ -30,22 +30,13 @@ pub struct LcmIntegrationConfig {
 
 impl LcmIntegrationConfig {
     pub fn from_sieve_home(sieve_home: &Path) -> Self {
-        let trusted_db_path = env::var("SIEVE_LCM_TRUSTED_DB_PATH")
-            .ok()
-            .map(|raw| raw.trim().to_string())
-            .filter(|raw| !raw.is_empty())
+        let trusted_db_path = optional_non_empty_env("SIEVE_LCM_TRUSTED_DB_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| sieve_home.join("lcm/trusted.db"));
-        let untrusted_db_path = env::var("SIEVE_LCM_UNTRUSTED_DB_PATH")
-            .ok()
-            .map(|raw| raw.trim().to_string())
-            .filter(|raw| !raw.is_empty())
+        let untrusted_db_path = optional_non_empty_env("SIEVE_LCM_UNTRUSTED_DB_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| sieve_home.join("lcm/untrusted.db"));
-        let global_session_id = env::var("SIEVE_LCM_GLOBAL_SESSION_ID")
-            .ok()
-            .map(|raw| raw.trim().to_string())
-            .filter(|raw| !raw.is_empty())
+        let global_session_id = optional_non_empty_env("SIEVE_LCM_GLOBAL_SESSION_ID")
             .unwrap_or_else(|| "global".to_string());
         Self {
             enabled: parse_bool_env("SIEVE_LCM_ENABLED", true),
@@ -54,6 +45,13 @@ impl LcmIntegrationConfig {
             untrusted_db_path,
         }
     }
+}
+
+fn optional_non_empty_env(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
 }
 
 #[derive(Clone)]
@@ -186,13 +184,13 @@ impl LcmIntegration {
 }
 
 fn parse_bool_env(key: &str, default: bool) -> bool {
-    match env::var(key) {
-        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+    match optional_non_empty_env(key) {
+        Some(value) => match value.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => true,
             "0" | "false" | "no" | "off" => false,
             _ => default,
         },
-        Err(_) => default,
+        None => default,
     }
 }
 

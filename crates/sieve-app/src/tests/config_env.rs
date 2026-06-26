@@ -382,6 +382,38 @@ fn app_config_from_env_treats_blank_heartbeat_settings_as_unset() {
 }
 
 #[test]
+fn lcm_config_from_sieve_home_trims_env_overrides_and_uses_defaults_for_blank_values() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    let sieve_home = std::env::temp_dir().join(format!(
+        "sieve-lcm-config-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    std::env::set_var("SIEVE_LCM_GLOBAL_SESSION_ID", "   ");
+    std::env::set_var("SIEVE_LCM_TRUSTED_DB_PATH", "   ");
+    std::env::set_var("SIEVE_LCM_UNTRUSTED_DB_PATH", "   ");
+
+    let cfg = LcmIntegrationConfig::from_sieve_home(&sieve_home);
+    assert_eq!(cfg.global_session_id, "global");
+    assert_eq!(cfg.trusted_db_path, sieve_home.join("lcm/trusted.db"));
+    assert_eq!(cfg.untrusted_db_path, sieve_home.join("lcm/untrusted.db"));
+
+    std::env::set_var("SIEVE_LCM_GLOBAL_SESSION_ID", " session-a ");
+    std::env::set_var("SIEVE_LCM_TRUSTED_DB_PATH", " /tmp/trusted.db ");
+    std::env::set_var("SIEVE_LCM_UNTRUSTED_DB_PATH", " /tmp/untrusted.db ");
+    std::env::set_var("SIEVE_LCM_ENABLED", " off ");
+
+    let cfg = LcmIntegrationConfig::from_sieve_home(&sieve_home);
+    assert!(!cfg.enabled);
+    assert_eq!(cfg.global_session_id, "session-a");
+    assert_eq!(cfg.trusted_db_path, PathBuf::from("/tmp/trusted.db"));
+    assert_eq!(cfg.untrusted_db_path, PathBuf::from("/tmp/untrusted.db"));
+}
+
+#[test]
 fn app_config_from_env_rejects_zero_planner_limit() {
     let _lock = env_test_lock().lock().expect("env lock");
     let restore = EnvRestore::capture(config_env_keys());
