@@ -22,7 +22,21 @@ impl BashActionClass {
 pub(crate) const MIN_PRIMARY_FETCH_STDOUT_BYTES: u64 = 256;
 
 fn first_shell_word(command: &str) -> Option<&str> {
-    command.split_whitespace().next()
+    command
+        .split_whitespace()
+        .find(|token| !is_shell_assignment(token))
+}
+
+fn is_shell_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 pub(crate) fn classify_bash_action(command: &str) -> BashActionClass {
@@ -95,6 +109,22 @@ mod tests {
         assert_eq!(
             command_failure_kind_from_reason("command was unblocked after retry"),
             "runtime_failure"
+        );
+    }
+
+    #[test]
+    fn classify_bash_action_skips_leading_env_assignments() {
+        assert_eq!(
+            classify_bash_action("HTTPS_PROXY=http://proxy curl -sS https://example.com"),
+            BashActionClass::Fetch
+        );
+        assert_eq!(
+            classify_bash_action("LC_ALL=C rg needle file.txt"),
+            BashActionClass::Extract
+        );
+        assert_eq!(
+            classify_bash_action("_TOKEN=redacted bravesearch search --query status"),
+            BashActionClass::Discovery
         );
     }
 }
