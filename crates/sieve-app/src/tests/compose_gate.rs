@@ -138,6 +138,35 @@ fn compose_gate_followup_signal_ignores_interstitial_continue_when_explicit_answ
 }
 
 #[test]
+fn compose_quality_followup_does_not_treat_milestone_as_tone_only() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "summarize project milestones".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: None,
+        trusted_effects: Vec::new(),
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![ResponseToolOutcome {
+            tool_name: "bash".to_string(),
+            outcome: "executed".to_string(),
+            attempted_command: Some("cat milestones.md".to_string()),
+            failure_reason: None,
+            refs: vec![ResponseRefMetadata {
+                ref_id: "artifact-1".to_string(),
+                kind: "stdout".to_string(),
+                byte_count: 128,
+                line_count: 4,
+            }],
+        }],
+    };
+
+    assert_eq!(
+        compose_quality_followup_signal(Some("REVISE: milestone data is missing"), &input),
+        Some(PlannerGuidanceSignal::ContinueRefineApproach)
+    );
+}
+
+#[test]
 fn compose_gate_ignores_gate_negation_when_trusted_effect_exists() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),

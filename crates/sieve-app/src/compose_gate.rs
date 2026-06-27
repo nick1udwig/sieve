@@ -97,6 +97,11 @@ fn starts_with_word(text: &str, word: &str) -> bool {
     trimmed.starts_with(word) && word_matches_at(trimmed, 0, word)
 }
 
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word)
+        .any(|(idx, _)| word_matches_at(text, idx, word))
+}
+
 fn pass_word_is_negated(text: &str, pass_idx: usize) -> bool {
     text[..pass_idx]
         .split(|ch: char| !is_word_char(ch) && ch != '\'')
@@ -198,7 +203,7 @@ fn followup_signal_from_reason(
     let is_style_only = lower.contains("third-person")
         || lower.contains("third person")
         || lower.contains("meta narration")
-        || lower.contains("tone");
+        || contains_word(&lower, "tone");
     if is_style_only {
         return None;
     }
