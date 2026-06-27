@@ -236,14 +236,20 @@ pub(crate) fn user_requested_sources(trusted_user_message: &str) -> bool {
 
 pub(crate) fn user_requested_detailed_output(trusted_user_message: &str) -> bool {
     let normalized = normalized_words(trusted_user_message);
-    normalized.contains("detailed")
-        || normalized.contains("in detail")
+    normalized.contains("in detail")
         || normalized.contains("step by step")
         || normalized.contains("full breakdown")
-        || normalized.contains("thorough")
-        || normalized.contains("comprehensive")
         || normalized.contains("long form")
-        || normalized.contains("explain")
+        || normalized_has_word(
+            &normalized,
+            &[
+                "detailed",
+                "thorough",
+                "comprehensive",
+                "explain",
+                "explanation",
+            ],
+        )
 }
 
 fn sentence_like_count(message: &str) -> usize {

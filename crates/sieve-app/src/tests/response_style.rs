@@ -111,7 +111,9 @@ fn source_and_detail_request_detection() {
     assert!(user_requested_detailed_output(
         "give a detailed explanation"
     ));
+    assert!(user_requested_detailed_output("please explain this"));
     assert!(user_requested_detailed_output("step by step please"));
+    assert!(!user_requested_detailed_output("define explainability"));
     assert!(!user_requested_detailed_output("just short answer"));
 }
 
