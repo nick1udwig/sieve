@@ -1,4 +1,5 @@
 use crate::planner_progress::url_is_likely_asset;
+use crate::text_match::{contains_phrase_words, contains_word};
 use sieve_llm::ResponseTurnInput;
 use std::collections::BTreeSet;
 
@@ -202,54 +203,38 @@ pub(crate) fn enforce_link_policy(
     remove_linkish_sentences(&message)
 }
 
-fn normalized_words(input: &str) -> String {
-    let normalized = input.to_ascii_lowercase().replace(
-        ['?', '!', '.', ',', ';', ':', '(', ')', '[', ']', '{', '}'],
-        " ",
-    );
-    compact_whitespace(&normalized)
-}
-
-fn normalized_has_word(normalized: &str, words: &[&str]) -> bool {
-    normalized
-        .split_whitespace()
-        .any(|word| words.contains(&word))
-}
-
 pub(crate) fn user_requested_sources(trusted_user_message: &str) -> bool {
-    let normalized = normalized_words(trusted_user_message);
-    normalized_has_word(
-        &normalized,
-        &[
-            "source",
-            "sources",
-            "link",
-            "links",
-            "url",
-            "citation",
-            "citations",
-            "reference",
-            "references",
-        ],
-    )
+    let lower = trusted_user_message.to_ascii_lowercase();
+    [
+        "source",
+        "sources",
+        "link",
+        "links",
+        "url",
+        "citation",
+        "citations",
+        "reference",
+        "references",
+    ]
+    .iter()
+    .any(|word| contains_word(&lower, word))
 }
 
 pub(crate) fn user_requested_detailed_output(trusted_user_message: &str) -> bool {
-    let normalized = normalized_words(trusted_user_message);
-    normalized.contains("in detail")
-        || normalized.contains("step by step")
-        || normalized.contains("full breakdown")
-        || normalized.contains("long form")
-        || normalized_has_word(
-            &normalized,
-            &[
-                "detailed",
-                "thorough",
-                "comprehensive",
-                "explain",
-                "explanation",
-            ],
-        )
+    let lower = trusted_user_message.to_ascii_lowercase();
+    contains_phrase_words(&lower, &["in", "detail"])
+        || contains_phrase_words(&lower, &["step", "by", "step"])
+        || contains_phrase_words(&lower, &["full", "breakdown"])
+        || contains_phrase_words(&lower, &["long", "form"])
+        || [
+            "detailed",
+            "thorough",
+            "comprehensive",
+            "explain",
+            "explanation",
+        ]
+        .iter()
+        .any(|word| contains_word(&lower, word))
 }
 
 fn sentence_like_count(message: &str) -> usize {
