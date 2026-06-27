@@ -117,11 +117,14 @@ fn extract_gws_gmail_message_handles(result: &PlannerToolResult) -> Option<Vec<S
 }
 
 fn is_gws_gmail_messages_list(command: &str) -> bool {
-    let tokens = command.split_whitespace().collect::<Vec<_>>();
-    matches!(
-        tokens.as_slice(),
-        ["gws", "gmail", "users", "messages", "list", ..]
-    )
+    has_token_prefix(command, &["gws", "gmail", "users", "messages", "list"])
+}
+
+fn has_token_prefix(command: &str, prefix: &[&str]) -> bool {
+    let mut tokens = command.split_whitespace();
+    prefix
+        .iter()
+        .all(|expected| tokens.next() == Some(*expected))
 }
 
 fn extract_handles_from_report(report: &MainlineRunReport) -> Option<Vec<String>> {
@@ -156,25 +159,29 @@ fn extract_gws_schema_cli_shape(
     if report.exit_code != Some(0) {
         return None;
     }
-    let tokens = command.split_whitespace().collect::<Vec<_>>();
-    let ["gws", "schema", target] = tokens.as_slice() else {
-        return None;
-    };
+    let target = gws_schema_target(command)?;
     if !target.contains('.') {
         return None;
     }
-    let cli_tokens = target.split('.').collect::<Vec<_>>();
     let product_ref = format!("gws-cli-shape-{next_product_id}");
     Some(PlannerIntermediateProductSummary {
         product_ref,
         product_kind: "cli_shape".to_string(),
         tool_family: "gws".to_string(),
         resource_kind: target.replace('.', "_"),
-        item_count: cli_tokens.len(),
+        item_count: target.split('.').count(),
         detail_fetch_hint: PlannerDetailFetchHint::SchemaFollowup {
             schema_target: target.to_string(),
-            command_prefix: format!("gws {}", cli_tokens.join(" ")),
+            command_prefix: format!("gws {}", target.replace('.', " ")),
             note: "GWS schema targets are dotted; CLI API calls use space-separated segments.",
         },
     })
+}
+
+fn gws_schema_target(command: &str) -> Option<&str> {
+    let mut tokens = command.split_whitespace();
+    match (tokens.next(), tokens.next(), tokens.next(), tokens.next()) {
+        (Some("gws"), Some("schema"), Some(target), None) => Some(target),
+        _ => None,
+    }
 }
