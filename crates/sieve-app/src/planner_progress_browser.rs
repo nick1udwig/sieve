@@ -29,7 +29,10 @@ pub(super) struct AgentBrowserObservation {
 }
 
 pub(super) fn parse_agent_browser_observation(command: &str) -> Option<AgentBrowserObservation> {
-    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    let tokens = command
+        .split_whitespace()
+        .skip_while(|token| is_shell_assignment(token))
+        .collect::<Vec<_>>();
     if shell_basename(tokens.first().copied().unwrap_or_default()) != "agent-browser" {
         return None;
     }
@@ -160,6 +163,18 @@ fn shell_basename(value: &str) -> &str {
     value.rsplit('/').next().unwrap_or(value)
 }
 
+fn is_shell_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 fn find_flag_value(tokens: &[&str], flag: &str) -> Option<String> {
     let mut i = 0usize;
     while i < tokens.len() {
@@ -205,6 +220,21 @@ fn browser_target_looks_like_search(target_url: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_agent_browser_observation_skips_leading_env_assignments() {
+        let observation = parse_agent_browser_observation(
+            "AGENT_BROWSER_TIMEOUT=30 agent-browser open https://example.com --session docs",
+        )
+        .expect("env-prefixed agent-browser command should be parsed");
+
+        assert_eq!(observation.action_class, BrowserActionClass::Navigate);
+        assert_eq!(
+            observation.target_url.as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(observation.session_name.as_deref(), Some("docs"));
+    }
 
     #[test]
     fn infer_interstitial_kind_matches_real_markers() {
