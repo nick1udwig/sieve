@@ -225,3 +225,30 @@ fn compose_gate_retries_when_message_negates_trusted_effect() {
     )
     .is_some());
 }
+
+#[test]
+fn compose_gate_does_not_treat_sender_substring_as_scheduling_negation() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "in one minute send me a message saying hi".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: Some("scheduled reminder".to_string()),
+        trusted_effects: vec![sieve_types::TrustedToolEffect::CronAdded {
+            job_id: "cron-1".to_string(),
+            target: sieve_types::AutomationTarget::Main,
+            run_at_ms: 1_762_839_600_000,
+            prompt: "hi".to_string(),
+            delivery_mode: sieve_types::AutomationDeliveryMode::MainSessionMessage,
+        }],
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![],
+    };
+
+    assert!(compose_gate_requires_retry(
+        "I can't verify the sender identity from the available data.",
+        "in one minute send me a message saying hi",
+        &input,
+        None,
+    )
+    .is_none());
+}

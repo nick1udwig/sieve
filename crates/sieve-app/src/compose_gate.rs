@@ -3,7 +3,9 @@ use crate::response_style::{
     compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
     obvious_meta_compose_pattern,
 };
-use crate::text_match::{contains_word, is_word_char, starts_with_word, word_matches_at};
+use crate::text_match::{
+    contains_any_word, contains_word, is_word_char, starts_with_word, word_matches_at,
+};
 use crate::turn::{response_has_explicit_answer_candidate, response_has_trusted_effect};
 use serde::{Deserialize, Serialize};
 use sieve_llm::ResponseTurnInput;
@@ -330,12 +332,23 @@ fn message_or_reason_negates_scheduling(text: &str) -> bool {
         || lower.contains("not available")
         || lower.contains("unsupported")
         || lower.contains("not actionable");
-    let mentions_schedule = lower.contains("schedule")
-        || lower.contains("cron")
-        || lower.contains("reminder")
-        || lower.contains("message")
-        || lower.contains("send")
-        || lower.contains("tool");
+    let mentions_schedule = contains_any_word(
+        &lower,
+        &[
+            "schedule",
+            "scheduled",
+            "scheduling",
+            "cron",
+            "reminder",
+            "reminders",
+            "message",
+            "messages",
+            "send",
+            "sent",
+            "tool",
+            "tools",
+        ],
+    );
     denies_action && mentions_schedule
 }
 

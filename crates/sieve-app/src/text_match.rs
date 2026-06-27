@@ -24,6 +24,10 @@ pub(crate) fn contains_word(text: &str, word: &str) -> bool {
         .any(|(idx, _)| word_matches_at(text, idx, word))
 }
 
+pub(crate) fn contains_any_word(text: &str, words: &[&str]) -> bool {
+    words.iter().any(|word| contains_word(text, word))
+}
+
 pub(crate) fn contains_phrase_words(text: &str, phrase: &[&str]) -> bool {
     let tokens = text
         .split(|ch: char| !is_word_char(ch))
