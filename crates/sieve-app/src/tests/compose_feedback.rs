@@ -169,6 +169,42 @@ fn compose_quality_followup_does_not_match_fresh_substrings() {
 }
 
 #[test]
+fn compose_quality_followup_does_not_match_format_substrings() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "summarize notes".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: None,
+        trusted_effects: Vec::new(),
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![ResponseToolOutcome {
+            tool_name: "bash".to_string(),
+            outcome: "executed".to_string(),
+            attempted_command: Some("cat notes.txt".to_string()),
+            failure_reason: None,
+            refs: vec![ResponseRefMetadata {
+                ref_id: "artifact-1".to_string(),
+                kind: "stdout".to_string(),
+                byte_count: 64,
+                line_count: 1,
+            }],
+        }],
+    };
+    let signal = compose_quality_followup_signal(
+        Some("REVISE: information about the cited source is incomplete."),
+        &input,
+    );
+    assert_eq!(signal, Some(PlannerGuidanceSignal::ContinueRefineApproach));
+
+    let signal =
+        compose_quality_followup_signal(Some("REVISE: ask user for output format."), &input);
+    assert_eq!(
+        signal,
+        Some(PlannerGuidanceSignal::ContinueNeedPreferenceOrConstraint)
+    );
+}
+
+#[test]
 fn compose_quality_followup_maps_primary_content_fetch_signal() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),

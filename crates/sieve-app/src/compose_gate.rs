@@ -331,11 +331,11 @@ fn followup_signal_from_reason(
         return Some(PlannerGuidanceSignal::ContinueNeedRequiredParameter);
     }
 
-    if lower.contains("preference")
-        || lower.contains("constraint")
-        || lower.contains("format")
-        || lower.contains("units")
-        || lower.contains("locale")
+    if contains_word(&lower, "preference")
+        || contains_word(&lower, "constraint")
+        || contains_word(&lower, "format")
+        || contains_word(&lower, "units")
+        || contains_word(&lower, "locale")
     {
         return Some(PlannerGuidanceSignal::ContinueNeedPreferenceOrConstraint);
     }
