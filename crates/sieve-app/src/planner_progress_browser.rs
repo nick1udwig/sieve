@@ -1,3 +1,5 @@
+use crate::text_match::{contains_phrase_words, contains_word};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BrowserActionClass {
     Navigate,
@@ -70,23 +72,30 @@ pub(super) fn infer_interstitial_kind(excerpt: &str) -> Option<&'static str> {
     let lower = excerpt.to_ascii_lowercase();
     if lower.contains("google.com/sorry")
         || lower.contains("sorry/index")
-        || lower.contains("unusual traffic")
-        || lower.contains("captcha")
+        || contains_phrase_words(&lower, &["unusual", "traffic"])
+        || contains_word(&lower, "captcha")
     {
         return Some("anti_bot");
     }
-    if lower.contains("sign in") || lower.contains("log in") || lower.contains("login") {
+    if contains_phrase_words(&lower, &["sign", "in"])
+        || contains_phrase_words(&lower, &["log", "in"])
+        || contains_word(&lower, "login")
+    {
         return Some("login");
     }
-    if lower.contains("before you continue") || lower.contains("consent") {
+    if contains_phrase_words(&lower, &["before", "you", "continue"])
+        || contains_word(&lower, "consent")
+    {
         return Some("consent");
     }
-    if lower.contains("age-restricted") || lower.contains("confirm your age") {
+    if contains_phrase_words(&lower, &["age", "restricted"])
+        || contains_phrase_words(&lower, &["confirm", "your", "age"])
+    {
         return Some("age_gate");
     }
-    if lower.contains("subscribe to continue")
-        || lower.contains("membership required")
-        || lower.contains("paywall")
+    if contains_phrase_words(&lower, &["subscribe", "to", "continue"])
+        || contains_phrase_words(&lower, &["membership", "required"])
+        || contains_word(&lower, "paywall")
     {
         return Some("paywall");
     }
@@ -191,4 +200,31 @@ fn browser_target_looks_like_search(target_url: Option<&str>) -> bool {
         || lower.contains("search_query=")
         || lower.contains("tbm=vid")
         || lower.contains("/search?")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infer_interstitial_kind_matches_real_markers() {
+        assert_eq!(
+            infer_interstitial_kind("Before you continue, confirm consent settings."),
+            Some("consent")
+        );
+        assert_eq!(
+            infer_interstitial_kind("Subscribe to continue reading this article."),
+            Some("paywall")
+        );
+    }
+
+    #[test]
+    fn infer_interstitial_kind_rejects_marker_substrings() {
+        assert_eq!(
+            infer_interstitial_kind(
+                "Article text mentions preconsent flows, recaptchaToken metadata, and paywalling economics.",
+            ),
+            None
+        );
+    }
 }
