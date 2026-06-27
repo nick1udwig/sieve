@@ -3,6 +3,9 @@ pub(crate) fn is_word_char(ch: char) -> bool {
 }
 
 pub(crate) fn word_matches_at(text: &str, idx: usize, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
     let before = text[..idx]
         .chars()
         .next_back()
@@ -70,5 +73,12 @@ mod tests {
     #[test]
     fn contains_phrase_words_rejects_empty_phrase() {
         assert!(!contains_phrase_words("anything", &[]));
+    }
+
+    #[test]
+    fn empty_word_inputs_do_not_match() {
+        assert!(!contains_word("!", ""));
+        assert!(!contains_any_word("!", &[""]));
+        assert!(!starts_with_word("!", ""));
     }
 }
