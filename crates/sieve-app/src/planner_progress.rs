@@ -600,11 +600,15 @@ fn strip_raw_artifact_fields(value: &mut serde_json::Value) {
 }
 
 fn normalize_bash_command_for_repeat_guard(command: &str) -> String {
-    command
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
+    let mut normalized = String::with_capacity(command.len());
+    for token in command.split_whitespace() {
+        if !normalized.is_empty() {
+            normalized.push(' ');
+        }
+        normalized.push_str(token);
+    }
+    normalized.make_ascii_lowercase();
+    normalized
 }
 
 fn mainline_artifact_signature(report: &MainlineRunReport) -> Vec<(String, u64, u64)> {
