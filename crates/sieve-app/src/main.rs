@@ -19,6 +19,7 @@ mod planner_products;
 mod planner_progress;
 mod render_refs;
 mod response_style;
+mod shell_words;
 mod sieve_home;
 mod text_match;
 mod turn;

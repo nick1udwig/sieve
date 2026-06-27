@@ -233,7 +233,8 @@ async fn planner_memory_feedback_extracts_sieve_lcm_query_payload() {
     .expect("write artifact payload");
 
     let tool_results = vec![PlannerToolResult::Bash {
-        command: "sieve-lcm-cli query --lane both --query \"where do i live\" --json".to_string(),
+        command: "SIEVE_LCM_HOME=/tmp/lcm sieve-lcm-cli query --lane both --query \"where do i live\" --json"
+            .to_string(),
         disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
             run_id: RunId("run-1".to_string()),
             exit_code: Some(0),

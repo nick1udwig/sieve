@@ -1,3 +1,4 @@
+use crate::shell_words::command_words;
 use crate::text_match::{contains_phrase_words, contains_word};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,10 +30,7 @@ pub(super) struct AgentBrowserObservation {
 }
 
 pub(super) fn parse_agent_browser_observation(command: &str) -> Option<AgentBrowserObservation> {
-    let tokens = command
-        .split_whitespace()
-        .skip_while(|token| is_shell_assignment(token))
-        .collect::<Vec<_>>();
+    let tokens = command_words(command).collect::<Vec<_>>();
     if shell_basename(tokens.first().copied().unwrap_or_default()) != "agent-browser" {
         return None;
     }
@@ -161,18 +159,6 @@ pub(super) fn infer_browser_page_state(
 
 fn shell_basename(value: &str) -> &str {
     value.rsplit('/').next().unwrap_or(value)
-}
-
-fn is_shell_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first == '_' || first.is_ascii_alphabetic())
-        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 fn find_flag_value(tokens: &[&str], flag: &str) -> Option<String> {

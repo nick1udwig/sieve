@@ -1,3 +1,4 @@
+use crate::shell_words::first_command_word;
 use crate::text_match::{contains_phrase_words, contains_word};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,26 +22,8 @@ impl BashActionClass {
 
 pub(crate) const MIN_PRIMARY_FETCH_STDOUT_BYTES: u64 = 256;
 
-fn first_shell_word(command: &str) -> Option<&str> {
-    command
-        .split_whitespace()
-        .find(|token| !is_shell_assignment(token))
-}
-
-fn is_shell_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first == '_' || first.is_ascii_alphabetic())
-        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-}
-
 pub(crate) fn classify_bash_action(command: &str) -> BashActionClass {
-    let cmd = first_shell_word(command)
+    let cmd = first_command_word(command)
         .unwrap_or_default()
         .to_ascii_lowercase();
     match cmd.as_str() {
