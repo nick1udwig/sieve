@@ -40,19 +40,26 @@ pub(crate) fn command_targets_markdown_view(command: &str) -> bool {
     lower.contains("https://markdown.new/") || lower.contains("http://markdown.new/")
 }
 
+const ASSET_EXTENSIONS: &[&str] = &[
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".css", ".js",
+];
+
+fn contains_asset_extension(lower: &str) -> bool {
+    ASSET_EXTENSIONS.iter().any(|extension| {
+        lower.match_indices(extension).any(|(idx, _)| {
+            lower[idx + extension.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric())
+        })
+    })
+}
+
 pub(super) fn command_targets_likely_asset(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     lower.contains("imgs.search.brave.com")
         || lower.contains("favicon")
-        || lower.contains(".png")
-        || lower.contains(".jpg")
-        || lower.contains(".jpeg")
-        || lower.contains(".gif")
-        || lower.contains(".webp")
-        || lower.contains(".svg")
-        || lower.contains(".ico")
-        || lower.contains(".css")
-        || lower.contains(".js")
+        || contains_asset_extension(&lower)
 }
 
 pub(crate) fn url_is_likely_asset(url: &str) -> bool {

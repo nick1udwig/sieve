@@ -60,6 +60,7 @@ fn filter_non_asset_urls_removes_asset_links() {
     let filtered = filter_non_asset_urls(vec![
             "https://www.accuweather.com/en/us/livermore/94550/weather-forecast/337125"
                 .to_string(),
+            "https://api.example.com/weather.json".to_string(),
             "https://imgs.search.brave.com/fs6uyhM5xA6gctiAKJTHhWtpR2YRWceKfG_9aqjmfRs/rs:fit:32:32:1:0/g:ce/a.png"
                 .to_string(),
             "https://example.com/favicon.ico".to_string(),
@@ -67,7 +68,8 @@ fn filter_non_asset_urls_removes_asset_links() {
     assert_eq!(
         filtered,
         vec![
-            "https://www.accuweather.com/en/us/livermore/94550/weather-forecast/337125".to_string()
+            "https://www.accuweather.com/en/us/livermore/94550/weather-forecast/337125".to_string(),
+            "https://api.example.com/weather.json".to_string()
         ]
     );
 }
