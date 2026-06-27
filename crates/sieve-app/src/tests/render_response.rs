@@ -177,6 +177,40 @@ fn requires_output_visibility_skips_when_user_did_not_ask_for_output() {
 }
 
 #[test]
+fn requires_output_visibility_ignores_trigger_substrings() {
+    let make_input = |trusted_user_message: &str| ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: trusted_user_message.to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: None,
+        trusted_effects: Vec::new(),
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![ResponseToolOutcome {
+            tool_name: "bash".to_string(),
+            outcome: "executed".to_string(),
+            attempted_command: Some("query".to_string()),
+            failure_reason: None,
+            refs: vec![ResponseRefMetadata {
+                ref_id: "artifact-1".to_string(),
+                kind: "stdout".to_string(),
+                byte_count: 1024,
+                line_count: 12,
+            }],
+        }],
+    };
+
+    assert!(!requires_output_visibility(&make_input(
+        "explain the discontent of modern work"
+    )));
+    assert!(!requires_output_visibility(&make_input(
+        "what did the returning officer decide?"
+    )));
+    assert!(requires_output_visibility(&make_input(
+        "what did the command return?"
+    )));
+}
+
+#[test]
 fn response_has_visible_selected_output_requires_message_token() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),

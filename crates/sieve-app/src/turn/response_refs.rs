@@ -364,15 +364,44 @@ fn trimmed_non_empty(value: String) -> Option<String> {
 
 fn user_explicitly_requests_output_visibility(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("output")
-        || lower.contains("stdout")
-        || lower.contains("stderr")
-        || lower.contains("contents of")
-        || lower.contains("content of")
-        || lower.contains("show the result")
-        || lower.contains("show me the result")
-        || lower.contains("run exactly")
-        || (lower.contains("what did") && lower.contains("return"))
+    contains_word(&lower, "output")
+        || contains_word(&lower, "stdout")
+        || contains_word(&lower, "stderr")
+        || contains_phrase_words(&lower, &["contents", "of"])
+        || contains_phrase_words(&lower, &["content", "of"])
+        || contains_phrase_words(&lower, &["show", "the", "result"])
+        || contains_phrase_words(&lower, &["show", "me", "the", "result"])
+        || contains_phrase_words(&lower, &["run", "exactly"])
+        || (contains_phrase_words(&lower, &["what", "did"]) && contains_word(&lower, "return"))
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn word_matches_at(text: &str, idx: usize, word: &str) -> bool {
+    let before = text[..idx]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !is_word_char(ch));
+    let after = text[idx + word.len()..]
+        .chars()
+        .next()
+        .is_none_or(|ch| !is_word_char(ch));
+    before && after
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word)
+        .any(|(idx, _)| word_matches_at(text, idx, word))
+}
+
+fn contains_phrase_words(text: &str, phrase: &[&str]) -> bool {
+    let tokens = text
+        .split(|ch: char| !is_word_char(ch))
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    tokens.windows(phrase.len()).any(|window| window == phrase)
 }
 
 fn output_ref_requires_visibility(kind: &str) -> bool {
