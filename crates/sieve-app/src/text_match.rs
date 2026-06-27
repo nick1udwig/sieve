@@ -28,20 +28,23 @@ pub(crate) fn contains_any_word(text: &str, words: &[&str]) -> bool {
     words.iter().any(|word| contains_word(text, word))
 }
 
-pub(crate) fn contains_phrase_words(text: &str, phrase: &[&str]) -> bool {
-    let tokens = text
-        .split(|ch: char| !is_word_char(ch))
+fn word_tokens(text: &str) -> Vec<&str> {
+    text.split(|ch: char| !is_word_char(ch))
         .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
+
+pub(crate) fn contains_phrase_words(text: &str, phrase: &[&str]) -> bool {
+    if phrase.is_empty() {
+        return false;
+    }
+    let tokens = word_tokens(text);
     tokens.windows(phrase.len()).any(|window| window == phrase)
 }
 
 pub(crate) fn contains_token_sequence(text_lower: &str, candidate: &str) -> bool {
     let candidate_lower = candidate.to_ascii_lowercase();
-    let phrase = candidate_lower
-        .split(|ch: char| !is_word_char(ch))
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
+    let phrase = word_tokens(&candidate_lower);
     !phrase.is_empty() && contains_phrase_words(text_lower, &phrase)
 }
 
@@ -62,5 +65,10 @@ mod tests {
     fn contains_token_sequence_rejects_substrings() {
         assert!(!contains_token_sequence("how is model work going", "mod"));
         assert!(!contains_token_sequence("resume unrelated", ""));
+    }
+
+    #[test]
+    fn contains_phrase_words_rejects_empty_phrase() {
+        assert!(!contains_phrase_words("anything", &[]));
     }
 }
