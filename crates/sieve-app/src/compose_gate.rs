@@ -268,10 +268,12 @@ fn followup_signal_from_reason(
         return Some(PlannerGuidanceSignal::ContinueResolveSourceConflict);
     }
 
-    if lower.contains("stale")
-        || lower.contains("outdated")
-        || lower.contains("latest")
-        || lower.contains("fresh")
+    if contains_word(&lower, "stale")
+        || contains_word(&lower, "outdated")
+        || contains_word(&lower, "latest")
+        || contains_word(&lower, "fresh")
+        || contains_word(&lower, "refresh")
+        || contains_word(&lower, "refreshed")
         || lower.contains("current as of")
         || lower.contains("time-bound")
     {
