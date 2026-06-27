@@ -309,69 +309,57 @@ fn parse_response_evidence_batch(raw: &str) -> Vec<ResponseEvidenceRecord> {
         .records
         .into_iter()
         .filter_map(|record| {
-            let summary = record.summary.trim();
-            if summary.is_empty() {
-                return None;
-            }
+            let summary = trimmed_non_empty(record.summary)?;
             Some(ResponseEvidenceRecord {
                 ref_id: record.ref_id,
-                summary: summary.to_string(),
-                page_state: record.page_state.map(|value| value.trim().to_string()),
+                summary,
+                page_state: record.page_state.and_then(trimmed_non_empty),
                 blockers: record
                     .blockers
                     .into_iter()
-                    .filter_map(|value| {
-                        let trimmed = value.trim();
-                        (!trimmed.is_empty()).then_some(trimmed.to_string())
-                    })
+                    .filter_map(trimmed_non_empty)
                     .collect(),
                 source_urls: record
                     .source_urls
                     .into_iter()
-                    .filter_map(|value| {
-                        let trimmed = value.trim();
-                        (!trimmed.is_empty()).then_some(trimmed.to_string())
-                    })
+                    .filter_map(trimmed_non_empty)
                     .collect(),
                 items: record
                     .items
                     .into_iter()
                     .filter_map(|item| {
-                        let title = item.title.trim();
-                        if title.is_empty() {
-                            return None;
-                        }
+                        let title = trimmed_non_empty(item.title)?;
                         Some(sieve_llm::ResponseEvidenceItem {
-                            kind: item.kind.trim().to_string(),
+                            kind: trimmed_string(item.kind),
                             rank: item.rank,
-                            title: title.to_string(),
-                            url: item
-                                .url
-                                .map(|value| value.trim().to_string())
-                                .filter(|value| !value.is_empty()),
+                            title,
+                            url: item.url.and_then(trimmed_non_empty),
                         })
                     })
                     .collect(),
                 answer_candidate: record.answer_candidate.and_then(|candidate| {
-                    let title = candidate.title.trim();
-                    if title.is_empty() {
-                        return None;
-                    }
+                    let title = trimmed_non_empty(candidate.title)?;
                     Some(sieve_llm::ResponseAnswerCandidate {
-                        target: candidate.target.trim().to_string(),
-                        item_kind: candidate.item_kind.trim().to_string(),
-                        title: title.to_string(),
-                        url: candidate
-                            .url
-                            .map(|value| value.trim().to_string())
-                            .filter(|value| !value.is_empty()),
-                        support: candidate.support.trim().to_string(),
+                        target: trimmed_string(candidate.target),
+                        item_kind: trimmed_string(candidate.item_kind),
+                        title,
+                        url: candidate.url.and_then(trimmed_non_empty),
+                        support: trimmed_string(candidate.support),
                         rank: candidate.rank,
                     })
                 }),
             })
         })
         .collect()
+}
+
+fn trimmed_string(value: String) -> String {
+    value.trim().to_string()
+}
+
+fn trimmed_non_empty(value: String) -> Option<String> {
+    let trimmed = trimmed_string(value);
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 fn user_explicitly_requests_output_visibility(message: &str) -> bool {

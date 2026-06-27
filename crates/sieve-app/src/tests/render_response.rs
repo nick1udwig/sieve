@@ -351,6 +351,89 @@ async fn build_response_evidence_records_batches_and_parses_structured_output() 
 }
 
 #[tokio::test]
+async fn build_response_evidence_records_trims_and_drops_blank_metadata() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "summarize the result".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: None,
+        trusted_effects: Vec::new(),
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![ResponseToolOutcome {
+            tool_name: "bash".to_string(),
+            outcome: "executed".to_string(),
+            attempted_command: Some("agent-browser snapshot --session example".to_string()),
+            failure_reason: None,
+            refs: vec![ResponseRefMetadata {
+                ref_id: "artifact-1".to_string(),
+                kind: "stdout".to_string(),
+                byte_count: 128,
+                line_count: 8,
+            }],
+        }],
+    };
+    let render_refs = BTreeMap::from([(
+        "artifact-1".to_string(),
+        RenderRef::Literal {
+            value: "browser snapshot text".to_string(),
+        },
+    )]);
+    let summary_model = QueuedSummaryModel::new(vec![Ok(serde_json::json!({
+        "records": [{
+            "ref_id": "artifact-1",
+            "summary": "  Useful summary  ",
+            "page_state": "   ",
+            "blockers": [" ", " login wall "],
+            "source_urls": [" ", " https://example.com/a "],
+            "items": [
+                {"kind": "result", "rank": 1, "title": "   ", "url": "https://example.com/blank"},
+                {"kind": " result ", "rank": 2, "title": " Useful item ", "url": " "}
+            ],
+            "answer_candidate": {
+                "target": " top ",
+                "item_kind": " result ",
+                "title": " Useful item ",
+                "url": " ",
+                "support": " explicit_item ",
+                "rank": 2
+            }
+        }]
+    })
+    .to_string())]);
+    let mut summary_calls = 0usize;
+
+    let records = build_response_evidence_records(
+        &summary_model,
+        &RunId("run-1".to_string()),
+        "summarize the result",
+        &input,
+        &render_refs,
+        &mut summary_calls,
+        4,
+    )
+    .await;
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].summary, "Useful summary");
+    assert_eq!(records[0].page_state, None);
+    assert_eq!(records[0].blockers, vec!["login wall"]);
+    assert_eq!(records[0].source_urls, vec!["https://example.com/a"]);
+    assert_eq!(records[0].items.len(), 1);
+    assert_eq!(records[0].items[0].kind, "result");
+    assert_eq!(records[0].items[0].title, "Useful item");
+    assert_eq!(records[0].items[0].url, None);
+    let candidate = records[0]
+        .answer_candidate
+        .as_ref()
+        .expect("answer candidate");
+    assert_eq!(candidate.target, "top");
+    assert_eq!(candidate.item_kind, "result");
+    assert_eq!(candidate.title, "Useful item");
+    assert_eq!(candidate.url, None);
+    assert_eq!(candidate.support, "explicit_item");
+}
+
+#[tokio::test]
 async fn build_response_evidence_records_prefers_later_live_success_refs() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
