@@ -1,3 +1,5 @@
+use crate::text_match::{contains_phrase_words, contains_word};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BashActionClass {
     Discovery,
@@ -68,16 +70,31 @@ pub(crate) fn url_is_likely_asset(url: &str) -> bool {
 
 pub(super) fn command_failure_kind_from_reason(reason: &str) -> &'static str {
     let lower = reason.to_ascii_lowercase();
-    if lower.contains("missing capability") {
+    if contains_phrase_words(&lower, &["missing", "capability"]) {
         "missing_capability"
-    } else if lower.contains("uncertain command") || lower.contains("unsupported") {
+    } else if contains_phrase_words(&lower, &["uncertain", "command"])
+        || contains_word(&lower, "unsupported")
+    {
         "uncertain_shape"
-    } else if lower.contains("denied by mode")
-        || lower.contains("blocked")
-        || lower.contains("not allowed")
+    } else if contains_phrase_words(&lower, &["denied", "by", "mode"])
+        || contains_word(&lower, "blocked")
+        || contains_phrase_words(&lower, &["not", "allowed"])
     {
         "blocked_mode"
     } else {
         "runtime_failure"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_failure_kind_uses_word_boundaries_for_blocked() {
+        assert_eq!(
+            command_failure_kind_from_reason("command was unblocked after retry"),
+            "runtime_failure"
+        );
     }
 }
