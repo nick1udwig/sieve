@@ -99,6 +99,7 @@ fn source_and_detail_request_detection() {
     assert!(user_requested_sources("please include links to sources"));
     assert!(user_requested_sources("cite references"));
     assert!(!user_requested_sources("just tell me the answer"));
+    assert!(!user_requested_sources("summarize resource usage"));
 
     assert!(user_requested_detailed_output(
         "give a detailed explanation"

@@ -216,17 +216,28 @@ fn normalized_words(input: &str) -> String {
     compact_whitespace(&normalized)
 }
 
+fn normalized_has_word(normalized: &str, words: &[&str]) -> bool {
+    normalized
+        .split_whitespace()
+        .any(|word| words.contains(&word))
+}
+
 pub(crate) fn user_requested_sources(trusted_user_message: &str) -> bool {
     let normalized = normalized_words(trusted_user_message);
-    normalized.contains("source")
-        || normalized.contains("sources")
-        || normalized.contains("link")
-        || normalized.contains("links")
-        || normalized.contains("url")
-        || normalized.contains("citation")
-        || normalized.contains("citations")
-        || normalized.contains("reference")
-        || normalized.contains("references")
+    normalized_has_word(
+        &normalized,
+        &[
+            "source",
+            "sources",
+            "link",
+            "links",
+            "url",
+            "citation",
+            "citations",
+            "reference",
+            "references",
+        ],
+    )
 }
 
 pub(crate) fn user_requested_detailed_output(trusted_user_message: &str) -> bool {
