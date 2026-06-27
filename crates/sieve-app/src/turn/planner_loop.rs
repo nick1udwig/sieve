@@ -24,6 +24,7 @@ use crate::planner_progress::{
 };
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
+use crate::text_match::{contains_any_word, contains_phrase_words};
 use crate::turn::TurnDeps;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::Serialize;
@@ -737,12 +738,21 @@ pub(super) async fn generate_assistant_message(
 
 fn looks_like_codex_status_query(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    [
-        "how is ", "how's ", "status", "doing", "done", "ongoing", "progress", "finished",
-        "complete",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
+    contains_phrase_words(&lower, &["how", "is"])
+        || contains_phrase_words(&lower, &["how", "s"])
+        || contains_any_word(
+            &lower,
+            &[
+                "status",
+                "doing",
+                "done",
+                "ongoing",
+                "progress",
+                "finished",
+                "complete",
+                "completed",
+            ],
+        )
 }
 
 fn find_referenced_codex_session<'a>(

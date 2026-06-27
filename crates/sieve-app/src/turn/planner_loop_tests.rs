@@ -20,9 +20,15 @@ fn codex_status_query_detection_matches_recent_phrase() {
         "how is you-are-starting doing?"
     ));
     assert!(looks_like_codex_status_query(
+        "how's you-are-starting going?"
+    ));
+    assert!(looks_like_codex_status_query(
         "is you-are-starting done or is the work ongoing?"
     ));
     assert!(!looks_like_codex_status_query("resume you-are-starting"));
+    assert!(!looks_like_codex_status_query(
+        "please condone you-are-starting"
+    ));
 }
 
 #[test]
