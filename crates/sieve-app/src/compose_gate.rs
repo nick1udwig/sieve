@@ -4,7 +4,8 @@ use crate::response_style::{
     obvious_meta_compose_pattern,
 };
 use crate::text_match::{
-    contains_any_word, contains_word, is_word_char, starts_with_word, word_matches_at,
+    contains_any_word, contains_phrase_words, contains_word, is_word_char, starts_with_word,
+    word_matches_at,
 };
 use crate::turn::{response_has_explicit_answer_candidate, response_has_trusted_effect};
 use serde::{Deserialize, Serialize};
@@ -218,22 +219,10 @@ fn followup_signal_from_reason(
         outcome
             .failure_reason
             .as_deref()
-            .map(|reason| {
-                let reason = reason.to_ascii_lowercase();
-                reason.contains("denied")
-                    || reason.contains("blocked")
-                    || reason.contains("not allowed")
-                    || reason.contains("unknown command")
-            })
+            .map(mentions_denied_tool_reason)
             .unwrap_or(false)
     });
-    if denied_command_present
-        || lower.contains("denied")
-        || lower.contains("blocked")
-        || lower.contains("not allowed")
-        || lower.contains("unknown command")
-        || lower.contains("tool failure")
-    {
+    if denied_command_present || mentions_denied_tool_reason(&lower) {
         return Some(PlannerGuidanceSignal::ContinueToolDeniedTryAlternativeAllowedTool);
     }
 
@@ -318,6 +307,15 @@ fn followup_signal_from_reason(
     }
 
     Some(PlannerGuidanceSignal::ContinueRefineApproach)
+}
+
+fn mentions_denied_tool_reason(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    contains_word(&lower, "denied")
+        || contains_word(&lower, "blocked")
+        || contains_phrase_words(&lower, &["not", "allowed"])
+        || contains_phrase_words(&lower, &["unknown", "command"])
+        || contains_phrase_words(&lower, &["tool", "failure"])
 }
 
 fn message_or_reason_negates_scheduling(text: &str) -> bool {

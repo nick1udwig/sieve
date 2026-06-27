@@ -102,6 +102,46 @@ fn compose_quality_followup_maps_denied_tool_signal() {
 }
 
 #[test]
+fn compose_quality_followup_does_not_match_denial_substrings() {
+    let input = ResponseTurnInput {
+        run_id: RunId("run-1".to_string()),
+        trusted_user_message: "summarize logs".to_string(),
+        response_modality: InteractionModality::Text,
+        planner_thoughts: None,
+        trusted_effects: Vec::new(),
+        extracted_evidence: Vec::new(),
+        tool_outcomes: vec![ResponseToolOutcome {
+            tool_name: "bash".to_string(),
+            outcome: "executed".to_string(),
+            attempted_command: Some("cat app.log".to_string()),
+            failure_reason: None,
+            refs: vec![ResponseRefMetadata {
+                ref_id: "artifact-1".to_string(),
+                kind: "stdout".to_string(),
+                byte_count: 64,
+                line_count: 1,
+            }],
+        }],
+    };
+
+    let signal = compose_quality_followup_signal(
+        Some("REVISE: unblocked output still needs a clearer answer."),
+        &input,
+    );
+    assert_eq!(signal, Some(PlannerGuidanceSignal::ContinueRefineApproach));
+
+    let mut failure_input = input.clone();
+    failure_input.tool_outcomes[0].failure_reason =
+        Some("command was unblocked after retry".to_string());
+    failure_input.tool_outcomes[0].refs.clear();
+    let signal = compose_quality_followup_signal(
+        Some("REVISE: output still needs a clearer answer."),
+        &failure_input,
+    );
+    assert_eq!(signal, Some(PlannerGuidanceSignal::ContinueRefineApproach));
+}
+
+#[test]
 fn compose_quality_followup_maps_conflict_signal() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
