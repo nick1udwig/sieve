@@ -11,30 +11,18 @@ use std::fs;
 #[path = "planner_progress_browser.rs"]
 mod browser;
 
+#[path = "planner_progress_bash.rs"]
+mod bash;
+
+pub(crate) use bash::{
+    classify_bash_action, command_targets_markdown_view, url_is_likely_asset, BashActionClass,
+    MIN_PRIMARY_FETCH_STDOUT_BYTES,
+};
+use bash::{command_failure_kind_from_reason, command_targets_likely_asset};
 use browser::{infer_browser_page_state, infer_interstitial_kind, parse_agent_browser_observation};
 
 const GUIDANCE_INSTRUCTION_PROMPT: &str = sieve_prompts::guidance::INSTRUCTION;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BashActionClass {
-    Discovery,
-    Fetch,
-    Extract,
-    Other,
-}
-
-impl BashActionClass {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Discovery => "discovery",
-            Self::Fetch => "fetch",
-            Self::Extract => "extract",
-            Self::Other => "other",
-        }
-    }
-}
-
-pub(crate) const MIN_PRIMARY_FETCH_STDOUT_BYTES: u64 = 256;
 const MAX_GUIDANCE_ARTIFACT_EXCERPT_BYTES: usize = 1_600;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -195,46 +183,6 @@ struct DeclassifyObservationPayload {
     applied: bool,
 }
 
-fn first_shell_word(command: &str) -> Option<&str> {
-    command.split_whitespace().next()
-}
-
-pub(crate) fn classify_bash_action(command: &str) -> BashActionClass {
-    let cmd = first_shell_word(command)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match cmd.as_str() {
-        "bravesearch" | "brave-search" => BashActionClass::Discovery,
-        "curl" | "wget" => BashActionClass::Fetch,
-        "jq" | "awk" | "sed" | "grep" | "rg" => BashActionClass::Extract,
-        _ => BashActionClass::Other,
-    }
-}
-
-pub(crate) fn command_targets_markdown_view(command: &str) -> bool {
-    let lower = command.to_ascii_lowercase();
-    lower.contains("https://markdown.new/") || lower.contains("http://markdown.new/")
-}
-
-fn command_targets_likely_asset(command: &str) -> bool {
-    let lower = command.to_ascii_lowercase();
-    lower.contains("imgs.search.brave.com")
-        || lower.contains("favicon")
-        || lower.contains(".png")
-        || lower.contains(".jpg")
-        || lower.contains(".jpeg")
-        || lower.contains(".gif")
-        || lower.contains(".webp")
-        || lower.contains(".svg")
-        || lower.contains(".ico")
-        || lower.contains(".css")
-        || lower.contains(".js")
-}
-
-pub(crate) fn url_is_likely_asset(url: &str) -> bool {
-    command_targets_likely_asset(url)
-}
-
 fn strip_ansi_escape_sequences(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut chars = value.chars().peekable();
@@ -267,22 +215,6 @@ fn read_artifact_excerpt(path: &str) -> Option<String> {
             .to_string();
     let cleaned = strip_ansi_escape_sequences(&excerpt).trim().to_string();
     (!cleaned.is_empty()).then_some(cleaned)
-}
-
-fn command_failure_kind_from_reason(reason: &str) -> &'static str {
-    let lower = reason.to_ascii_lowercase();
-    if lower.contains("missing capability") {
-        "missing_capability"
-    } else if lower.contains("uncertain command") || lower.contains("unsupported") {
-        "uncertain_shape"
-    } else if lower.contains("denied by mode")
-        || lower.contains("blocked")
-        || lower.contains("not allowed")
-    {
-        "blocked_mode"
-    } else {
-        "runtime_failure"
-    }
 }
 
 fn artifact_excerpt_payloads(report: &MainlineRunReport) -> Vec<ArtifactExcerptPayload> {
