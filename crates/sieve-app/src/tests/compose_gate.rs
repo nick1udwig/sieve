@@ -24,6 +24,15 @@ fn gate_requires_retry_does_not_treat_negated_pass_text_as_pass() {
 }
 
 #[test]
+fn gate_requires_retry_does_not_treat_negated_revise_text_as_retry() {
+    let gate = Some("No need to revise; verdict: PASS.");
+    assert!(gate_requires_retry(gate).is_none());
+
+    let parsed = parse_compose_gate_output(gate).expect("pass verdict should parse");
+    assert_eq!(parsed.verdict, "PASS");
+}
+
+#[test]
 fn combine_gate_reasons_joins_non_empty_reasons() {
     let combined = combine_gate_reasons(&[
         Some("REVISE: quality".to_string()),

@@ -106,6 +106,10 @@ fn pass_word_is_negated(text: &str, pass_idx: usize) -> bool {
         .unwrap_or(false)
 }
 
+fn revise_word_is_negated(text: &str, revise_idx: usize) -> bool {
+    pass_word_is_negated(text, revise_idx) || text[..revise_idx].trim_end().ends_with("no need to")
+}
+
 fn is_pass_verdict_text(gate: &str) -> bool {
     let lower = gate.to_ascii_lowercase();
     if starts_with_word(&lower, "pass") {
@@ -119,6 +123,12 @@ fn is_pass_verdict_text(gate: &str) -> bool {
                 .next()
                 .is_some_and(|prefix| prefix.contains("verdict"))
     })
+}
+
+fn unnegated_revise_idx(text: &str) -> Option<usize> {
+    text.match_indices("revise")
+        .map(|(idx, _)| idx)
+        .find(|idx| word_matches_at(text, *idx, "revise") && !revise_word_is_negated(text, *idx))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,7 +146,7 @@ fn parse_gate_verdict(gate: Option<&str>) -> Option<GateVerdict> {
         return None;
     }
     let lower = gate.to_ascii_lowercase();
-    if let Some(revise_idx) = lower.find("revise") {
+    if let Some(revise_idx) = unnegated_revise_idx(&lower) {
         let reason = gate[revise_idx + "revise".len()..]
             .trim_start_matches(|ch: char| ch == ':' || ch == '-' || ch.is_whitespace())
             .trim();
