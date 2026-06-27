@@ -174,13 +174,7 @@ fn remove_linkish_sentences(message: &str) -> String {
         .filter(|sentence| !contains_linkish_placeholder(sentence))
         .collect();
     if kept.is_empty() {
-        message
-            .replace("provided link", "")
-            .replace("provided links", "")
-            .replace("provided url", "")
-            .replace("provided urls", "")
-            .trim()
-            .to_string()
+        String::new()
     } else {
         kept.join(" ")
     }

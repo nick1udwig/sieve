@@ -35,6 +35,13 @@ fn enforce_link_policy_does_not_append_urls_when_sources_not_requested() {
 }
 
 #[test]
+fn enforce_link_policy_drops_all_placeholder_sentence() {
+    let message = "Visit the Provided Link for details.".to_string();
+    let enforced = enforce_link_policy(message, &[], "just answer");
+    assert!(enforced.trim().is_empty());
+}
+
+#[test]
 fn enforce_link_policy_keeps_actionable_link_wording() {
     let message = "Yes—I can read your message here and respond. If you mean actual audio, upload an audio file (or share a link) and tell me what you want (e.g., transcription or a summary).".to_string();
     let enforced = enforce_link_policy(message.clone(), &[], "just answer briefly");
