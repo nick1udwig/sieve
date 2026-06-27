@@ -48,6 +48,29 @@ fn find_referenced_codex_session_matches_cwd_basename() {
 }
 
 #[test]
+fn find_referenced_codex_session_matches_task_summary() {
+    let sessions = vec![PlannerCodexSession {
+        session_name: "other-session".to_string(),
+        cwd: "/root/git/other-repo".to_string(),
+        task_summary: "build modex".to_string(),
+        ..sample_session()
+    }];
+    let matched =
+        find_referenced_codex_session("how is build modex going?", &sessions).expect("match");
+    assert_eq!(matched.session_id, "codex-session-1");
+}
+
+#[test]
+fn find_referenced_codex_session_does_not_match_cwd_substring() {
+    let sessions = vec![PlannerCodexSession {
+        cwd: "/root/git/mod".to_string(),
+        task_summary: "build rust tool".to_string(),
+        ..sample_session()
+    }];
+    assert!(find_referenced_codex_session("how is model work going?", &sessions).is_none());
+}
+
+#[test]
 fn format_codex_session_status_reply_uses_saved_metadata() {
     let message = format_codex_session_status_reply(&sample_session());
     assert!(message.contains("It’s done, not ongoing."));

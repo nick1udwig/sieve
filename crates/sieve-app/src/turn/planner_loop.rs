@@ -24,7 +24,7 @@ use crate::planner_progress::{
 };
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
-use crate::text_match::{contains_any_word, contains_phrase_words};
+use crate::text_match::{contains_any_word, contains_phrase_words, is_word_char};
 use crate::turn::TurnDeps;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::Serialize;
@@ -755,6 +755,15 @@ fn looks_like_codex_status_query(message: &str) -> bool {
         )
 }
 
+fn contains_token_sequence(text_lower: &str, candidate: &str) -> bool {
+    let candidate_lower = candidate.to_ascii_lowercase();
+    let phrase = candidate_lower
+        .split(|ch: char| !is_word_char(ch))
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    !phrase.is_empty() && contains_phrase_words(text_lower, &phrase)
+}
+
 fn find_referenced_codex_session<'a>(
     message: &str,
     sessions: &'a [PlannerCodexSession],
@@ -764,7 +773,7 @@ fn find_referenced_codex_session<'a>(
         .iter()
         .filter_map(|session| {
             let mut score = 0usize;
-            if lower.contains(&session.session_name.to_ascii_lowercase()) {
+            if contains_token_sequence(&lower, &session.session_name) {
                 score = score.max(100);
             }
             if let Some(name) = session
@@ -773,11 +782,11 @@ fn find_referenced_codex_session<'a>(
                 .next()
                 .filter(|value| !value.is_empty())
             {
-                if lower.contains(&name.to_ascii_lowercase()) {
+                if contains_token_sequence(&lower, name) {
                     score = score.max(80);
                 }
             }
-            if lower.contains(&session.task_summary.to_ascii_lowercase()) {
+            if contains_token_sequence(&lower, &session.task_summary) {
                 score = score.max(60);
             }
             (score > 0).then_some((score, session))
