@@ -157,6 +157,17 @@ fn split_sentences(message: &str) -> Vec<String> {
     out
 }
 
+fn compact_whitespace(input: &str) -> String {
+    let mut compact = String::with_capacity(input.len());
+    for token in input.split_whitespace() {
+        if !compact.is_empty() {
+            compact.push(' ');
+        }
+        compact.push_str(token);
+    }
+    compact
+}
+
 fn remove_linkish_sentences(message: &str) -> String {
     let kept: Vec<String> = split_sentences(message)
         .into_iter()
@@ -198,15 +209,11 @@ pub(crate) fn enforce_link_policy(
 }
 
 fn normalized_words(input: &str) -> String {
-    input
-        .to_ascii_lowercase()
-        .replace(
-            ['?', '!', '.', ',', ';', ':', '(', ')', '[', ']', '{', '}'],
-            " ",
-        )
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let normalized = input.to_ascii_lowercase().replace(
+        ['?', '!', '.', ',', ';', ':', '(', ')', '[', ']', '{', '}'],
+        " ",
+    );
+    compact_whitespace(&normalized)
 }
 
 pub(crate) fn user_requested_sources(trusted_user_message: &str) -> bool {
@@ -293,7 +300,7 @@ pub(crate) fn obvious_meta_compose_pattern(message: &str) -> bool {
 }
 
 pub(crate) fn compact_single_line(input: &str, max_len: usize) -> String {
-    let compact = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    let compact = compact_whitespace(input);
     if compact.chars().count() <= max_len {
         return compact;
     }

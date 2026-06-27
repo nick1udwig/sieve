@@ -117,6 +117,15 @@ fn concise_style_diagnostic_flags_unsolicited_source_dump() {
 }
 
 #[test]
+fn compact_single_line_collapses_whitespace_before_truncating() {
+    assert_eq!(
+        compact_single_line("  alpha\n\tbeta   gamma  ", 80),
+        "alpha beta gamma"
+    );
+    assert_eq!(compact_single_line("alpha beta gamma", 8), "alpha b…");
+}
+
+#[test]
 fn load_dotenv_from_path_missing_file_is_noop() {
     let _guard = env_test_lock()
         .lock()
