@@ -3,6 +3,7 @@ use crate::response_style::{
     compact_single_line, concise_style_diagnostic, dedupe_preserve_order,
     obvious_meta_compose_pattern,
 };
+use crate::text_match::{contains_word, is_word_char, starts_with_word, word_matches_at};
 use crate::turn::{response_has_explicit_answer_candidate, response_has_trusted_effect};
 use serde::{Deserialize, Serialize};
 use sieve_llm::ResponseTurnInput;
@@ -71,36 +72,10 @@ enum GateVerdict {
     Revise(String),
 }
 
-fn is_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
-}
-
 const NEGATING_PASS_WORDS: &[&str] = &[
     "not", "no", "never", "cannot", "can't", "cant", "don't", "dont", "doesn't", "doesnt", "isn't",
     "isnt", "won't", "wont",
 ];
-
-fn word_matches_at(text: &str, idx: usize, word: &str) -> bool {
-    let before = text[..idx]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_word_char(ch));
-    let after = text[idx + word.len()..]
-        .chars()
-        .next()
-        .is_none_or(|ch| !is_word_char(ch));
-    before && after
-}
-
-fn starts_with_word(text: &str, word: &str) -> bool {
-    let trimmed = text.trim_start();
-    trimmed.starts_with(word) && word_matches_at(trimmed, 0, word)
-}
-
-fn contains_word(text: &str, word: &str) -> bool {
-    text.match_indices(word)
-        .any(|(idx, _)| word_matches_at(text, idx, word))
-}
 
 fn pass_word_is_negated(text: &str, pass_idx: usize) -> bool {
     text[..pass_idx]

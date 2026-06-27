@@ -20,6 +20,7 @@ mod planner_progress;
 mod render_refs;
 mod response_style;
 mod sieve_home;
+mod text_match;
 mod turn;
 
 use agent_loop::{run_agent_loop, AgentLoopDeps};

@@ -1,6 +1,7 @@
 use super::mainline::{count_newlines, mainline_artifact_kind_name};
 use crate::json_util::to_json_value;
 use crate::render_refs::RenderRef;
+use crate::text_match::{contains_phrase_words, contains_word};
 use serde::Serialize;
 use sieve_llm::{
     ResponseEvidenceRecord, ResponseRefMetadata, ResponseToolOutcome, ResponseTurnInput,
@@ -373,35 +374,6 @@ fn user_explicitly_requests_output_visibility(message: &str) -> bool {
         || contains_phrase_words(&lower, &["show", "me", "the", "result"])
         || contains_phrase_words(&lower, &["run", "exactly"])
         || (contains_phrase_words(&lower, &["what", "did"]) && contains_word(&lower, "return"))
-}
-
-fn is_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
-}
-
-fn word_matches_at(text: &str, idx: usize, word: &str) -> bool {
-    let before = text[..idx]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_word_char(ch));
-    let after = text[idx + word.len()..]
-        .chars()
-        .next()
-        .is_none_or(|ch| !is_word_char(ch));
-    before && after
-}
-
-fn contains_word(text: &str, word: &str) -> bool {
-    text.match_indices(word)
-        .any(|(idx, _)| word_matches_at(text, idx, word))
-}
-
-fn contains_phrase_words(text: &str, phrase: &[&str]) -> bool {
-    let tokens = text
-        .split(|ch: char| !is_word_char(ch))
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
-    tokens.windows(phrase.len()).any(|window| window == phrase)
 }
 
 fn output_ref_requires_visibility(kind: &str) -> bool {
