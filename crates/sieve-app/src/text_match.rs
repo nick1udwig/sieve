@@ -35,3 +35,32 @@ pub(crate) fn contains_phrase_words(text: &str, phrase: &[&str]) -> bool {
         .collect::<Vec<_>>();
     tokens.windows(phrase.len()).any(|window| window == phrase)
 }
+
+pub(crate) fn contains_token_sequence(text_lower: &str, candidate: &str) -> bool {
+    let candidate_lower = candidate.to_ascii_lowercase();
+    let phrase = candidate_lower
+        .split(|ch: char| !is_word_char(ch))
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    !phrase.is_empty() && contains_phrase_words(text_lower, &phrase)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contains_token_sequence_matches_punctuation_separated_tokens() {
+        assert!(contains_token_sequence(
+            "how is you are starting going",
+            "you-are-starting"
+        ));
+        assert!(contains_token_sequence("build modex status", "build modex"));
+    }
+
+    #[test]
+    fn contains_token_sequence_rejects_substrings() {
+        assert!(!contains_token_sequence("how is model work going", "mod"));
+        assert!(!contains_token_sequence("resume unrelated", ""));
+    }
+}

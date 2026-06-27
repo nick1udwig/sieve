@@ -24,7 +24,7 @@ use crate::planner_progress::{
 };
 use crate::render_refs::render_assistant_message;
 use crate::response_style::strip_unexpanded_render_tokens;
-use crate::text_match::{contains_any_word, contains_phrase_words, is_word_char};
+use crate::text_match::{contains_any_word, contains_phrase_words, contains_token_sequence};
 use crate::turn::TurnDeps;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::Serialize;
@@ -753,15 +753,6 @@ fn looks_like_codex_status_query(message: &str) -> bool {
                 "completed",
             ],
         )
-}
-
-fn contains_token_sequence(text_lower: &str, candidate: &str) -> bool {
-    let candidate_lower = candidate.to_ascii_lowercase();
-    let phrase = candidate_lower
-        .split(|ch: char| !is_word_char(ch))
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
-    !phrase.is_empty() && contains_phrase_words(text_lower, &phrase)
 }
 
 fn find_referenced_codex_session<'a>(
