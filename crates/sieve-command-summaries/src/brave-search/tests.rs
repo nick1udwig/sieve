@@ -135,6 +135,57 @@ fn brave_search_alias_is_supported() {
 }
 
 #[test]
+fn search_variant_extra_flag_boundaries_are_stable() {
+    for args in [
+        &[
+            "bravesearch",
+            "search",
+            "--q",
+            "rust",
+            "--summary",
+            "--enable-rich-callback",
+            "--result-filter",
+            "discussions",
+            "--goggle",
+            "tech",
+        ][..],
+        &[
+            "bravesearch",
+            "news",
+            "--q",
+            "rust",
+            "--extra-snippets",
+            "--goggle",
+            "tech",
+        ],
+    ] {
+        let out = crate::summarize_argv(&argv(args));
+        assert_eq!(out.knowledge, CommandKnowledge::Known);
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.search.brave.com/".to_string(),
+            }]
+        );
+    }
+
+    let out = crate::summarize_argv(&argv(&[
+        "bravesearch",
+        "images",
+        "--q",
+        "rust",
+        "--summary",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(summary.unsupported_flags, vec!["--summary".to_string()]);
+}
+
+#[test]
 fn unsupported_search_flag_routes_to_unknown() {
     let out = crate::summarize_argv(&argv(&[
         "bravesearch",

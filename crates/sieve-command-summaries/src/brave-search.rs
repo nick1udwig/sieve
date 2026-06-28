@@ -30,8 +30,8 @@ pub(super) fn summarize_brave_search(argv: &[String]) -> Option<SummaryOutcome> 
         "help" | "-h" | "--help" | "version" => known_noop_outcome(),
         "search" => summarize_search(argv, WEB_SEARCH_ENDPOINT, SearchFlags::web()),
         "news" => summarize_search(argv, NEWS_SEARCH_ENDPOINT, SearchFlags::news()),
-        "images" => summarize_search(argv, IMAGES_SEARCH_ENDPOINT, SearchFlags::images()),
-        "videos" => summarize_search(argv, VIDEOS_SEARCH_ENDPOINT, SearchFlags::videos()),
+        "images" => summarize_search(argv, IMAGES_SEARCH_ENDPOINT, SearchFlags::media()),
+        "videos" => summarize_search(argv, VIDEOS_SEARCH_ENDPOINT, SearchFlags::media()),
         "config" => summarize_config(argv),
         "cache" => summarize_cache(argv),
         _ => super::unknown_outcome("unknown bravesearch command"),
@@ -40,51 +40,29 @@ pub(super) fn summarize_brave_search(argv: &[String]) -> Option<SummaryOutcome> 
 
 #[derive(Debug, Clone, Copy)]
 struct SearchFlags {
-    extra_snippets: bool,
-    summary: bool,
-    rich_callback: bool,
-    result_filter: bool,
-    goggle: bool,
+    extra_bool_flags: &'static [&'static str],
+    extra_value_flags: &'static [&'static str],
 }
 
 impl SearchFlags {
     fn web() -> Self {
         Self {
-            extra_snippets: true,
-            summary: true,
-            rich_callback: true,
-            result_filter: true,
-            goggle: true,
+            extra_bool_flags: &["extra-snippets", "summary", "enable-rich-callback"],
+            extra_value_flags: &["result-filter", "goggle"],
         }
     }
 
     fn news() -> Self {
         Self {
-            extra_snippets: true,
-            summary: false,
-            rich_callback: false,
-            result_filter: false,
-            goggle: true,
+            extra_bool_flags: &["extra-snippets"],
+            extra_value_flags: &["goggle"],
         }
     }
 
-    fn videos() -> Self {
+    fn media() -> Self {
         Self {
-            extra_snippets: false,
-            summary: false,
-            rich_callback: false,
-            result_filter: false,
-            goggle: false,
-        }
-    }
-
-    fn images() -> Self {
-        Self {
-            extra_snippets: false,
-            summary: false,
-            rich_callback: false,
-            result_filter: false,
-            goggle: false,
+            extra_bool_flags: &[],
+            extra_value_flags: &[],
         }
     }
 }
@@ -111,21 +89,8 @@ fn summarize_search(argv: &[String], endpoint: &str, flags: SearchFlags) -> Summ
         "max-retries",
         "output",
     ];
-    if flags.extra_snippets {
-        bool_flags.push("extra-snippets");
-    }
-    if flags.summary {
-        bool_flags.push("summary");
-    }
-    if flags.rich_callback {
-        bool_flags.push("enable-rich-callback");
-    }
-    if flags.result_filter {
-        value_flags.push("result-filter");
-    }
-    if flags.goggle {
-        value_flags.push("goggle");
-    }
+    bool_flags.extend_from_slice(flags.extra_bool_flags);
+    value_flags.extend_from_slice(flags.extra_value_flags);
 
     let parsed = match parse_checked_flags(
         argv,
