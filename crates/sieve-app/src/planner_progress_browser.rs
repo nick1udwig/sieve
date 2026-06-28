@@ -310,6 +310,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_agent_browser_observation_skips_env_command_wrapper() {
+        let observation = parse_agent_browser_observation(
+            "sudo env TOKEN=redacted agent-browser open https://example.com --session docs",
+        )
+        .expect("env-wrapped agent-browser command should be parsed");
+
+        assert_eq!(observation.action_class, BrowserActionClass::Navigate);
+        assert_eq!(
+            observation.target_url.as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(observation.session_name.as_deref(), Some("docs"));
+    }
+
+    #[test]
     fn parse_agent_browser_observation_skips_leading_global_flags() {
         let observation = parse_agent_browser_observation(
             "agent-browser --session docs open https://example.com",

@@ -120,4 +120,12 @@ mod tests {
             BashActionClass::Fetch
         );
     }
+
+    #[test]
+    fn classify_bash_action_skips_env_command_wrapper() {
+        assert_eq!(
+            classify_bash_action("sudo env TOKEN=redacted curl -sS https://example.com"),
+            BashActionClass::Fetch
+        );
+    }
 }

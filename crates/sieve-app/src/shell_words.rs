@@ -5,20 +5,36 @@ pub(crate) fn command_words(command: &str) -> impl Iterator<Item = &str> + '_ {
 }
 
 pub(crate) fn command_words_for_simple_exec(command: &str) -> Vec<&str> {
-    let mut words = command.split_whitespace().collect::<Vec<_>>();
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    let mut start = 0usize;
     loop {
-        let before = words.len();
-        words = words
-            .into_iter()
-            .skip_while(|token| is_shell_assignment(token))
-            .collect();
-        if shell_basename(words.first().copied().unwrap_or_default()) == "sudo"
-            && words.get(1).is_some_and(|arg| !arg.starts_with('-'))
+        let before = start;
+        while words
+            .get(start)
+            .is_some_and(|token| is_shell_assignment(token))
         {
-            words.remove(0);
+            start += 1;
         }
-        if words.len() == before {
-            return words;
+        if shell_basename(words.get(start).copied().unwrap_or_default()) == "sudo"
+            && words
+                .get(start + 1)
+                .is_some_and(|arg| !arg.starts_with('-'))
+        {
+            start += 1;
+            continue;
+        }
+        if shell_basename(words.get(start).copied().unwrap_or_default()) == "env" {
+            let mut next = start + 1;
+            while words.get(next).is_some_and(|arg| is_env_assignment(arg)) {
+                next += 1;
+            }
+            if next > start + 1 && next < words.len() {
+                start = next;
+                continue;
+            }
+        }
+        if start == before {
+            return words[start..].to_vec();
         }
     }
 }
@@ -37,6 +53,12 @@ fn is_shell_assignment(token: &str) -> bool {
 
 fn shell_basename(value: &str) -> &str {
     value.rsplit('/').next().unwrap_or(value)
+}
+
+fn is_env_assignment(token: &str) -> bool {
+    token
+        .split_once('=')
+        .is_some_and(|(name, _)| !name.is_empty())
 }
 
 #[cfg(test)]
@@ -60,6 +82,13 @@ mod tests {
     #[test]
     fn command_words_for_simple_exec_skips_env_and_plain_sudo() {
         let words = command_words_for_simple_exec("A=1 sudo B=2 curl -sS https://example.com");
+
+        assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
+    }
+
+    #[test]
+    fn command_words_for_simple_exec_skips_env_command_wrapper() {
+        let words = command_words_for_simple_exec("sudo env A=1 curl -sS https://example.com");
 
         assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
     }
