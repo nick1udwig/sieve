@@ -1,6 +1,6 @@
 use crate::json_util::to_json_value;
 use crate::response_style::user_requested_sources;
-use crate::shell_words::command_words;
+use crate::shell_words::command_words_for_simple_exec;
 use crate::turn::{format_integrity, mainline_artifact_kind_name};
 use serde::Serialize;
 use sieve_runtime::{
@@ -602,7 +602,7 @@ fn strip_raw_artifact_fields(value: &mut serde_json::Value) {
 
 fn normalize_bash_command_for_repeat_guard(command: &str) -> String {
     let mut normalized = String::with_capacity(command.len());
-    for token in command_words(command) {
+    for token in command_words_for_simple_exec(command) {
         if !normalized.is_empty() {
             normalized.push(' ');
         }

@@ -1,7 +1,7 @@
 use super::mainline::{count_newlines, mainline_artifact_kind_name};
 use crate::json_util::to_json_value;
 use crate::render_refs::RenderRef;
-use crate::shell_words::command_words;
+use crate::shell_words::command_words_for_simple_exec;
 use crate::text_match::{contains_phrase_words, contains_word};
 use serde::Serialize;
 use sieve_llm::{
@@ -42,7 +42,8 @@ struct EvidenceRefCandidate {
 
 fn evidence_ref_priority(outcome: &ResponseToolOutcome) -> u8 {
     let attempted_command = outcome.attempted_command.as_deref().unwrap_or("");
-    let is_dry_run = command_words(attempted_command)
+    let is_dry_run = command_words_for_simple_exec(attempted_command)
+        .into_iter()
         .any(|token| token == "--dry-run" || token.starts_with("--dry-run="));
     let is_schema = command_is_gws_schema_only(attempted_command);
     let is_live = !is_dry_run && !is_schema;
@@ -60,7 +61,7 @@ fn command_is_gws_schema_only(command: &str) -> bool {
     if command.contains("&&") || command.contains("||") {
         return false;
     }
-    let mut tokens = command_words(command);
+    let mut tokens = command_words_for_simple_exec(command).into_iter();
     matches!(
         (tokens.next(), tokens.next(), tokens.next()),
         (Some("gws"), Some("schema"), Some(_))

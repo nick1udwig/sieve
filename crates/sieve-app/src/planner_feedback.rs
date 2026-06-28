@@ -4,7 +4,7 @@ use crate::planner_progress::{
 };
 use crate::render_refs::read_artifact_as_string;
 use crate::response_style::extract_plain_urls_from_text;
-use crate::shell_words::command_words;
+use crate::shell_words::command_words_for_simple_exec;
 use sieve_runtime::{MainlineArtifactKind, PlannerToolResult, RuntimeDisposition};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -127,7 +127,7 @@ pub(crate) fn planner_policy_feedback(tool_results: &[PlannerToolResult]) -> Opt
 }
 
 fn is_sieve_lcm_query_command(command: &str) -> bool {
-    let mut parts = command_words(command);
+    let mut parts = command_words_for_simple_exec(command).into_iter();
     matches!(
         (parts.next(), parts.next()),
         (Some("sieve-lcm-cli"), Some("query"))

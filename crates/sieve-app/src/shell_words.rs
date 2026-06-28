@@ -1,9 +1,3 @@
-pub(crate) fn command_words(command: &str) -> impl Iterator<Item = &str> + '_ {
-    command
-        .split_whitespace()
-        .skip_while(|token| is_shell_assignment(token))
-}
-
 pub(crate) fn command_words_for_simple_exec(command: &str) -> Vec<&str> {
     let words = command.split_whitespace().collect::<Vec<_>>();
     let mut start = 0usize;
@@ -64,20 +58,6 @@ fn is_env_assignment(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn command_words_skips_leading_env_assignments_only() {
-        let words = command_words("A=1 _B=two curl X=literal").collect::<Vec<_>>();
-
-        assert_eq!(words, vec!["curl", "X=literal"]);
-    }
-
-    #[test]
-    fn command_words_keeps_invalid_assignments_as_command_words() {
-        let words = command_words("1A=bad curl").collect::<Vec<_>>();
-
-        assert_eq!(words, vec!["1A=bad", "curl"]);
-    }
 
     #[test]
     fn command_words_for_simple_exec_skips_env_and_plain_sudo() {

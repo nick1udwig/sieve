@@ -23,9 +23,8 @@ fn planner_step_trace_includes_opaque_handle_products_without_raw_ids() {
     .expect("write artifact");
 
     let tool_result = PlannerToolResult::Bash {
-        command:
-            "GWS_CONFIG_DIR=/tmp/gws gws gmail users messages list --params '{\"userId\":\"me\"}'"
-                .to_string(),
+        command: "sudo env GWS_CONFIG_DIR=/tmp/gws gws gmail users messages list --params '{\"userId\":\"me\"}'"
+            .to_string(),
         disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
             run_id: RunId("run-products".to_string()),
             exit_code: Some(0),
@@ -76,7 +75,8 @@ fn planner_step_trace_includes_opaque_handle_products_without_raw_ids() {
 #[test]
 fn planner_step_trace_includes_gws_schema_cli_shape_product() {
     let tool_result = PlannerToolResult::Bash {
-        command: "GWS_CONFIG_DIR=/tmp/gws gws schema gmail.users.messages.list".to_string(),
+        command: "sudo env GWS_CONFIG_DIR=/tmp/gws gws schema gmail.users.messages.list"
+            .to_string(),
         disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
             run_id: RunId("run-schema".to_string()),
             exit_code: Some(0),

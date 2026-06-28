@@ -1,4 +1,4 @@
-use crate::shell_words::command_words;
+use crate::shell_words::command_words_for_simple_exec;
 use serde::Serialize;
 use serde_json::Value;
 use sieve_runtime::{
@@ -122,7 +122,7 @@ fn is_gws_gmail_messages_list(command: &str) -> bool {
 }
 
 fn has_token_prefix(command: &str, prefix: &[&str]) -> bool {
-    let mut tokens = command_words(command);
+    let mut tokens = command_words_for_simple_exec(command).into_iter();
     prefix
         .iter()
         .all(|expected| tokens.next() == Some(*expected))
@@ -180,7 +180,7 @@ fn extract_gws_schema_cli_shape(
 }
 
 fn gws_schema_target(command: &str) -> Option<&str> {
-    let mut tokens = command_words(command);
+    let mut tokens = command_words_for_simple_exec(command).into_iter();
     match (tokens.next(), tokens.next(), tokens.next(), tokens.next()) {
         (Some("gws"), Some("schema"), Some(target), None) => Some(target),
         _ => None,

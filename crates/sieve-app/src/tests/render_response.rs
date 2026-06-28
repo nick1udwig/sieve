@@ -496,7 +496,8 @@ async fn build_response_evidence_records_prefers_later_live_success_refs() {
                 tool_name: "bash".to_string(),
                 outcome: "executed mainline (exit_code=Some(0))".to_string(),
                 attempted_command: Some(
-                    "GWS_CONFIG_DIR=/tmp/gws gws schema gmail.users.messages.list".to_string(),
+                    "sudo env GWS_CONFIG_DIR=/tmp/gws gws schema gmail.users.messages.list"
+                        .to_string(),
                 ),
                 failure_reason: None,
                 refs: vec![ResponseRefMetadata {
