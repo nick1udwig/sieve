@@ -1,7 +1,7 @@
 use super::mainline::{count_newlines, mainline_artifact_kind_name};
 use crate::json_util::to_json_value;
 use crate::render_refs::RenderRef;
-use crate::shell_words::command_words_for_simple_exec;
+use crate::shell_words::{command_words_for_simple_argv, command_words_for_simple_exec};
 use crate::text_match::{contains_phrase_words, contains_word};
 use serde::Serialize;
 use sieve_llm::{
@@ -9,8 +9,9 @@ use sieve_llm::{
     SummaryModel, SummaryRequest,
 };
 use sieve_runtime::{PlannerRunResult, PlannerToolResult, RuntimeDisposition};
+use sieve_shell::{BasicShellAnalyzer, ShellAnalyzer};
 use sieve_tool_contracts::planner_exposed_tool_names;
-use sieve_types::{Integrity, InteractionModality, RunId, TrustedToolEffect};
+use sieve_types::{CommandKnowledge, Integrity, InteractionModality, RunId, TrustedToolEffect};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -58,14 +59,35 @@ fn evidence_ref_priority(outcome: &ResponseToolOutcome) -> u8 {
 }
 
 fn command_is_gws_schema_only(command: &str) -> bool {
-    if command.contains("&&") || command.contains("||") {
+    let Ok(analysis) = BasicShellAnalyzer.analyze_shell_lc_script(command) else {
+        return false;
+    };
+    if analysis.knowledge != CommandKnowledge::Known || analysis.segments.len() != 1 {
         return false;
     }
-    let mut tokens = command_words_for_simple_exec(command).into_iter();
+    let mut tokens = command_words_for_simple_argv(&analysis.segments[0].argv).into_iter();
     matches!(
         (tokens.next(), tokens.next(), tokens.next()),
         (Some("gws"), Some("schema"), Some(_))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_is_gws_schema_only_rejects_composed_shell_commands() {
+        assert!(command_is_gws_schema_only(
+            "sudo env GWS_CONFIG_DIR=/tmp/gws gws schema gmail.users.messages.list"
+        ));
+        assert!(!command_is_gws_schema_only(
+            "gws schema gmail.users.messages.list | cat"
+        ));
+        assert!(!command_is_gws_schema_only(
+            "gws schema gmail.users.messages.list; gws gmail users messages list"
+        ));
+    }
 }
 
 pub(crate) fn planner_allowed_tools_for_turn(

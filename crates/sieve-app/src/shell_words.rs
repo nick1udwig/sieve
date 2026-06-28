@@ -1,5 +1,14 @@
 pub(crate) fn command_words_for_simple_exec(command: &str) -> Vec<&str> {
     let words = command.split_whitespace().collect::<Vec<_>>();
+    strip_words_for_simple_exec(&words)
+}
+
+pub(crate) fn command_words_for_simple_argv(argv: &[String]) -> Vec<&str> {
+    let words = argv.iter().map(String::as_str).collect::<Vec<_>>();
+    strip_words_for_simple_exec(&words)
+}
+
+fn strip_words_for_simple_exec<'a>(words: &[&'a str]) -> Vec<&'a str> {
     let mut start = 0usize;
     loop {
         let before = start;
@@ -69,6 +78,21 @@ mod tests {
     #[test]
     fn command_words_for_simple_exec_skips_env_command_wrapper() {
         let words = command_words_for_simple_exec("sudo env A=1 curl -sS https://example.com");
+
+        assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
+    }
+
+    #[test]
+    fn command_words_for_simple_argv_skips_command_wrappers() {
+        let argv = vec![
+            "sudo".to_string(),
+            "env".to_string(),
+            "A=1".to_string(),
+            "curl".to_string(),
+            "-sS".to_string(),
+            "https://example.com".to_string(),
+        ];
+        let words = command_words_for_simple_argv(&argv);
 
         assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
     }
