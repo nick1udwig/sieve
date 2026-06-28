@@ -15,6 +15,16 @@ pub(super) struct ParsedGlobals {
     pub(super) missing_value_flag: Option<String>,
 }
 
+const SUPPORTED_VALUE_FLAGS: &[&str] = &[
+    "--session",
+    "--profile",
+    "--state",
+    "--config",
+    "--extension",
+    "--download-path",
+    "--action-policy",
+];
+
 pub(super) fn parse_globals(argv: &[String]) -> ParsedGlobals {
     let mut out = ParsedGlobals::default();
     let mut i = 1usize;
@@ -27,109 +37,14 @@ pub(super) fn parse_globals(argv: &[String]) -> ParsedGlobals {
             continue;
         }
 
-        if let Some(parsed) = parse_value_flag(argv, i, "--session") {
+        if let Some((flag, parsed)) = parse_supported_value_flag(argv, i) {
             if parsed.is_missing() {
                 out.missing_value_flag = Some(arg.clone());
                 break;
             }
-            i += parsed.consumed();
-            continue;
-        }
-
-        if let Some(parsed) = parse_value_flag(argv, i, "--profile") {
-            if parsed.is_missing() {
-                out.missing_value_flag = Some(arg.clone());
-                break;
-            }
-            let path = parsed.value();
-            super::push_capability(
-                &mut out.browser_capabilities,
-                Resource::Fs,
-                Action::Read,
-                path.to_string(),
-            );
-            super::push_capability(
-                &mut out.browser_capabilities,
-                Resource::Fs,
-                Action::Write,
-                path.to_string(),
-            );
-            i += parsed.consumed();
-            continue;
-        }
-
-        if let Some(parsed) = parse_value_flag(argv, i, "--state") {
-            if parsed.is_missing() {
-                out.missing_value_flag = Some(arg.clone());
-                break;
-            }
-            super::push_capability(
-                &mut out.browser_capabilities,
-                Resource::Fs,
-                Action::Read,
-                parsed.value().to_string(),
-            );
-            i += parsed.consumed();
-            continue;
-        }
-
-        if let Some(parsed) = parse_value_flag(argv, i, "--config") {
-            if parsed.is_missing() {
-                out.missing_value_flag = Some(arg.clone());
-                break;
-            }
-            super::push_capability(
-                &mut out.browser_capabilities,
-                Resource::Fs,
-                Action::Read,
-                parsed.value().to_string(),
-            );
-            i += parsed.consumed();
-            continue;
-        }
-
-        if let Some(parsed) = parse_value_flag(argv, i, "--extension") {
-            if parsed.is_missing() {
-                out.missing_value_flag = Some(arg.clone());
-                break;
-            }
-            super::push_capability(
-                &mut out.browser_capabilities,
-                Resource::Fs,
-                Action::Read,
-                parsed.value().to_string(),
-            );
-            i += parsed.consumed();
-            continue;
-        }
-
-        if let Some(parsed) = parse_value_flag(argv, i, "--download-path") {
-            if parsed.is_missing() {
-                out.missing_value_flag = Some(arg.clone());
-                break;
-            }
-            super::push_capability(
-                &mut out.browser_capabilities,
-                Resource::Fs,
-                Action::Write,
-                parsed.value().to_string(),
-            );
-            i += parsed.consumed();
-            continue;
-        }
-
-        if let Some(parsed) = parse_value_flag(argv, i, "--action-policy") {
-            if parsed.is_missing() {
-                out.missing_value_flag = Some(arg.clone());
-                break;
-            }
-            super::push_capability(
-                &mut out.browser_capabilities,
-                Resource::Fs,
-                Action::Read,
-                parsed.value().to_string(),
-            );
-            i += parsed.consumed();
+            let consumed = parsed.consumed();
+            add_capabilities_for_value_flag(&mut out.browser_capabilities, flag, parsed.value());
+            i += consumed;
             continue;
         }
 
@@ -210,6 +125,37 @@ pub(super) fn parse_globals(argv: &[String]) -> ParsedGlobals {
     }
 
     out
+}
+
+fn parse_supported_value_flag<'a>(
+    argv: &'a [String],
+    i: usize,
+) -> Option<(&'static str, ParsedValueFlag<'a>)> {
+    for flag in SUPPORTED_VALUE_FLAGS {
+        if let Some(parsed) = parse_value_flag(argv, i, flag) {
+            return Some((flag, parsed));
+        }
+    }
+    None
+}
+
+fn add_capabilities_for_value_flag(capabilities: &mut Vec<Capability>, flag: &str, path: &str) {
+    match flag {
+        "--session" => {}
+        "--profile" => {
+            push_fs_capability(capabilities, Action::Read, path);
+            push_fs_capability(capabilities, Action::Write, path);
+        }
+        "--download-path" => push_fs_capability(capabilities, Action::Write, path),
+        "--state" | "--config" | "--extension" | "--action-policy" => {
+            push_fs_capability(capabilities, Action::Read, path);
+        }
+        _ => unreachable!("unknown supported agent-browser global flag"),
+    }
+}
+
+fn push_fs_capability(capabilities: &mut Vec<Capability>, action: Action, path: &str) {
+    super::push_capability(capabilities, Resource::Fs, action, path.to_string());
 }
 
 enum ParsedValueFlag<'a> {

@@ -180,6 +180,16 @@ fn agent_browser_tab_new_blank_is_known_without_network() {
 }
 
 #[test]
+fn agent_browser_session_global_flag_does_not_require_capability() {
+    let out = summarize_argv(&argv(&["agent-browser", "--session", "work", "tab", "new"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert!(summary.required_capabilities.is_empty());
+    assert!(summary.sink_checks.is_empty());
+}
+
+#[test]
 fn agent_browser_tab_new_url_requires_connect() {
     let out = summarize_argv(&argv(&[
         "agent-browser",
