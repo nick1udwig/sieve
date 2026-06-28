@@ -106,6 +106,55 @@ fn agent_browser_open_profile_and_state_add_fs_caps() {
 }
 
 #[test]
+fn agent_browser_open_download_config_extension_and_action_policy_add_fs_caps() {
+    let out = summarize_argv(&argv(&[
+        "agent-browser",
+        "--download-path",
+        "/tmp/downloads",
+        "--config=/tmp/browser.toml",
+        "--extension",
+        "/tmp/ext",
+        "--action-policy",
+        "/tmp/actions.toml",
+        "open",
+        "https://example.com",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://example.com/".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "/tmp/downloads".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/browser.toml".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/ext".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/actions.toml".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn agent_browser_connect_port_requires_local_net_connect() {
     let out = summarize_argv(&argv(&["agent-browser", "connect", "9222"]));
 
