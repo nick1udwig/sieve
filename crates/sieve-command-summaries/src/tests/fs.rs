@@ -148,6 +148,22 @@ fn touch_with_time_flag_maps_to_fs_write() {
 }
 
 #[test]
+fn touch_end_of_flags_treats_dash_prefixed_operand_as_target() {
+    let out = summarize_argv(&argv(&["touch", "--", "-d"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Fs,
+            action: Action::Write,
+            scope: "-d".to_string(),
+        }]
+    );
+}
+
+#[test]
 fn touch_with_reference_maps_reference_read_and_target_write() {
     for args in [
         &["touch", "-r", "template.txt", "file.txt"][..],
