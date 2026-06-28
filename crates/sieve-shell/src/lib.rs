@@ -252,6 +252,7 @@ fn parse_plain_command_from_node(command_node: Node<'_>, source: &str) -> Option
             "word" | "number" | "string" | "raw_string" | "concatenation" => {
                 argv.push(parse_word_atom(child, source)?);
             }
+            "variable_assignment" => {}
             "comment" => {}
             _ => return None,
         }

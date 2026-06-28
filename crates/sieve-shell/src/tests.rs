@@ -36,6 +36,23 @@ fn known_for_supported_composed_commands() {
 }
 
 #[test]
+fn leading_env_assignments_do_not_hide_plain_command() {
+    let analyzer = BasicShellAnalyzer;
+    let analysis = analyzer
+        .analyze_shell_lc_script("HTTPS_PROXY=http://proxy LC_ALL=C curl -sS https://example.com")
+        .expect("parse");
+
+    assert_eq!(analysis.knowledge, CommandKnowledge::Known);
+    assert!(analysis.unsupported_constructs.is_empty());
+    assert_eq!(analysis.segments.len(), 1);
+    assert_eq!(
+        analysis.segments[0].argv,
+        vec!["curl", "-sS", "https://example.com"]
+    );
+    assert_eq!(analysis.segments[0].operator_before, None);
+}
+
+#[test]
 fn unsupported_constructs_map_to_uncertain() {
     let analyzer = BasicShellAnalyzer;
     let analysis = analyzer
