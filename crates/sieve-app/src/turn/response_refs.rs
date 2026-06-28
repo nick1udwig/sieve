@@ -67,8 +67,8 @@ fn command_is_gws_schema_only(command: &str) -> bool {
     }
     let mut tokens = command_words_for_simple_argv(&analysis.segments[0].argv).into_iter();
     matches!(
-        (tokens.next(), tokens.next(), tokens.next()),
-        (Some("gws"), Some("schema"), Some(_))
+        (tokens.next(), tokens.next(), tokens.next(), tokens.next()),
+        (Some("gws"), Some("schema"), Some(_), None)
     )
 }
 
@@ -86,6 +86,9 @@ mod tests {
         ));
         assert!(!command_is_gws_schema_only(
             "gws schema gmail.users.messages.list; gws gmail users messages list"
+        ));
+        assert!(!command_is_gws_schema_only(
+            "gws schema gmail.users.messages.list --unexpected"
         ));
     }
 }
