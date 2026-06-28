@@ -349,3 +349,19 @@ fn tee_append_maps_to_fs_append_capability() {
         }]
     );
 }
+
+#[test]
+fn tee_end_of_flags_treats_dash_prefixed_operand_as_target() {
+    let out = summarize_argv(&argv(&["tee", "--", "-a"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Fs,
+            action: Action::Write,
+            scope: "-a".to_string(),
+        }]
+    );
+}
