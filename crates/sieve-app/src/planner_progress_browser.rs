@@ -1,4 +1,4 @@
-use crate::shell_words::command_words;
+use crate::shell_words::command_words_for_simple_exec;
 use crate::text_match::{contains_phrase_words, contains_word};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub(super) struct AgentBrowserObservation {
 }
 
 pub(super) fn parse_agent_browser_observation(command: &str) -> Option<AgentBrowserObservation> {
-    let tokens = command_words(command).collect::<Vec<_>>();
+    let tokens = command_words_for_simple_exec(command);
     if shell_basename(tokens.first().copied().unwrap_or_default()) != "agent-browser" {
         return None;
     }
@@ -285,6 +285,21 @@ mod tests {
             "AGENT_BROWSER_TIMEOUT=30 agent-browser open https://example.com --session docs",
         )
         .expect("env-prefixed agent-browser command should be parsed");
+
+        assert_eq!(observation.action_class, BrowserActionClass::Navigate);
+        assert_eq!(
+            observation.target_url.as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(observation.session_name.as_deref(), Some("docs"));
+    }
+
+    #[test]
+    fn parse_agent_browser_observation_skips_plain_sudo_wrapper() {
+        let observation = parse_agent_browser_observation(
+            "sudo agent-browser open https://example.com --session docs",
+        )
+        .expect("sudo-wrapped agent-browser command should be parsed");
 
         assert_eq!(observation.action_class, BrowserActionClass::Navigate);
         assert_eq!(

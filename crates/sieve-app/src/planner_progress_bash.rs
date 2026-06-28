@@ -1,4 +1,4 @@
-use crate::shell_words::first_command_word;
+use crate::shell_words::command_words_for_simple_exec;
 use crate::text_match::{contains_phrase_words, contains_word};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,9 @@ impl BashActionClass {
 pub(crate) const MIN_PRIMARY_FETCH_STDOUT_BYTES: u64 = 256;
 
 pub(crate) fn classify_bash_action(command: &str) -> BashActionClass {
-    let cmd = first_command_word(command)
+    let cmd = command_words_for_simple_exec(command)
+        .first()
+        .copied()
         .unwrap_or_default()
         .to_ascii_lowercase();
     match cmd.as_str() {
@@ -108,6 +110,14 @@ mod tests {
         assert_eq!(
             classify_bash_action("_TOKEN=redacted bravesearch search --query status"),
             BashActionClass::Discovery
+        );
+    }
+
+    #[test]
+    fn classify_bash_action_skips_plain_sudo_wrapper() {
+        assert_eq!(
+            classify_bash_action("sudo curl -sS https://example.com"),
+            BashActionClass::Fetch
         );
     }
 }
