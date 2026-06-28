@@ -160,6 +160,38 @@ fn gws_write_method_with_json_and_output_maps_caps() {
 }
 
 #[test]
+fn gws_attached_output_and_ignored_value_flags_preserve_positionals() {
+    let out = summarize_argv(&argv(&[
+        "gws",
+        "drive",
+        "files",
+        "list",
+        "--format",
+        "json",
+        "-oresult.json",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://www.googleapis.com/".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "result.json".to_string(),
+            }
+        ]
+    );
+    assert!(summary.sink_checks.is_empty());
+}
+
+#[test]
 fn gws_upload_uses_upload_origin_and_reads_local_file() {
     let out = summarize_argv(&argv(&[
         "gws",
