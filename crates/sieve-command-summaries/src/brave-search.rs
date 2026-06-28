@@ -5,7 +5,7 @@ use crate::SummaryOutcome;
 #[path = "brave-search/flags.rs"]
 mod flags;
 
-use flags::{latest_optional_value, latest_value, parse_flags};
+use flags::{latest_optional_value, latest_value, parse_flags, ParsedFlags};
 
 const DEFAULT_CONFIG_PATH: &str = "~/.brave-search/config.json";
 const DEFAULT_CACHE_DIR: &str = "~/.brave-search/cache";
@@ -125,20 +125,17 @@ fn summarize_search(argv: &[String], endpoint: &str, flags: SearchFlags) -> Summ
         value_flags.push("goggle");
     }
 
-    let parsed = parse_flags(argv, 2, &value_flags, &bool_flags);
-    if parsed.saw_help {
-        return known_noop_outcome();
-    }
-    if let Some(flag) = parsed.missing_value_flag {
-        let reason = format!("bravesearch search flag missing value: {flag}");
-        return super::unknown_outcome(&reason);
-    }
-    if !parsed.unsupported_flags.is_empty() {
-        return super::unknown_with_flags(
-            "unsupported bravesearch search flags",
-            parsed.unsupported_flags,
-        );
-    }
+    let parsed = match parse_checked_flags(
+        argv,
+        2,
+        &value_flags,
+        &bool_flags,
+        "bravesearch search flag missing value",
+        "unsupported bravesearch search flags",
+    ) {
+        Ok(parsed) => parsed,
+        Err(out) => return out,
+    };
 
     let mut required_capabilities = vec![net_connect_capability(endpoint)];
     for flag in ["api-key-file", "config"] {
@@ -165,55 +162,45 @@ fn summarize_config(argv: &[String]) -> SummaryOutcome {
     match argv[2].as_str() {
         "help" | "-h" | "--help" => known_noop_outcome(),
         "show" | "get" => {
-            let parsed = parse_flags(argv, 3, &["config"], &[]);
-            if parsed.saw_help {
-                return known_noop_outcome();
-            }
-            if let Some(flag) = parsed.missing_value_flag {
-                let reason = format!("bravesearch config flag missing value: {flag}");
-                return super::unknown_outcome(&reason);
-            }
-            if !parsed.unsupported_flags.is_empty() {
-                return super::unknown_with_flags(
-                    "unsupported bravesearch config flags",
-                    parsed.unsupported_flags,
-                );
+            if let Err(out) = parse_checked_flags(
+                argv,
+                3,
+                &["config"],
+                &[],
+                "bravesearch config flag missing value",
+                "unsupported bravesearch config flags",
+            ) {
+                return out;
             }
             known_noop_outcome()
         }
         "init" => {
-            let parsed = parse_flags(argv, 3, &["config"], &["force"]);
-            if parsed.saw_help {
-                return known_noop_outcome();
-            }
-            if let Some(flag) = parsed.missing_value_flag {
-                let reason = format!("bravesearch config init flag missing value: {flag}");
-                return super::unknown_outcome(&reason);
-            }
-            if !parsed.unsupported_flags.is_empty() {
-                return super::unknown_with_flags(
-                    "unsupported bravesearch config init flags",
-                    parsed.unsupported_flags,
-                );
-            }
+            let parsed = match parse_checked_flags(
+                argv,
+                3,
+                &["config"],
+                &["force"],
+                "bravesearch config init flag missing value",
+                "unsupported bravesearch config init flags",
+            ) {
+                Ok(parsed) => parsed,
+                Err(out) => return out,
+            };
             let config_path = latest_value(&parsed, "config", DEFAULT_CONFIG_PATH);
             super::known_fs_outcome(vec![config_path], Action::Write)
         }
         "set" => {
-            let parsed = parse_flags(argv, 3, &["config"], &[]);
-            if parsed.saw_help {
-                return known_noop_outcome();
-            }
-            if let Some(flag) = parsed.missing_value_flag {
-                let reason = format!("bravesearch config set flag missing value: {flag}");
-                return super::unknown_outcome(&reason);
-            }
-            if !parsed.unsupported_flags.is_empty() {
-                return super::unknown_with_flags(
-                    "unsupported bravesearch config set flags",
-                    parsed.unsupported_flags,
-                );
-            }
+            let parsed = match parse_checked_flags(
+                argv,
+                3,
+                &["config"],
+                &[],
+                "bravesearch config set flag missing value",
+                "unsupported bravesearch config set flags",
+            ) {
+                Ok(parsed) => parsed,
+                Err(out) => return out,
+            };
             if parsed.positionals.len() != 2 {
                 return super::unknown_outcome("bravesearch config set missing key/value");
             }
@@ -221,19 +208,15 @@ fn summarize_config(argv: &[String]) -> SummaryOutcome {
             super::known_fs_outcome(vec![config_path], Action::Write)
         }
         "paths" => {
-            let parsed = parse_flags(argv, 3, &["config", "api-key-file"], &[]);
-            if parsed.saw_help {
-                return known_noop_outcome();
-            }
-            if let Some(flag) = parsed.missing_value_flag {
-                let reason = format!("bravesearch config paths flag missing value: {flag}");
-                return super::unknown_outcome(&reason);
-            }
-            if !parsed.unsupported_flags.is_empty() {
-                return super::unknown_with_flags(
-                    "unsupported bravesearch config paths flags",
-                    parsed.unsupported_flags,
-                );
+            if let Err(out) = parse_checked_flags(
+                argv,
+                3,
+                &["config", "api-key-file"],
+                &[],
+                "bravesearch config paths flag missing value",
+                "unsupported bravesearch config paths flags",
+            ) {
+                return out;
             }
             known_noop_outcome()
         }
@@ -249,42 +232,60 @@ fn summarize_cache(argv: &[String]) -> SummaryOutcome {
     match argv[2].as_str() {
         "help" | "-h" | "--help" => known_noop_outcome(),
         "stats" => {
-            let parsed = parse_flags(argv, 3, &["cache-dir"], &[]);
-            if parsed.saw_help {
-                return known_noop_outcome();
-            }
-            if let Some(flag) = parsed.missing_value_flag {
-                let reason = format!("bravesearch cache stats flag missing value: {flag}");
-                return super::unknown_outcome(&reason);
-            }
-            if !parsed.unsupported_flags.is_empty() {
-                return super::unknown_with_flags(
-                    "unsupported bravesearch cache stats flags",
-                    parsed.unsupported_flags,
-                );
+            if let Err(out) = parse_checked_flags(
+                argv,
+                3,
+                &["cache-dir"],
+                &[],
+                "bravesearch cache stats flag missing value",
+                "unsupported bravesearch cache stats flags",
+            ) {
+                return out;
             }
             known_noop_outcome()
         }
         "clear" | "prune" => {
-            let parsed = parse_flags(argv, 3, &["cache-dir"], &[]);
-            if parsed.saw_help {
-                return known_noop_outcome();
-            }
-            if let Some(flag) = parsed.missing_value_flag {
-                let reason = format!("bravesearch cache flag missing value: {flag}");
-                return super::unknown_outcome(&reason);
-            }
-            if !parsed.unsupported_flags.is_empty() {
-                return super::unknown_with_flags(
-                    "unsupported bravesearch cache flags",
-                    parsed.unsupported_flags,
-                );
-            }
+            let parsed = match parse_checked_flags(
+                argv,
+                3,
+                &["cache-dir"],
+                &[],
+                "bravesearch cache flag missing value",
+                "unsupported bravesearch cache flags",
+            ) {
+                Ok(parsed) => parsed,
+                Err(out) => return out,
+            };
             let cache_dir = latest_value(&parsed, "cache-dir", DEFAULT_CACHE_DIR);
             super::known_fs_outcome(vec![cache_dir], Action::Write)
         }
         _ => super::unknown_outcome("unknown bravesearch cache command"),
     }
+}
+
+fn parse_checked_flags(
+    argv: &[String],
+    start: usize,
+    value_flags: &[&str],
+    bool_flags: &[&str],
+    missing_value_reason: &str,
+    unsupported_reason: &str,
+) -> Result<ParsedFlags, SummaryOutcome> {
+    let parsed = parse_flags(argv, start, value_flags, bool_flags);
+    if parsed.saw_help {
+        return Err(known_noop_outcome());
+    }
+    if let Some(flag) = parsed.missing_value_flag.as_ref() {
+        let reason = format!("{missing_value_reason}: {flag}");
+        return Err(super::unknown_outcome(&reason));
+    }
+    if !parsed.unsupported_flags.is_empty() {
+        return Err(super::unknown_with_flags(
+            unsupported_reason,
+            parsed.unsupported_flags,
+        ));
+    }
+    Ok(parsed)
 }
 
 fn net_connect_capability(scope: &str) -> Capability {

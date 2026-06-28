@@ -149,6 +149,26 @@ fn unsupported_search_flag_routes_to_unknown() {
 }
 
 #[test]
+fn config_paths_missing_value_routes_to_unknown() {
+    let out = crate::summarize_argv(&argv(&["bravesearch", "config", "paths", "--api-key-file"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+    assert_eq!(
+        out.reason.as_deref(),
+        Some("bravesearch config paths flag missing value: --api-key-file")
+    );
+}
+
+#[test]
+fn cache_stats_unsupported_flag_routes_to_unknown() {
+    let out = crate::summarize_argv(&argv(&["bravesearch", "cache", "stats", "--force"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Unknown);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(summary.unsupported_flags, vec!["--force".to_string()]);
+}
+
+#[test]
 fn search_help_routes_to_known_noop() {
     let out = crate::summarize_argv(&argv(&["bravesearch", "search", "--help"]));
 
