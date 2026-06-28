@@ -279,6 +279,45 @@ fn chmod_maps_targets_to_fs_write() {
 }
 
 #[test]
+fn chmod_end_of_flags_treats_dash_prefixed_operand_as_target() {
+    let out = summarize_argv(&argv(&["chmod", "755", "--", "-R"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Fs,
+            action: Action::Write,
+            scope: "-R".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn chown_maps_targets_to_fs_write() {
+    let out = summarize_argv(&argv(&["chown", "-R", "root:root", "file.txt", "dir"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "file.txt".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "dir".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn chown_unsupported_flag_routes_to_unknown() {
     let out = summarize_argv(&argv(&[
         "chown",

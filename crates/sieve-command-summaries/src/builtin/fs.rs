@@ -1,17 +1,19 @@
 use sieve_types::{Action, CommandSummary};
 
 use crate::{
-    collect_positionals_with_no_value_flags, is_named_command, is_short_flag_cluster,
-    known_fs_outcome, known_outcome, unknown_outcome, unknown_with_flags, SummaryOutcome,
+    is_named_command, is_short_flag_cluster, known_fs_outcome, known_outcome, unknown_with_flags,
+    SummaryOutcome,
 };
 
 mod cp;
+mod metadata;
 mod mkdir;
 mod mv;
 mod touch;
 mod trash;
 
 use cp::summarize_cp;
+use metadata::{summarize_chmod, summarize_chown};
 use mkdir::summarize_mkdir;
 use mv::summarize_mv;
 use touch::summarize_touch;
@@ -26,65 +28,6 @@ pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
         .or_else(|| summarize_chmod(argv))
         .or_else(|| summarize_chown(argv))
         .or_else(|| summarize_tee(argv))
-}
-
-fn summarize_chmod(argv: &[String]) -> Option<SummaryOutcome> {
-    if !is_named_command(argv, "chmod") {
-        return None;
-    }
-
-    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        argv,
-        &['R', 'v', 'c', 'f'],
-        &[
-            "--recursive",
-            "--verbose",
-            "--changes",
-            "--silent",
-            "--quiet",
-        ],
-        &[],
-    );
-    if !unsupported_flags.is_empty() {
-        return Some(unknown_with_flags(
-            "unsupported chmod flags",
-            unsupported_flags,
-        ));
-    }
-    if positionals.len() < 2 {
-        return Some(unknown_outcome("chmod missing operand"));
-    }
-    Some(known_fs_outcome(positionals[1..].to_vec(), Action::Write))
-}
-
-fn summarize_chown(argv: &[String]) -> Option<SummaryOutcome> {
-    if !is_named_command(argv, "chown") {
-        return None;
-    }
-
-    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        argv,
-        &['R', 'h', 'v', 'f', 'c', 'H', 'L', 'P'],
-        &[
-            "--recursive",
-            "--no-dereference",
-            "--verbose",
-            "--silent",
-            "--quiet",
-            "--changes",
-        ],
-        &[],
-    );
-    if !unsupported_flags.is_empty() {
-        return Some(unknown_with_flags(
-            "unsupported chown flags",
-            unsupported_flags,
-        ));
-    }
-    if positionals.len() < 2 {
-        return Some(unknown_outcome("chown missing operand"));
-    }
-    Some(known_fs_outcome(positionals[1..].to_vec(), Action::Write))
 }
 
 fn summarize_tee(argv: &[String]) -> Option<SummaryOutcome> {
