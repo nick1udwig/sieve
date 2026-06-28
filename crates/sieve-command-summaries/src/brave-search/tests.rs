@@ -83,6 +83,42 @@ fn search_config_file_requires_fs_read_capability() {
 }
 
 #[test]
+fn search_inline_values_use_latest_path_capabilities() {
+    let out = crate::summarize_argv(&argv(&[
+        "bravesearch",
+        "search",
+        "--query=rust",
+        "--api-key-file=/tmp/old.key",
+        "--api-key-file",
+        "/tmp/new.key",
+        "--config=/tmp/brave.json",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.search.brave.com/".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/new.key".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "/tmp/brave.json".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn brave_search_alias_is_supported() {
     let out = crate::summarize_argv(&argv(&["brave-search", "news", "--q", "rust"]));
 
