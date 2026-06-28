@@ -1,6 +1,8 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource};
+use sieve_types::{Action, Capability, Resource};
 
-use crate::{known_empty_outcome as known_noop_outcome, SummaryOutcome};
+use crate::{
+    known_capabilities_outcome, known_empty_outcome as known_noop_outcome, SummaryOutcome,
+};
 
 #[path = "brave-search/flags.rs"]
 mod flags;
@@ -147,11 +149,7 @@ fn summarize_search(argv: &[String], endpoint: &str, flags: SearchFlags) -> Summ
             });
         }
     }
-    super::known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
+    known_capabilities_outcome(required_capabilities)
 }
 
 fn summarize_config(argv: &[String]) -> SummaryOutcome {

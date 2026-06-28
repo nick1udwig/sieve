@@ -1,8 +1,8 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource};
+use sieve_types::{Action, Capability, Resource};
 
 use crate::{
-    collect_positionals_with_no_value_flags, is_named_command, known_outcome, unknown_outcome,
-    unknown_with_flags, SummaryOutcome,
+    collect_positionals_with_no_value_flags, is_named_command, known_capabilities_outcome,
+    unknown_outcome, unknown_with_flags, SummaryOutcome,
 };
 
 pub(super) fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {
@@ -49,9 +49,5 @@ pub(super) fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {
         action: Action::Write,
         scope: destination,
     });
-    Some(known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    }))
+    Some(known_capabilities_outcome(required_capabilities))
 }

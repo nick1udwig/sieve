@@ -1,4 +1,4 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource};
+use sieve_types::{Action, Capability, Resource};
 
 use crate::SummaryOutcome;
 
@@ -104,11 +104,7 @@ pub(super) fn summarize_stt(argv: &[String]) -> SummaryOutcome {
             scope: path,
         });
     }
-    super::super::known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
+    super::super::known_capabilities_outcome(required_capabilities)
 }
 
 fn parse_ignored_stt_flag(

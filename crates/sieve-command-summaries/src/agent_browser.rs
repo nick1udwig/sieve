@@ -1,6 +1,8 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{Action, Capability, Resource, SinkCheck, SinkKey, ValueRef};
 
-use crate::{canonicalize_url_connect_scope, known_empty_outcome, SummaryOutcome};
+use crate::{
+    canonicalize_url_connect_scope, known_empty_outcome, known_summary_outcome, SummaryOutcome,
+};
 
 mod parse;
 
@@ -383,11 +385,7 @@ fn finalize_known(
         );
     }
 
-    super::known_outcome(CommandSummary {
-        required_capabilities: capabilities,
-        sink_checks,
-        unsupported_flags: Vec::new(),
-    })
+    known_summary_outcome(capabilities, sink_checks)
 }
 
 fn connect_scope_from_navigation(raw: &str) -> Option<SinkKey> {

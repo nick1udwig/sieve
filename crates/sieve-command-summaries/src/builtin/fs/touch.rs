@@ -1,8 +1,8 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource};
+use sieve_types::{Action, Capability, Resource};
 
 use crate::{
-    is_named_command, is_short_flag_cluster, known_fs_outcome, known_outcome, unknown_outcome,
-    unknown_with_flags, SummaryOutcome,
+    is_named_command, is_short_flag_cluster, known_capabilities_outcome, known_fs_outcome,
+    unknown_outcome, unknown_with_flags, SummaryOutcome,
 };
 
 pub(super) fn summarize_touch(argv: &[String]) -> Option<SummaryOutcome> {
@@ -116,9 +116,5 @@ pub(super) fn summarize_touch(argv: &[String]) -> Option<SummaryOutcome> {
         scope,
     }));
 
-    Some(known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    }))
+    Some(known_capabilities_outcome(required_capabilities))
 }

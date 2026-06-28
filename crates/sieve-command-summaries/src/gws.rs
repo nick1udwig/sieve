@@ -1,8 +1,8 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{Action, Capability, Resource, SinkCheck, SinkKey, ValueRef};
 
 use crate::{
-    is_named_command, known_empty_outcome as known_noop_outcome, known_outcome, unknown_outcome,
-    unknown_with_flags,
+    is_named_command, known_capabilities_outcome, known_empty_outcome as known_noop_outcome,
+    known_summary_outcome, unknown_outcome, unknown_with_flags,
 };
 
 mod flags;
@@ -137,11 +137,7 @@ fn summarize_service(argv: &[String]) -> crate::SummaryOutcome {
         sink_checks.push(net_sink_check(flag, GWS_MODELARMOR_ORIGIN));
     }
 
-    known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks,
-        unsupported_flags: Vec::new(),
-    })
+    known_summary_outcome(required_capabilities, sink_checks)
 }
 
 const GWS_READ_METHOD_PREFIXES: &[&str] = &[
@@ -210,9 +206,5 @@ fn known_net_outcome(
         scope: scope.to_string(),
     }];
     required_capabilities.append(&mut extra_capabilities);
-    known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
+    known_capabilities_outcome(required_capabilities)
 }

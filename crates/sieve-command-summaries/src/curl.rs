@@ -1,9 +1,9 @@
 use crate::{
-    is_curl_command, is_short_flag_cluster, known_outcome, split_flag_value, unknown_outcome,
-    unknown_with_flags, SummaryOutcome,
+    is_curl_command, is_short_flag_cluster, known_summary_outcome, split_flag_value,
+    unknown_outcome, unknown_with_flags, SummaryOutcome,
 };
 use sieve_policy::{canonicalize_net_origin_scope, canonicalize_sink_key};
-use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
+use sieve_types::{Action, Capability, Resource, SinkCheck, SinkKey, ValueRef};
 
 #[derive(Debug, Clone)]
 struct SinkArg {
@@ -220,11 +220,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             scope: sink.0.clone(),
         }];
         required_capabilities.extend(file_read_caps);
-        return Some(known_outcome(CommandSummary {
-            required_capabilities,
-            sink_checks,
-            unsupported_flags: Vec::new(),
-        }));
+        return Some(known_summary_outcome(required_capabilities, sink_checks));
     }
     let is_write_method = matches!(method, "POST" | "PUT" | "PATCH" | "DELETE")
         || (is_read_only_method && has_payloads);
@@ -250,11 +246,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     required_capabilities.extend(file_read_capabilities(&headers));
     let sink_checks = sink_checks_for_args(headers, sink.clone());
 
-    Some(known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks,
-        unsupported_flags: Vec::new(),
-    }))
+    Some(known_summary_outcome(required_capabilities, sink_checks))
 }
 
 pub(crate) fn canonicalize_url_connect_scope(raw: &str) -> Option<SinkKey> {

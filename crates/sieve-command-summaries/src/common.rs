@@ -1,4 +1,4 @@
-use sieve_types::{Action, Capability, CommandKnowledge, CommandSummary, Resource};
+use sieve_types::{Action, Capability, CommandKnowledge, CommandSummary, Resource, SinkCheck};
 
 use crate::SummaryOutcome;
 
@@ -64,8 +64,8 @@ pub(crate) fn collect_positionals_with_no_value_flags(
 }
 
 pub(crate) fn known_fs_outcome(scopes: Vec<String>, action: Action) -> SummaryOutcome {
-    known_outcome(CommandSummary {
-        required_capabilities: scopes
+    known_capabilities_outcome(
+        scopes
             .into_iter()
             .map(|scope| Capability {
                 resource: Resource::Fs,
@@ -73,17 +73,26 @@ pub(crate) fn known_fs_outcome(scopes: Vec<String>, action: Action) -> SummaryOu
                 scope,
             })
             .collect(),
-        sink_checks: Vec::new(),
+    )
+}
+
+pub(crate) fn known_capabilities_outcome(required_capabilities: Vec<Capability>) -> SummaryOutcome {
+    known_summary_outcome(required_capabilities, Vec::new())
+}
+
+pub(crate) fn known_summary_outcome(
+    required_capabilities: Vec<Capability>,
+    sink_checks: Vec<SinkCheck>,
+) -> SummaryOutcome {
+    known_outcome(CommandSummary {
+        required_capabilities,
+        sink_checks,
         unsupported_flags: Vec::new(),
     })
 }
 
 pub(crate) fn known_empty_outcome() -> SummaryOutcome {
-    known_outcome(CommandSummary {
-        required_capabilities: Vec::new(),
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
+    known_capabilities_outcome(Vec::new())
 }
 
 pub(crate) fn is_short_flag_cluster(arg: &str, allowed_flags: &[char]) -> bool {
