@@ -1,6 +1,9 @@
 use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
 
-use crate::{is_named_command, known_outcome, unknown_outcome, unknown_with_flags};
+use crate::{
+    is_named_command, known_empty_outcome as known_noop_outcome, known_outcome, unknown_outcome,
+    unknown_with_flags,
+};
 
 mod flags;
 
@@ -194,14 +197,6 @@ fn net_sink_check(flag: FlagArg, sink: &str) -> SinkCheck {
         sink: SinkKey(sink.to_string()),
         value_refs: vec![ValueRef(format!("argv:{}", flag.value_index))],
     }
-}
-
-fn known_noop_outcome() -> crate::SummaryOutcome {
-    known_outcome(CommandSummary {
-        required_capabilities: Vec::new(),
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
 }
 
 fn known_net_outcome(

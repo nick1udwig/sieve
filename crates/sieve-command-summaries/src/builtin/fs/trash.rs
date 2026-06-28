@@ -1,8 +1,8 @@
-use sieve_types::{Action, CommandSummary};
+use sieve_types::Action;
 
 use crate::{
-    is_named_command, is_short_flag_cluster, known_fs_outcome, known_outcome, split_flag_value,
-    unknown_outcome, unknown_with_flags, SummaryOutcome,
+    is_named_command, is_short_flag_cluster, known_empty_outcome, known_fs_outcome,
+    split_flag_value, unknown_outcome, unknown_with_flags, SummaryOutcome,
 };
 
 pub(super) fn summarize_trash(argv: &[String]) -> Option<SummaryOutcome> {
@@ -107,11 +107,7 @@ pub(super) fn summarize_trash(argv: &[String]) -> Option<SummaryOutcome> {
                 "trash metadata flags cannot be combined with file targets",
             ));
         }
-        return Some(known_outcome(CommandSummary {
-            required_capabilities: Vec::new(),
-            sink_checks: Vec::new(),
-            unsupported_flags: Vec::new(),
-        }));
+        return Some(known_empty_outcome());
     }
 
     if targets.is_empty() {

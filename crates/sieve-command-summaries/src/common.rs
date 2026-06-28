@@ -78,6 +78,14 @@ pub(crate) fn known_fs_outcome(scopes: Vec<String>, action: Action) -> SummaryOu
     })
 }
 
+pub(crate) fn known_empty_outcome() -> SummaryOutcome {
+    known_outcome(CommandSummary {
+        required_capabilities: Vec::new(),
+        sink_checks: Vec::new(),
+        unsupported_flags: Vec::new(),
+    })
+}
+
 pub(crate) fn is_short_flag_cluster(arg: &str, allowed_flags: &[char]) -> bool {
     arg.len() > 1
         && arg.starts_with('-')

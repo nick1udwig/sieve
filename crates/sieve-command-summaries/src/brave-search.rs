@@ -1,6 +1,6 @@
 use sieve_types::{Action, Capability, CommandSummary, Resource};
 
-use crate::SummaryOutcome;
+use crate::{known_empty_outcome as known_noop_outcome, SummaryOutcome};
 
 #[path = "brave-search/flags.rs"]
 mod flags;
@@ -297,14 +297,6 @@ fn net_connect_capability(scope: &str) -> Capability {
         action: Action::Connect,
         scope,
     }
-}
-
-fn known_noop_outcome() -> SummaryOutcome {
-    super::known_outcome(CommandSummary {
-        required_capabilities: Vec::new(),
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
 }
 
 fn is_brave_search_command(argv: &[String]) -> bool {

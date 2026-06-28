@@ -1,6 +1,6 @@
 use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
 
-use crate::{canonicalize_url_connect_scope, SummaryOutcome};
+use crate::{canonicalize_url_connect_scope, known_empty_outcome, SummaryOutcome};
 
 mod parse;
 
@@ -386,14 +386,6 @@ fn finalize_known(
     super::known_outcome(CommandSummary {
         required_capabilities: capabilities,
         sink_checks,
-        unsupported_flags: Vec::new(),
-    })
-}
-
-fn known_empty_outcome() -> SummaryOutcome {
-    super::known_outcome(CommandSummary {
-        required_capabilities: Vec::new(),
-        sink_checks: Vec::new(),
         unsupported_flags: Vec::new(),
     })
 }

@@ -3,9 +3,7 @@ mod stt;
 mod tests;
 mod tts;
 
-use sieve_types::CommandSummary;
-
-use crate::SummaryOutcome;
+use crate::{known_empty_outcome, SummaryOutcome};
 
 const OPENAI_CONNECT_SCOPE: &str = "https://api.openai.com/";
 #[cfg(test)]
@@ -39,14 +37,6 @@ pub(super) fn summarize_st(argv: &[String]) -> Option<SummaryOutcome> {
             "unsupported st subcommand: {other}"
         ))),
     }
-}
-
-pub(super) fn known_empty_outcome() -> SummaryOutcome {
-    super::known_outcome(CommandSummary {
-        required_capabilities: Vec::new(),
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    })
 }
 
 fn parse_value_flag_inline<'a>(arg: &'a str, short: &str, long: &str) -> Option<&'a str> {

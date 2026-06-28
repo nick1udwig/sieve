@@ -1,7 +1,8 @@
-use sieve_types::{Action, CommandSummary};
+use sieve_types::Action;
 
 use crate::{
-    flag_value, is_named_command, known_fs_outcome, known_outcome, unknown_outcome, SummaryOutcome,
+    flag_value, is_named_command, known_empty_outcome, known_fs_outcome, unknown_outcome,
+    SummaryOutcome,
 };
 
 pub(super) fn summarize_sieve_lcm_cli(argv: &[String]) -> Option<SummaryOutcome> {
@@ -14,11 +15,7 @@ pub(super) fn summarize_sieve_lcm_cli(argv: &[String]) -> Option<SummaryOutcome>
     };
 
     match subcommand {
-        "query" | "expand" => Some(known_outcome(CommandSummary {
-            required_capabilities: Vec::new(),
-            sink_checks: Vec::new(),
-            unsupported_flags: Vec::new(),
-        })),
+        "query" | "expand" => Some(known_empty_outcome()),
         "ingest" => {
             let db_path = flag_value(argv, "--db").unwrap_or_else(|| "~/.sieve/lcm".to_string());
             Some(known_fs_outcome(vec![db_path], Action::Write))

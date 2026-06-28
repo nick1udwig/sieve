@@ -1,10 +1,9 @@
 use codex_shell_command::command_safety::is_dangerous_command::command_might_be_dangerous;
 use codex_shell_command::command_safety::is_safe_command::is_known_safe_command;
-use sieve_types::CommandSummary;
 
 use crate::{
-    agent_browser, brave_search, builtin, curl, gws, known_outcome, rebase_argv_value_refs, st,
-    strip_env_assignments_with_offset, strip_sudo_with_offset, unknown_outcome, SummaryOutcome,
+    agent_browser, brave_search, builtin, curl, gws, known_empty_outcome, rebase_argv_value_refs,
+    st, strip_env_assignments_with_offset, strip_sudo_with_offset, unknown_outcome, SummaryOutcome,
 };
 
 pub(crate) fn summarize_argv(argv: &[String]) -> SummaryOutcome {
@@ -47,11 +46,7 @@ pub(crate) fn summarize_argv(argv: &[String]) -> SummaryOutcome {
     }
 
     if is_known_safe_command(argv) {
-        return known_outcome(CommandSummary {
-            required_capabilities: Vec::new(),
-            sink_checks: Vec::new(),
-            unsupported_flags: Vec::new(),
-        });
+        return known_empty_outcome();
     }
 
     if command_might_be_dangerous(argv) {
