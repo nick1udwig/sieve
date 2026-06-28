@@ -8,9 +8,20 @@ pub(crate) struct ArgvView<'a> {
 }
 
 pub(crate) fn flag_value(argv: &[String], flag: &str) -> Option<String> {
-    argv.windows(2)
-        .find(|pair| pair[0] == flag)
-        .map(|pair| pair[1].clone())
+    for (i, arg) in argv.iter().enumerate() {
+        if arg == "--" {
+            return None;
+        }
+        if let Some((name, value)) = split_flag_value(arg) {
+            if name == flag {
+                return Some(value.to_string());
+            }
+        }
+        if arg == flag {
+            return argv.get(i + 1).cloned();
+        }
+    }
+    None
 }
 
 pub(crate) fn split_flag_value(flag: &str) -> Option<(&str, &str)> {
