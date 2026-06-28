@@ -106,6 +106,30 @@ fn has_repeated_bash_outcome_detects_whitespace_only_command_variants() {
 }
 
 #[test]
+fn has_repeated_bash_outcome_detects_env_prefix_command_variants() {
+    let tool_results = vec![
+        PlannerToolResult::Bash {
+            command: "HTTPS_PROXY=http://proxy curl -sS https://example.com/article".to_string(),
+            disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                run_id: RunId("run-1".to_string()),
+                exit_code: Some(0),
+                artifacts: vec![],
+            }),
+        },
+        PlannerToolResult::Bash {
+            command: "curl -sS https://example.com/article".to_string(),
+            disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+                run_id: RunId("run-1".to_string()),
+                exit_code: Some(0),
+                artifacts: vec![],
+            }),
+        },
+    ];
+
+    assert!(has_repeated_bash_outcome(&tool_results));
+}
+
+#[test]
 fn has_repeated_bash_outcome_ignores_changed_artifact_signature() {
     let tool_results = vec![
         PlannerToolResult::Bash {
