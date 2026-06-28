@@ -1,6 +1,7 @@
 use super::mainline::{count_newlines, mainline_artifact_kind_name};
 use crate::json_util::to_json_value;
 use crate::render_refs::RenderRef;
+use crate::shell_words::command_words;
 use crate::text_match::{contains_phrase_words, contains_word};
 use serde::Serialize;
 use sieve_llm::{
@@ -41,10 +42,9 @@ struct EvidenceRefCandidate {
 
 fn evidence_ref_priority(outcome: &ResponseToolOutcome) -> u8 {
     let attempted_command = outcome.attempted_command.as_deref().unwrap_or("");
-    let trimmed = attempted_command.trim();
-    let is_dry_run = trimmed.contains(" --dry-run") || trimmed.ends_with("--dry-run");
-    let is_schema =
-        trimmed.starts_with("gws schema ") && !trimmed.contains("&&") && !trimmed.contains("||");
+    let is_dry_run = command_words(attempted_command)
+        .any(|token| token == "--dry-run" || token.starts_with("--dry-run="));
+    let is_schema = command_is_gws_schema_only(attempted_command);
     let is_live = !is_dry_run && !is_schema;
     let is_success = outcome.outcome.contains("exit_code=Some(0)") || outcome.outcome == "executed";
 
@@ -54,6 +54,17 @@ fn evidence_ref_priority(outcome: &ResponseToolOutcome) -> u8 {
         (false, true) => 1,
         (false, false) => 0,
     }
+}
+
+fn command_is_gws_schema_only(command: &str) -> bool {
+    if command.contains("&&") || command.contains("||") {
+        return false;
+    }
+    let mut tokens = command_words(command);
+    matches!(
+        (tokens.next(), tokens.next(), tokens.next()),
+        (Some("gws"), Some("schema"), Some(_))
+    )
 }
 
 pub(crate) fn planner_allowed_tools_for_turn(

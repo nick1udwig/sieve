@@ -495,7 +495,9 @@ async fn build_response_evidence_records_prefers_later_live_success_refs() {
             ResponseToolOutcome {
                 tool_name: "bash".to_string(),
                 outcome: "executed mainline (exit_code=Some(0))".to_string(),
-                attempted_command: Some("gws schema gmail.users.messages.list".to_string()),
+                attempted_command: Some(
+                    "GWS_CONFIG_DIR=/tmp/gws gws schema gmail.users.messages.list".to_string(),
+                ),
                 failure_reason: None,
                 refs: vec![ResponseRefMetadata {
                     ref_id: "artifact-57".to_string(),
