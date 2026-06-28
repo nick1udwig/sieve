@@ -36,7 +36,11 @@ pub(super) fn parse_agent_browser_observation(command: &str) -> Option<AgentBrow
     }
 
     let session_name = find_flag_value(&tokens, "--session");
-    let action_class = match (tokens.get(1).copied(), tokens.get(2).copied()) {
+    let command_tokens = agent_browser_command_tokens(&tokens);
+    let action_class = match (
+        command_tokens.first().copied(),
+        command_tokens.get(1).copied(),
+    ) {
         (Some("open" | "goto" | "navigate"), _) => BrowserActionClass::Navigate,
         (Some("tab"), Some("new")) => BrowserActionClass::Navigate,
         (Some("record"), Some("start" | "restart")) => BrowserActionClass::Navigate,
@@ -53,11 +57,16 @@ pub(super) fn parse_agent_browser_observation(command: &str) -> Option<AgentBrow
         _ => BrowserActionClass::Other,
     };
 
-    let target_url = match (tokens.get(1).copied(), tokens.get(2).copied()) {
-        (Some("open" | "goto" | "navigate"), _) => tokens.get(2).map(|value| (*value).to_string()),
-        (Some("tab"), Some("new")) => tokens.get(3).map(|value| (*value).to_string()),
+    let target_url = match (
+        command_tokens.first().copied(),
+        command_tokens.get(1).copied(),
+    ) {
+        (Some("open" | "goto" | "navigate"), _) => {
+            command_tokens.get(1).map(|value| (*value).to_string())
+        }
+        (Some("tab"), Some("new")) => command_tokens.get(2).map(|value| (*value).to_string()),
         (Some("record"), Some("start" | "restart")) => {
-            tokens.get(4).map(|value| (*value).to_string())
+            command_tokens.get(3).map(|value| (*value).to_string())
         }
         _ => None,
     };
@@ -161,6 +170,69 @@ fn shell_basename(value: &str) -> &str {
     value.rsplit('/').next().unwrap_or(value)
 }
 
+fn agent_browser_command_tokens<'a>(tokens: &'a [&'a str]) -> &'a [&'a str] {
+    let mut i = 1usize;
+    while i < tokens.len() {
+        let token = tokens[i];
+        if is_agent_browser_global_bool_flag(token) {
+            i += 1;
+            continue;
+        }
+        if is_agent_browser_global_value_flag(token) {
+            i += if token.contains('=') { 1 } else { 2 };
+            continue;
+        }
+        break;
+    }
+    &tokens[i.min(tokens.len())..]
+}
+
+fn is_agent_browser_global_bool_flag(token: &str) -> bool {
+    matches!(
+        token,
+        "--json"
+            | "--headed"
+            | "--debug"
+            | "--auto-connect"
+            | "--ignore-https-errors"
+            | "--allow-file-access"
+            | "--confirm-interactive"
+            | "--content-boundaries"
+            | "--native"
+    )
+}
+
+fn is_agent_browser_global_value_flag(token: &str) -> bool {
+    const VALUE_FLAGS: &[&str] = &[
+        "--session",
+        "--profile",
+        "--state",
+        "--config",
+        "--extension",
+        "--download-path",
+        "--action-policy",
+        "--headers",
+        "--provider",
+        "--device",
+        "--proxy",
+        "--proxy-bypass",
+        "--cdp",
+        "--user-agent",
+        "--args",
+        "--color-scheme",
+        "--allowed-domains",
+        "--confirm-actions",
+        "--executable-path",
+        "--max-output",
+        "--session-name",
+        "-p",
+    ];
+    VALUE_FLAGS.contains(&token)
+        || token
+            .split_once('=')
+            .is_some_and(|(flag, _)| VALUE_FLAGS.contains(&flag))
+}
+
 fn find_flag_value(tokens: &[&str], flag: &str) -> Option<String> {
     let mut i = 0usize;
     while i < tokens.len() {
@@ -213,6 +285,21 @@ mod tests {
             "AGENT_BROWSER_TIMEOUT=30 agent-browser open https://example.com --session docs",
         )
         .expect("env-prefixed agent-browser command should be parsed");
+
+        assert_eq!(observation.action_class, BrowserActionClass::Navigate);
+        assert_eq!(
+            observation.target_url.as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(observation.session_name.as_deref(), Some("docs"));
+    }
+
+    #[test]
+    fn parse_agent_browser_observation_skips_leading_global_flags() {
+        let observation = parse_agent_browser_observation(
+            "agent-browser --session docs open https://example.com",
+        )
+        .expect("agent-browser command should be parsed");
 
         assert_eq!(observation.action_class, BrowserActionClass::Navigate);
         assert_eq!(
