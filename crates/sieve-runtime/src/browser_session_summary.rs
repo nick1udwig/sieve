@@ -25,26 +25,26 @@ pub(crate) enum SessionTransition {
 }
 
 pub(crate) fn parse_agent_browser(argv: &[String]) -> Option<ParsedAgentBrowser> {
-    let inner = strip_sudo(argv);
-    if basename(inner.first()) != Some("agent-browser") {
+    let inner = strip_plain_sudo(argv);
+    if basename(inner.argv.first()) != Some("agent-browser") {
         return None;
     }
 
     let mut remaining = Vec::new();
     let mut session_name = None;
     let mut i = 1usize;
-    while i < inner.len() {
-        let arg = &inner[i];
+    while i < inner.argv.len() {
+        let arg = &inner.argv[i];
         if matches!(arg.as_str(), "--json" | "--headed" | "--debug") {
             i += 1;
             continue;
         }
-        if let Some((value, consumed)) = parse_value_flag(inner, i, "--session") {
+        if let Some((value, consumed)) = parse_value_flag(inner.argv, i, "--session") {
             session_name = Some(value.to_string());
             i += consumed;
             continue;
         }
-        if should_skip_value_flag(inner, i) {
+        if should_skip_value_flag(inner.argv, i) {
             i += if arg.contains('=') { 1 } else { 2 };
             continue;
         }
@@ -53,7 +53,7 @@ pub(crate) fn parse_agent_browser(argv: &[String]) -> Option<ParsedAgentBrowser>
             continue;
         }
         remaining.push(Token {
-            index: i,
+            index: i + inner.offset,
             value: arg.clone(),
         });
         i += 1;
@@ -385,11 +385,21 @@ fn unknown(reason: &str) -> SummaryOutcome {
     }
 }
 
-fn strip_sudo(argv: &[String]) -> &[String] {
-    if basename(argv.first()) == Some("sudo") && argv.len() > 1 {
-        &argv[1..]
+struct ArgvView<'a> {
+    argv: &'a [String],
+    offset: usize,
+}
+
+fn strip_plain_sudo(argv: &[String]) -> ArgvView<'_> {
+    if basename(argv.first()) == Some("sudo")
+        && argv.get(1).is_some_and(|arg| !arg.starts_with('-'))
+    {
+        ArgvView {
+            argv: &argv[1..],
+            offset: 1,
+        }
     } else {
-        argv
+        ArgvView { argv, offset: 0 }
     }
 }
 
