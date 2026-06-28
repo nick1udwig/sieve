@@ -141,77 +141,51 @@ fn summarize_service(argv: &[String]) -> crate::SummaryOutcome {
     })
 }
 
+const GWS_READ_METHOD_PREFIXES: &[&str] = &[
+    "get", "list", "search", "lookup", "query", "read", "export", "batchget",
+];
+
+const GWS_WRITE_METHOD_PREFIXES: &[&str] = &[
+    "create",
+    "delete",
+    "update",
+    "patch",
+    "copy",
+    "watch",
+    "stop",
+    "send",
+    "append",
+    "insert",
+    "modify",
+    "batchupdate",
+    "batchdelete",
+    "batchclear",
+    "move",
+    "accept",
+    "reject",
+    "cancel",
+    "archive",
+    "trash",
+    "untrash",
+    "close",
+    "open",
+    "undelete",
+    "subscribe",
+    "unsubscribe",
+    "enable",
+    "disable",
+];
+
 fn method_is_mutating(method: &str) -> bool {
-    if matches!(
-        method,
-        "get" | "list" | "search" | "lookup" | "query" | "read" | "export"
-    ) || method.starts_with("get")
-        || method.starts_with("list")
-        || method.starts_with("search")
-        || method.starts_with("lookup")
-        || method.starts_with("query")
-        || method.starts_with("read")
-        || method.starts_with("export")
-        || method.starts_with("batchget")
-    {
+    if starts_with_any(method, GWS_READ_METHOD_PREFIXES) {
         return false;
     }
 
-    matches!(
-        method,
-        "create"
-            | "delete"
-            | "update"
-            | "patch"
-            | "copy"
-            | "watch"
-            | "stop"
-            | "send"
-            | "append"
-            | "insert"
-            | "modify"
-            | "move"
-            | "accept"
-            | "reject"
-            | "cancel"
-            | "archive"
-            | "trash"
-            | "untrash"
-            | "close"
-            | "open"
-            | "undelete"
-            | "subscribe"
-            | "unsubscribe"
-            | "enable"
-            | "disable"
-    ) || method.starts_with("create")
-        || method.starts_with("delete")
-        || method.starts_with("update")
-        || method.starts_with("patch")
-        || method.starts_with("copy")
-        || method.starts_with("watch")
-        || method.starts_with("stop")
-        || method.starts_with("send")
-        || method.starts_with("append")
-        || method.starts_with("insert")
-        || method.starts_with("modify")
-        || method.starts_with("batchupdate")
-        || method.starts_with("batchdelete")
-        || method.starts_with("batchclear")
-        || method.starts_with("move")
-        || method.starts_with("accept")
-        || method.starts_with("reject")
-        || method.starts_with("cancel")
-        || method.starts_with("archive")
-        || method.starts_with("trash")
-        || method.starts_with("untrash")
-        || method.starts_with("close")
-        || method.starts_with("open")
-        || method.starts_with("undelete")
-        || method.starts_with("subscribe")
-        || method.starts_with("unsubscribe")
-        || method.starts_with("enable")
-        || method.starts_with("disable")
+    starts_with_any(method, GWS_WRITE_METHOD_PREFIXES)
+}
+
+fn starts_with_any(value: &str, prefixes: &[&str]) -> bool {
+    prefixes.iter().any(|prefix| value.starts_with(prefix))
 }
 
 fn net_sink_check(flag: FlagArg, sink: &str) -> SinkCheck {

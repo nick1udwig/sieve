@@ -55,6 +55,31 @@ fn gws_read_method_with_params_requires_connect_without_sink_check() {
 }
 
 #[test]
+fn gws_batch_get_method_is_read_only() {
+    let out = summarize_argv(&argv(&[
+        "gws",
+        "sheets",
+        "spreadsheets",
+        "values",
+        "batchGet",
+        "--params",
+        "{\"spreadsheetId\":\"id\"}",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: "https://www.googleapis.com/".to_string(),
+        }]
+    );
+    assert!(summary.sink_checks.is_empty());
+}
+
+#[test]
 fn gws_read_method_with_json_requires_write_and_sink_check() {
     let out = summarize_argv(&argv(&[
         "gws",
@@ -156,6 +181,38 @@ fn gws_write_method_with_json_and_output_maps_caps() {
                 value_refs: vec![ValueRef("argv:8".to_string())],
             }
         ]
+    );
+}
+
+#[test]
+fn gws_batch_update_method_is_mutating() {
+    let out = summarize_argv(&argv(&[
+        "gws",
+        "sheets",
+        "spreadsheets",
+        "values",
+        "batchUpdate",
+        "--params",
+        "{\"spreadsheetId\":\"id\"}",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Net,
+            action: Action::Write,
+            scope: "https://www.googleapis.com/".to_string(),
+        }]
+    );
+    assert_eq!(
+        summary.sink_checks,
+        vec![SinkCheck {
+            argument_name: "--params".to_string(),
+            sink: SinkKey("https://www.googleapis.com/".to_string()),
+            value_refs: vec![ValueRef("argv:6".to_string())],
+        }]
     );
 }
 
