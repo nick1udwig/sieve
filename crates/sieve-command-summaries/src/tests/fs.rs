@@ -60,6 +60,16 @@ fn trash_unknown_flag_routes_to_unknown() {
 }
 
 #[test]
+fn trash_print_completion_is_metadata_only() {
+    let out = summarize_argv(&argv(&["trash", "--print-completion=bash"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert!(summary.required_capabilities.is_empty());
+    assert!(summary.sink_checks.is_empty());
+}
+
+#[test]
 fn cp_maps_source_read_and_destination_write_capabilities() {
     let out = summarize_argv(&argv(&["cp", "a.txt", "b.txt"]));
 
