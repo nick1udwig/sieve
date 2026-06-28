@@ -1,32 +1,36 @@
 use sieve_types::{Action, Capability, CommandSummary, Resource, SinkCheck, SinkKey, ValueRef};
 
-use crate::{is_named_command, known_outcome, strip_sudo, unknown_outcome, unknown_with_flags};
+use crate::{
+    is_named_command, known_outcome, rebase_argv_value_refs, strip_sudo_with_offset,
+    unknown_outcome, unknown_with_flags,
+};
 
 const GWS_API_ORIGIN: &str = "https://www.googleapis.com/";
 const GWS_UPLOAD_ORIGIN: &str = "https://www.googleapis.com/upload/";
 const GWS_MODELARMOR_ORIGIN: &str = "https://modelarmor.googleapis.com/";
 
 pub(super) fn summarize_gws(argv: &[String]) -> Option<crate::SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "gws") {
+    let inner = strip_sudo_with_offset(argv);
+    if !is_named_command(inner.argv, "gws") {
         return None;
     }
 
-    if inner.len() < 2 {
+    if inner.argv.len() < 2 {
         return Some(known_noop_outcome());
     }
 
-    let root = inner[1].as_str();
-    Some(match root {
+    let root = inner.argv[1].as_str();
+    let outcome = match root {
         "-h" | "--help" | "help" | "version" | "--version" | "-V" => known_noop_outcome(),
-        "schema" => summarize_schema(inner),
+        "schema" => summarize_schema(inner.argv),
         "auth" => unknown_outcome("gws auth commands are unsupported"),
         "mcp" => unknown_outcome("gws mcp is unsupported"),
         "workflow" => unknown_outcome("gws workflow helpers are unsupported"),
         "modelarmor" => unknown_outcome("gws modelarmor helpers are unsupported"),
         other if other.starts_with('+') => unknown_outcome("gws top-level helpers are unsupported"),
-        _ => summarize_service(inner),
-    })
+        _ => summarize_service(inner.argv),
+    };
+    Some(rebase_argv_value_refs(outcome, inner.offset))
 }
 
 #[derive(Debug, Clone)]

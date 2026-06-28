@@ -2,6 +2,11 @@ use sieve_types::{Action, Capability, CommandKnowledge, CommandSummary, Resource
 
 use crate::SummaryOutcome;
 
+pub(crate) struct ArgvView<'a> {
+    pub(crate) argv: &'a [String],
+    pub(crate) offset: usize,
+}
+
 pub(crate) fn flag_value(argv: &[String], flag: &str) -> Option<String> {
     argv.windows(2)
         .find(|pair| pair[0] == flag)
@@ -89,10 +94,17 @@ pub(crate) fn is_curl_command(argv: &[String]) -> bool {
 }
 
 pub(crate) fn strip_sudo(argv: &[String]) -> &[String] {
+    strip_sudo_with_offset(argv).argv
+}
+
+pub(crate) fn strip_sudo_with_offset(argv: &[String]) -> ArgvView<'_> {
     if basename(argv.first()).is_some_and(|cmd| cmd == "sudo") && argv.len() > 1 {
-        &argv[1..]
+        ArgvView {
+            argv: &argv[1..],
+            offset: 1,
+        }
     } else {
-        argv
+        ArgvView { argv, offset: 0 }
     }
 }
 
@@ -117,6 +129,27 @@ pub(crate) fn unknown_outcome(reason: &str) -> SummaryOutcome {
         summary: None,
         reason: Some(reason.to_string()),
     }
+}
+
+pub(crate) fn rebase_argv_value_refs(mut outcome: SummaryOutcome, offset: usize) -> SummaryOutcome {
+    if offset == 0 {
+        return outcome;
+    }
+    let Some(summary) = &mut outcome.summary else {
+        return outcome;
+    };
+    for sink_check in &mut summary.sink_checks {
+        for value_ref in &mut sink_check.value_refs {
+            if let Some(index) = value_ref
+                .0
+                .strip_prefix("argv:")
+                .and_then(|raw| raw.parse::<usize>().ok())
+            {
+                value_ref.0 = format!("argv:{}", index + offset);
+            }
+        }
+    }
+    outcome
 }
 
 pub(crate) fn unknown_with_flags(reason: &str, unsupported_flags: Vec<String>) -> SummaryOutcome {

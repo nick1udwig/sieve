@@ -86,6 +86,30 @@ fn gws_read_method_with_json_requires_write_and_sink_check() {
 }
 
 #[test]
+fn sudo_gws_json_sink_ref_uses_original_argv_index() {
+    let out = summarize_argv(&argv(&[
+        "sudo",
+        "gws",
+        "drive",
+        "files",
+        "list",
+        "--json",
+        "{\"includeItemsFromAllDrives\":true}",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.sink_checks,
+        vec![SinkCheck {
+            argument_name: "--json".to_string(),
+            sink: SinkKey("https://www.googleapis.com/".to_string()),
+            value_refs: vec![ValueRef("argv:6".to_string())],
+        }]
+    );
+}
+
+#[test]
 fn gws_write_method_with_json_and_output_maps_caps() {
     let out = summarize_argv(&argv(&[
         "gws",
