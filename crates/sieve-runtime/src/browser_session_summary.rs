@@ -9,6 +9,8 @@ use url::Url;
 pub(crate) struct ParsedAgentBrowser {
     pub(crate) remaining: Vec<Token>,
     pub(crate) session_name: Option<String>,
+    pub(crate) global_capabilities: Vec<Capability>,
+    pub(crate) header_value_indices: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,8 @@ pub(crate) fn parse_agent_browser(argv: &[String]) -> Option<ParsedAgentBrowser>
 
     let mut remaining = Vec::new();
     let mut session_name = None;
+    let mut global_capabilities = Vec::new();
+    let mut header_value_indices = Vec::new();
     let mut i = 1usize;
     while i < inner.argv.len() {
         let arg = &inner.argv[i];
@@ -39,9 +43,26 @@ pub(crate) fn parse_agent_browser(argv: &[String]) -> Option<ParsedAgentBrowser>
             i += 1;
             continue;
         }
-        if let Some((value, consumed)) = parse_value_flag(inner.argv, i, "--session") {
-            session_name = Some(value.to_string());
-            i += consumed;
+        if let Some(parsed) = parse_value_flag(inner.argv, i, "--session") {
+            session_name = Some(parsed.value.to_string());
+            i += parsed.consumed;
+            continue;
+        }
+        if let Some((parsed, actions)) = parse_global_capability_value_flag(inner.argv, i) {
+            for (resource, action) in actions {
+                push_capability(
+                    &mut global_capabilities,
+                    *resource,
+                    *action,
+                    parsed.value.to_string(),
+                );
+            }
+            i += parsed.consumed;
+            continue;
+        }
+        if let Some(parsed) = parse_value_flag(inner.argv, i, "--headers") {
+            header_value_indices.push(parsed.value_index + inner.offset);
+            i += parsed.consumed;
             continue;
         }
         if should_skip_value_flag(inner.argv, i) {
@@ -62,6 +83,8 @@ pub(crate) fn parse_agent_browser(argv: &[String]) -> Option<ParsedAgentBrowser>
     Some(ParsedAgentBrowser {
         remaining,
         session_name,
+        global_capabilities,
+        header_value_indices,
     })
 }
 
@@ -108,7 +131,7 @@ pub(crate) fn contextual_summary(
     let sink = SinkKey(current_origin.to_string());
     let command = parsed.remaining.first()?.value.as_str();
 
-    Some(match command {
+    let mut outcome = match command {
         "snapshot" => parse_snapshot(parsed, connect_cap),
         "get" => parse_get(parsed, connect_cap),
         "is" => parse_is(parsed, connect_cap),
@@ -127,7 +150,9 @@ pub(crate) fn contextual_summary(
         "upload" => parse_upload(parsed, connect_cap),
         "storage" => parse_storage(parsed, connect_cap, sink),
         _ => return None,
-    })
+    };
+    add_global_effects(&mut outcome, parsed, current_origin);
+    Some(outcome)
 }
 
 fn navigation_transition(raw: &str) -> SessionTransition {
@@ -385,6 +410,50 @@ fn unknown(reason: &str) -> SummaryOutcome {
     }
 }
 
+fn add_global_effects(
+    outcome: &mut SummaryOutcome,
+    parsed: &ParsedAgentBrowser,
+    current_origin: &str,
+) {
+    if outcome.knowledge != CommandKnowledge::Known {
+        return;
+    }
+    let Some(summary) = &mut outcome.summary else {
+        return;
+    };
+    for capability in &parsed.global_capabilities {
+        push_capability(
+            &mut summary.required_capabilities,
+            capability.resource,
+            capability.action,
+            capability.scope.clone(),
+        );
+    }
+    for index in &parsed.header_value_indices {
+        summary.sink_checks.push(SinkCheck {
+            argument_name: "--headers".to_string(),
+            sink: SinkKey(current_origin.to_string()),
+            value_refs: vec![ValueRef(format!("argv:{index}"))],
+        });
+    }
+}
+
+fn push_capability(
+    capabilities: &mut Vec<Capability>,
+    resource: Resource,
+    action: Action,
+    scope: String,
+) {
+    let capability = Capability {
+        resource,
+        action,
+        scope,
+    };
+    if !capabilities.contains(&capability) {
+        capabilities.push(capability);
+    }
+}
+
 struct ArgvView<'a> {
     argv: &'a [String],
     offset: usize,
@@ -451,24 +520,72 @@ fn basename(s: Option<&String>) -> Option<&str> {
     Path::new(s).file_name().and_then(|part| part.to_str())
 }
 
-fn parse_value_flag<'a>(argv: &'a [String], i: usize, flag: &str) -> Option<(&'a str, usize)> {
+struct ParsedValueFlag<'a> {
+    value: &'a str,
+    consumed: usize,
+    value_index: usize,
+}
+
+struct GlobalCapabilityValueFlag {
+    name: &'static str,
+    actions: &'static [(Resource, Action)],
+}
+
+const GLOBAL_CAPABILITY_VALUE_FLAGS: &[GlobalCapabilityValueFlag] = &[
+    GlobalCapabilityValueFlag {
+        name: "--profile",
+        actions: &[(Resource::Fs, Action::Read), (Resource::Fs, Action::Write)],
+    },
+    GlobalCapabilityValueFlag {
+        name: "--state",
+        actions: &[(Resource::Fs, Action::Read)],
+    },
+    GlobalCapabilityValueFlag {
+        name: "--config",
+        actions: &[(Resource::Fs, Action::Read)],
+    },
+    GlobalCapabilityValueFlag {
+        name: "--extension",
+        actions: &[(Resource::Fs, Action::Read)],
+    },
+    GlobalCapabilityValueFlag {
+        name: "--download-path",
+        actions: &[(Resource::Fs, Action::Write)],
+    },
+    GlobalCapabilityValueFlag {
+        name: "--action-policy",
+        actions: &[(Resource::Fs, Action::Read)],
+    },
+];
+
+fn parse_global_capability_value_flag<'a>(
+    argv: &'a [String],
+    i: usize,
+) -> Option<(ParsedValueFlag<'a>, &'static [(Resource, Action)])> {
+    GLOBAL_CAPABILITY_VALUE_FLAGS
+        .iter()
+        .find_map(|flag| parse_value_flag(argv, i, flag.name).map(|parsed| (parsed, flag.actions)))
+}
+
+fn parse_value_flag<'a>(argv: &'a [String], i: usize, flag: &str) -> Option<ParsedValueFlag<'a>> {
     let arg = argv.get(i)?;
     if arg == flag {
-        return argv.get(i + 1).map(|value| (value.as_str(), 2));
+        return argv.get(i + 1).map(|value| ParsedValueFlag {
+            value: value.as_str(),
+            consumed: 2,
+            value_index: i + 1,
+        });
     }
     let (parsed_flag, value) = arg.split_once('=')?;
-    (parsed_flag == flag && !value.is_empty()).then_some((value, 1))
+    (parsed_flag == flag && !value.is_empty()).then_some(ParsedValueFlag {
+        value,
+        consumed: 1,
+        value_index: i,
+    })
 }
 
 fn should_skip_value_flag(argv: &[String], i: usize) -> bool {
     const VALUE_FLAGS: &[&str] = &[
-        "--profile",
-        "--state",
-        "--config",
-        "--extension",
-        "--download-path",
-        "--action-policy",
-        "--headers",
         "--provider",
         "--device",
         "--proxy",
