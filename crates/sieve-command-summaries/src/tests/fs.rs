@@ -139,6 +139,29 @@ fn mv_maps_source_and_destination_to_fs_write_capability() {
 }
 
 #[test]
+fn mv_end_of_flags_treats_dash_prefixed_operand_as_source() {
+    let out = summarize_argv(&argv(&["mv", "--", "-f", "dst.txt"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "-f".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "dst.txt".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn mkdir_mode_and_parents_flags_are_supported() {
     let out = summarize_argv(&argv(&["mkdir", "-p", "-m", "755", "tmp/work"]));
 

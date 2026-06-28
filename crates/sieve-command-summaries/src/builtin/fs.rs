@@ -7,11 +7,13 @@ use crate::{
 
 mod cp;
 mod mkdir;
+mod mv;
 mod touch;
 mod trash;
 
 use cp::summarize_cp;
 use mkdir::summarize_mkdir;
+use mv::summarize_mv;
 use touch::summarize_touch;
 use trash::summarize_trash;
 
@@ -24,39 +26,6 @@ pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
         .or_else(|| summarize_chmod(argv))
         .or_else(|| summarize_chown(argv))
         .or_else(|| summarize_tee(argv))
-}
-
-fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {
-    if !is_named_command(argv, "mv") {
-        return None;
-    }
-
-    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        argv,
-        &['f', 'i', 'n', 'u', 'v', 'T'],
-        &[
-            "--force",
-            "--interactive",
-            "--no-clobber",
-            "--update",
-            "--verbose",
-            "--no-target-directory",
-        ],
-        &[],
-    );
-    if !unsupported_flags.is_empty() {
-        return Some(unknown_with_flags(
-            "unsupported mv flags",
-            unsupported_flags,
-        ));
-    }
-    if positionals.len() < 2 {
-        return Some(unknown_outcome("mv missing destination"));
-    }
-
-    let mut scopes = positionals[..positionals.len() - 1].to_vec();
-    scopes.push(positionals.last().cloned().expect("checked above"));
-    Some(known_fs_outcome(scopes, Action::Write))
 }
 
 fn summarize_chmod(argv: &[String]) -> Option<SummaryOutcome> {
