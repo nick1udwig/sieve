@@ -349,9 +349,10 @@ fn classify_operator_between(text: &str) -> BetweenOperator {
 }
 
 fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for value in values {
-        if !out.contains(&value) {
+        if seen.insert(value.clone()) {
             out.push(value);
         }
     }

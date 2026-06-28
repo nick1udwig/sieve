@@ -157,6 +157,20 @@ fn expansions_map_to_uncertain() {
 }
 
 #[test]
+fn repeated_unsupported_constructs_are_reported_once() {
+    let analyzer = BasicShellAnalyzer;
+    let analysis = analyzer
+        .analyze_shell_lc_script("echo $HOME $USER")
+        .expect("parse");
+
+    assert_eq!(analysis.knowledge, CommandKnowledge::Uncertain);
+    assert_eq!(
+        analysis.unsupported_constructs,
+        vec!["substitution_or_expansion"]
+    );
+}
+
+#[test]
 fn heredoc_maps_to_uncertain() {
     let analyzer = BasicShellAnalyzer;
     let analysis = analyzer
