@@ -25,7 +25,7 @@ pub(crate) enum SessionTransition {
 }
 
 pub(crate) fn parse_agent_browser(argv: &[String]) -> Option<ParsedAgentBrowser> {
-    let inner = strip_plain_sudo(argv);
+    let inner = strip_command_wrappers(argv);
     if basename(inner.argv.first()) != Some("agent-browser") {
         return None;
     }
@@ -390,6 +390,25 @@ struct ArgvView<'a> {
     offset: usize,
 }
 
+fn strip_command_wrappers(mut argv: &[String]) -> ArgvView<'_> {
+    let mut offset = 0usize;
+    loop {
+        let sudo = strip_plain_sudo(argv);
+        if sudo.offset > 0 {
+            offset += sudo.offset;
+            argv = sudo.argv;
+            continue;
+        }
+        let env = strip_env_assignments(argv);
+        if env.offset > 0 {
+            offset += env.offset;
+            argv = env.argv;
+            continue;
+        }
+        return ArgvView { argv, offset };
+    }
+}
+
 fn strip_plain_sudo(argv: &[String]) -> ArgvView<'_> {
     if basename(argv.first()) == Some("sudo")
         && argv.get(1).is_some_and(|arg| !arg.starts_with('-'))
@@ -401,6 +420,30 @@ fn strip_plain_sudo(argv: &[String]) -> ArgvView<'_> {
     } else {
         ArgvView { argv, offset: 0 }
     }
+}
+
+fn strip_env_assignments(argv: &[String]) -> ArgvView<'_> {
+    if basename(argv.first()) == Some("env") {
+        let mut i = 1usize;
+        while argv
+            .get(i)
+            .is_some_and(|arg| is_env_assignment(arg.as_str()))
+        {
+            i += 1;
+        }
+        if i > 1 && i < argv.len() {
+            return ArgvView {
+                argv: &argv[i..],
+                offset: i,
+            };
+        }
+    }
+    ArgvView { argv, offset: 0 }
+}
+
+fn is_env_assignment(arg: &str) -> bool {
+    arg.split_once('=')
+        .is_some_and(|(name, _)| !name.is_empty())
 }
 
 fn basename(s: Option<&String>) -> Option<&str> {

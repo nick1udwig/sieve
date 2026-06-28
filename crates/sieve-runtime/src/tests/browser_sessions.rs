@@ -142,6 +142,59 @@ require_trusted_control_for_mutating = false
 }
 
 #[tokio::test]
+async fn env_agent_browser_contextual_sink_ref_uses_original_argv_index() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://example.com/"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = false
+"#,
+    );
+
+    let first = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-ab-env-context-1".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "agent-browser --session demo open https://example.com".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("first run");
+    assert!(matches!(first, RuntimeDisposition::ExecuteMainline(_)));
+
+    let second = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-ab-env-context-2".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "env TOKEN=secret agent-browser --session demo fill '#q' secret".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("second run");
+
+    match second {
+        RuntimeDisposition::Denied { reason } => {
+            assert!(reason.contains("cannot flow to sink"));
+            assert!(reason.contains("argv:7"));
+            assert!(reason.contains("https://example.com/"));
+        }
+        other => panic!("expected sink denial, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn agent_browser_hidden_page_command_without_session_is_denied() {
     let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
         r#"

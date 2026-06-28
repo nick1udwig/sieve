@@ -106,6 +106,30 @@ pub(crate) fn strip_sudo_with_offset(argv: &[String]) -> ArgvView<'_> {
     }
 }
 
+pub(crate) fn strip_env_assignments_with_offset(argv: &[String]) -> ArgvView<'_> {
+    if basename(argv.first()).is_some_and(|cmd| cmd == "env") {
+        let mut i = 1usize;
+        while argv
+            .get(i)
+            .is_some_and(|arg| is_env_assignment(arg.as_str()))
+        {
+            i += 1;
+        }
+        if i > 1 && i < argv.len() {
+            return ArgvView {
+                argv: &argv[i..],
+                offset: i,
+            };
+        }
+    }
+    ArgvView { argv, offset: 0 }
+}
+
+fn is_env_assignment(arg: &str) -> bool {
+    arg.split_once('=')
+        .is_some_and(|(name, _)| !name.is_empty())
+}
+
 pub(crate) fn basename(s: Option<&String>) -> Option<&str> {
     let s = s?;
     std::path::Path::new(s)
