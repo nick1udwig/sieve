@@ -93,6 +93,29 @@ fn cp_maps_source_read_and_destination_write_capabilities() {
 }
 
 #[test]
+fn cp_end_of_flags_treats_dash_prefixed_operand_as_source() {
+    let out = summarize_argv(&argv(&["cp", "--", "-a", "dst.txt"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Read,
+                scope: "-a".to_string(),
+            },
+            Capability {
+                resource: Resource::Fs,
+                action: Action::Write,
+                scope: "dst.txt".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn mv_maps_source_and_destination_to_fs_write_capability() {
     let out = summarize_argv(&argv(&["mv", "a.txt", "b.txt"]));
 

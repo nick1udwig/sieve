@@ -1,14 +1,16 @@
-use sieve_types::{Action, Capability, CommandSummary, Resource};
+use sieve_types::{Action, CommandSummary};
 
 use crate::{
     collect_positionals_with_no_value_flags, is_named_command, is_short_flag_cluster,
     known_fs_outcome, known_outcome, unknown_outcome, unknown_with_flags, SummaryOutcome,
 };
 
+mod cp;
 mod mkdir;
 mod touch;
 mod trash;
 
+use cp::summarize_cp;
 use mkdir::summarize_mkdir;
 use touch::summarize_touch;
 use trash::summarize_trash;
@@ -22,57 +24,6 @@ pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
         .or_else(|| summarize_chmod(argv))
         .or_else(|| summarize_chown(argv))
         .or_else(|| summarize_tee(argv))
-}
-
-fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {
-    if !is_named_command(argv, "cp") {
-        return None;
-    }
-
-    let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        argv,
-        &['a', 'f', 'i', 'n', 'p', 'R', 'r', 'u', 'v'],
-        &[
-            "--archive",
-            "--force",
-            "--interactive",
-            "--no-clobber",
-            "--recursive",
-            "--update",
-            "--verbose",
-            "--preserve",
-        ],
-        &["--preserve="],
-    );
-    if !unsupported_flags.is_empty() {
-        return Some(unknown_with_flags(
-            "unsupported cp flags",
-            unsupported_flags,
-        ));
-    }
-    if positionals.len() < 2 {
-        return Some(unknown_outcome("cp missing destination"));
-    }
-
-    let destination = positionals.last().cloned().expect("checked above");
-    let mut required_capabilities = Vec::with_capacity(positionals.len());
-    required_capabilities.extend(positionals[..positionals.len() - 1].iter().map(|scope| {
-        Capability {
-            resource: Resource::Fs,
-            action: Action::Read,
-            scope: scope.clone(),
-        }
-    }));
-    required_capabilities.push(Capability {
-        resource: Resource::Fs,
-        action: Action::Write,
-        scope: destination,
-    });
-    Some(known_outcome(CommandSummary {
-        required_capabilities,
-        sink_checks: Vec::new(),
-        unsupported_flags: Vec::new(),
-    }))
 }
 
 fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {
