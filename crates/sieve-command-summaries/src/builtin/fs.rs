@@ -2,8 +2,8 @@ use sieve_types::{Action, Capability, CommandSummary, Resource};
 
 use crate::{
     collect_positionals_with_no_value_flags, is_named_command, is_short_flag_cluster,
-    known_fs_outcome, known_outcome, split_flag_value, strip_sudo, unknown_outcome,
-    unknown_with_flags, SummaryOutcome,
+    known_fs_outcome, known_outcome, split_flag_value, unknown_outcome, unknown_with_flags,
+    SummaryOutcome,
 };
 
 pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
@@ -18,8 +18,7 @@ pub(super) fn summarize_fs_builtin(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_trash(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "trash") {
+    if !is_named_command(argv, "trash") {
         return None;
     }
 
@@ -30,8 +29,8 @@ fn summarize_trash(argv: &[String]) -> Option<SummaryOutcome> {
     let mut unsupported_flags = Vec::new();
     let mut i = 1usize;
 
-    while i < inner.len() {
-        let arg = &inner[i];
+    while i < argv.len() {
+        let arg = &argv[i];
         if saw_end_of_flags {
             targets.push(arg.clone());
             i += 1;
@@ -58,14 +57,14 @@ fn summarize_trash(argv: &[String]) -> Option<SummaryOutcome> {
                 i += 1;
             }
             "--trash-dir" => {
-                let Some(value) = inner.get(i + 1) else {
+                let Some(value) = argv.get(i + 1) else {
                     return Some(unknown_outcome("trash --trash-dir missing value"));
                 };
                 trash_dir = Some(value.clone());
                 i += 2;
             }
             "--print-completion" => {
-                let Some(value) = inner.get(i + 1) else {
+                let Some(value) = argv.get(i + 1) else {
                     return Some(unknown_outcome("trash --print-completion missing value"));
                 };
                 if !matches!(value.as_str(), "bash" | "zsh" | "tcsh") {
@@ -139,13 +138,12 @@ fn summarize_trash(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "cp") {
+    if !is_named_command(argv, "cp") {
         return None;
     }
 
     let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        inner,
+        argv,
         &['a', 'f', 'i', 'n', 'p', 'R', 'r', 'u', 'v'],
         &[
             "--archive",
@@ -191,13 +189,12 @@ fn summarize_cp(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "mv") {
+    if !is_named_command(argv, "mv") {
         return None;
     }
 
     let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        inner,
+        argv,
         &['f', 'i', 'n', 'u', 'v', 'T'],
         &[
             "--force",
@@ -225,8 +222,7 @@ fn summarize_mv(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_mkdir(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "mkdir") {
+    if !is_named_command(argv, "mkdir") {
         return None;
     }
 
@@ -235,8 +231,8 @@ fn summarize_mkdir(argv: &[String]) -> Option<SummaryOutcome> {
     let mut saw_end_of_flags = false;
     let mut i = 1usize;
 
-    while i < inner.len() {
-        let arg = &inner[i];
+    while i < argv.len() {
+        let arg = &argv[i];
         if saw_end_of_flags {
             targets.push(arg.clone());
             i += 1;
@@ -254,7 +250,7 @@ fn summarize_mkdir(argv: &[String]) -> Option<SummaryOutcome> {
         }
 
         if arg == "-m" || arg == "--mode" {
-            if i + 1 >= inner.len() {
+            if i + 1 >= argv.len() {
                 return Some(unknown_outcome("mkdir mode flag missing value"));
             }
             i += 2;
@@ -301,8 +297,7 @@ fn summarize_mkdir(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_touch(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "touch") {
+    if !is_named_command(argv, "touch") {
         return None;
     }
 
@@ -312,8 +307,8 @@ fn summarize_touch(argv: &[String]) -> Option<SummaryOutcome> {
     let mut saw_end_of_flags = false;
     let mut i = 1usize;
 
-    while i < inner.len() {
-        let arg = &inner[i];
+    while i < argv.len() {
+        let arg = &argv[i];
         if saw_end_of_flags {
             targets.push(arg.clone());
             i += 1;
@@ -331,15 +326,15 @@ fn summarize_touch(argv: &[String]) -> Option<SummaryOutcome> {
         }
 
         if matches!(arg.as_str(), "-r" | "--reference") {
-            if i + 1 >= inner.len() {
+            if i + 1 >= argv.len() {
                 return Some(unknown_outcome("touch time/reference flag missing value"));
             }
-            reference_scopes.push(inner[i + 1].clone());
+            reference_scopes.push(argv[i + 1].clone());
             i += 2;
             continue;
         }
         if matches!(arg.as_str(), "-d" | "-t" | "--date" | "--time") {
-            if i + 1 >= inner.len() {
+            if i + 1 >= argv.len() {
                 return Some(unknown_outcome("touch time/reference flag missing value"));
             }
             i += 2;
@@ -420,13 +415,12 @@ fn summarize_touch(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_chmod(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "chmod") {
+    if !is_named_command(argv, "chmod") {
         return None;
     }
 
     let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        inner,
+        argv,
         &['R', 'v', 'c', 'f'],
         &[
             "--recursive",
@@ -450,13 +444,12 @@ fn summarize_chmod(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_chown(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "chown") {
+    if !is_named_command(argv, "chown") {
         return None;
     }
 
     let (positionals, unsupported_flags) = collect_positionals_with_no_value_flags(
-        inner,
+        argv,
         &['R', 'h', 'v', 'f', 'c', 'H', 'L', 'P'],
         &[
             "--recursive",
@@ -481,8 +474,7 @@ fn summarize_chown(argv: &[String]) -> Option<SummaryOutcome> {
 }
 
 fn summarize_tee(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = strip_sudo(argv);
-    if !is_named_command(inner, "tee") {
+    if !is_named_command(argv, "tee") {
         return None;
     }
 
@@ -491,7 +483,7 @@ fn summarize_tee(argv: &[String]) -> Option<SummaryOutcome> {
     let mut unsupported_flags = Vec::new();
     let mut saw_end_of_flags = false;
 
-    for arg in inner.iter().skip(1) {
+    for arg in argv.iter().skip(1) {
         if saw_end_of_flags {
             targets.push(arg.clone());
             continue;

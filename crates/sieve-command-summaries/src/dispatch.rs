@@ -3,13 +3,18 @@ use codex_shell_command::command_safety::is_safe_command::is_known_safe_command;
 use sieve_types::CommandSummary;
 
 use crate::{
-    agent_browser, brave_search, builtin, curl, gws, known_outcome, st, unknown_outcome,
-    SummaryOutcome,
+    agent_browser, brave_search, builtin, curl, gws, known_outcome, rebase_argv_value_refs, st,
+    strip_sudo_with_offset, unknown_outcome, SummaryOutcome,
 };
 
 pub(crate) fn summarize_argv(argv: &[String]) -> SummaryOutcome {
     if argv.is_empty() {
         return unknown_outcome("empty argv");
+    }
+
+    let sudo_stripped = strip_sudo_with_offset(argv);
+    if sudo_stripped.offset > 0 {
+        return rebase_argv_value_refs(summarize_argv(sudo_stripped.argv), sudo_stripped.offset);
     }
 
     if let Some(outcome) = builtin::summarize_builtin(argv) {

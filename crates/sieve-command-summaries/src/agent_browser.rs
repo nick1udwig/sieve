@@ -10,12 +10,11 @@ const GLOBAL_HEADER_REASON: &str =
     "agent-browser --headers requires a single explicit navigation origin";
 
 pub(super) fn summarize_agent_browser(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = super::strip_sudo_with_offset(argv);
-    if super::basename(inner.argv.first()).is_none_or(|cmd| cmd != "agent-browser") {
+    if super::basename(argv.first()).is_none_or(|cmd| cmd != "agent-browser") {
         return None;
     }
 
-    let parsed = parse_globals(inner.argv);
+    let parsed = parse_globals(argv);
     if let Some(flag) = parsed.missing_value_flag {
         return Some(super::unknown_outcome(&format!(
             "agent-browser global flag missing value: {flag}"
@@ -32,7 +31,7 @@ pub(super) fn summarize_agent_browser(argv: &[String]) -> Option<SummaryOutcome>
         return Some(known_empty_outcome());
     };
 
-    let outcome = match command.value.as_str() {
+    Some(match command.value.as_str() {
         "help" | "-h" | "--help" | "version" | "--version" | "-V" => known_empty_outcome(),
         "open" | "goto" | "navigate" => summarize_open(&parsed),
         "connect" => summarize_connect(&parsed),
@@ -53,8 +52,7 @@ pub(super) fn summarize_agent_browser(argv: &[String]) -> Option<SummaryOutcome>
             super::unknown_outcome(PAGE_CONTEXT_REASON)
         }
         _ => super::unknown_outcome("unsupported agent-browser command"),
-    };
-    Some(super::rebase_argv_value_refs(outcome, inner.offset))
+    })
 }
 
 #[derive(Debug, Clone)]

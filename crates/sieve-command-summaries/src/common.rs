@@ -93,12 +93,10 @@ pub(crate) fn is_curl_command(argv: &[String]) -> bool {
     is_named_command(argv, "curl")
 }
 
-pub(crate) fn strip_sudo(argv: &[String]) -> &[String] {
-    strip_sudo_with_offset(argv).argv
-}
-
 pub(crate) fn strip_sudo_with_offset(argv: &[String]) -> ArgvView<'_> {
-    if basename(argv.first()).is_some_and(|cmd| cmd == "sudo") && argv.len() > 1 {
+    if basename(argv.first()).is_some_and(|cmd| cmd == "sudo")
+        && argv.get(1).is_some_and(|arg| !arg.starts_with('-'))
+    {
         ArgvView {
             argv: &argv[1..],
             offset: 1,

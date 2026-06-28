@@ -19,22 +19,21 @@ pub(crate) const PLANNER_TTS_INLINE_EXAMPLE: &str =
 pub(crate) const PLANNER_CATALOG_DESCRIPTION: &str = "Speech CLI for transcription and synthesis. STT pattern: `st stt <audio-file>` (prints transcript to stdout, optionally `-o <file>`). TTS pattern: `st tts <text-file> --format opus --output <audio-file>` or `st tts --txt \"...\" --format opus --output <audio-file>`.";
 
 pub(super) fn summarize_st(argv: &[String]) -> Option<SummaryOutcome> {
-    let inner = super::strip_sudo(argv);
-    if super::basename(inner.first()).is_none_or(|cmd| cmd != "st") {
+    if super::basename(argv.first()).is_none_or(|cmd| cmd != "st") {
         return None;
     }
-    if inner.len() < 2 {
+    if argv.len() < 2 {
         return Some(super::unknown_outcome("st missing subcommand"));
     }
 
-    let subcommand = inner[1].as_str();
+    let subcommand = argv[1].as_str();
     if matches!(subcommand, "help" | "providers" | "completion") {
         return Some(known_empty_outcome());
     }
 
     match subcommand {
-        "stt" => Some(stt::summarize_stt(inner)),
-        "tts" => Some(tts::summarize_tts(inner)),
+        "stt" => Some(stt::summarize_stt(argv)),
+        "tts" => Some(tts::summarize_tts(argv)),
         "config" => Some(super::unknown_outcome("unsupported st subcommand: config")),
         other => Some(super::unknown_outcome(&format!(
             "unsupported st subcommand: {other}"

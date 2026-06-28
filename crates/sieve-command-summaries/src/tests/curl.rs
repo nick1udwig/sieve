@@ -223,6 +223,36 @@ fn curl_get_with_header_extracts_sink_check() {
 }
 
 #[test]
+fn sudo_curl_header_sink_ref_uses_original_argv_index() {
+    let out = summarize_argv(&argv(&[
+        "sudo",
+        "curl",
+        "-H",
+        "Authorization: Bearer secret",
+        "https://api.example.com/v1/resource",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: "https://api.example.com/".to_string(),
+        }]
+    );
+    assert_eq!(
+        summary.sink_checks,
+        vec![SinkCheck {
+            argument_name: "-H".to_string(),
+            sink: SinkKey("https://api.example.com/v1/resource".to_string()),
+            value_refs: vec![ValueRef("argv:3".to_string())],
+        }]
+    );
+}
+
+#[test]
 fn curl_header_file_requires_fs_read_capability() {
     let out = summarize_argv(&argv(&[
         "curl",
