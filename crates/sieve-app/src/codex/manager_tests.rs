@@ -106,6 +106,14 @@ fn handle_item_notification_extracts_file_change_preview() {
         .is_some_and(|value| value.contains("src/main.rs")));
 }
 
+#[test]
+fn truncate_preview_preserves_existing_preview_shape() {
+    assert_eq!(truncate_preview("abc", 3), "abc");
+    assert_eq!(truncate_preview("abcd", 3), "abc\n...[truncated]");
+    assert_eq!(truncate_preview("éclair", 1), "é\n...[truncated]");
+    assert_eq!(truncate_preview("abc", 0), "\n...[truncated]");
+}
+
 #[tokio::test]
 async fn codex_manager_exec_uses_command_exec_with_requested_sandbox() {
     let root = unique_test_root("codex-command-exec");

@@ -1401,8 +1401,8 @@ fn file_change_preview(item: &serde_json::Value) -> String {
 
 fn truncate_preview(text: &str, max_chars: usize) -> String {
     let mut out = String::new();
-    for ch in text.chars() {
-        if out.chars().count() >= max_chars {
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= max_chars {
             out.push_str("\n...[truncated]");
             break;
         }
