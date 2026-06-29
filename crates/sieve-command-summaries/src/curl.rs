@@ -52,7 +52,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
-            if let Some(raw) = arg.strip_prefix("-X").filter(|raw| !raw.is_empty()) {
+            if let Some(raw) = attached_short_value(arg, "-X") {
                 method = Some(raw.to_ascii_uppercase());
                 i += 1;
                 continue;
@@ -176,6 +176,16 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
+            if let Some(raw) = attached_short_value(arg, "-H") {
+                headers.push(SinkArg {
+                    flag: "-H".to_string(),
+                    value_index: i,
+                    value: raw.to_string(),
+                });
+                i += 1;
+                continue;
+            }
+
             unsupported_flags.push(arg.clone());
             i += 1;
             continue;
@@ -261,6 +271,10 @@ pub(crate) fn canonicalize_url_connect_scope(raw: &str) -> Option<SinkKey> {
 
 fn canonicalize_url_sink(raw: &str) -> Option<SinkKey> {
     canonicalize_sink_key(raw).ok().map(SinkKey)
+}
+
+fn attached_short_value<'a>(arg: &'a str, flag: &str) -> Option<&'a str> {
+    arg.strip_prefix(flag).filter(|raw| !raw.is_empty())
 }
 
 fn sink_checks_for_args(args: Vec<SinkArg>, sink: SinkKey) -> Vec<SinkCheck> {
