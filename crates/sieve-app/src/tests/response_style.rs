@@ -153,6 +153,7 @@ fn compact_single_line_collapses_whitespace_before_truncating() {
         "alpha beta gamma"
     );
     assert_eq!(compact_single_line("alpha beta gamma", 8), "alpha b…");
+    assert_eq!(compact_single_line("alpha beta gamma", 0), "");
 }
 
 #[test]

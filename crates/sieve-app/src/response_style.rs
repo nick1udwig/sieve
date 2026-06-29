@@ -297,6 +297,9 @@ pub(crate) fn obvious_meta_compose_pattern(message: &str) -> bool {
 }
 
 pub(crate) fn compact_single_line(input: &str, max_len: usize) -> String {
+    if max_len == 0 {
+        return String::new();
+    }
     let compact = compact_whitespace(input);
     if compact.chars().count() <= max_len {
         return compact;
