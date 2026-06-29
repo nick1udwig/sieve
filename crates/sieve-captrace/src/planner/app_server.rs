@@ -15,6 +15,10 @@ use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration, Instant};
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
+mod output;
+
+use output::parse_cases_from_agent_message;
+
 pub(super) struct CodexAppServerCaseGenerator {
     ws_url: String,
     model: String,
@@ -454,47 +458,4 @@ impl AppServerWsClient {
 
 fn to_json_value<T: Serialize>(value: T, context: &str) -> Value {
     serde_json::to_value(value).unwrap_or_else(|err| panic!("failed to serialize {context}: {err}"))
-}
-
-fn parse_cases_from_agent_message(raw: &str) -> Result<Vec<String>, CapTraceError> {
-    if let Ok(value) = serde_json::from_str::<Value>(raw) {
-        return cases_from_json(value);
-    }
-
-    let Some(start) = raw.find('{') else {
-        return Err(CapTraceError::Llm(
-            "codex app-server returned non-JSON output".to_string(),
-        ));
-    };
-    let Some(end) = raw.rfind('}') else {
-        return Err(CapTraceError::Llm(
-            "codex app-server returned malformed JSON output".to_string(),
-        ));
-    };
-
-    let sliced = &raw[start..=end];
-    let value = serde_json::from_str::<Value>(sliced).map_err(|err| {
-        CapTraceError::Llm(format!("failed to parse app-server JSON output: {err}"))
-    })?;
-    cases_from_json(value)
-}
-
-fn cases_from_json(value: Value) -> Result<Vec<String>, CapTraceError> {
-    let Some(cases) = value.get("cases").and_then(Value::as_array) else {
-        return Err(CapTraceError::Llm(
-            "codex app-server output missing `cases` array".to_string(),
-        ));
-    };
-
-    let out: Vec<String> = cases
-        .iter()
-        .filter_map(Value::as_str)
-        .map(ToString::to_string)
-        .collect();
-    if out.is_empty() {
-        return Err(CapTraceError::Llm(
-            "codex app-server returned empty `cases`".to_string(),
-        ));
-    }
-    Ok(out)
 }
