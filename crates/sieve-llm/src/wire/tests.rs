@@ -1,4 +1,5 @@
 use super::*;
+use crate::LlmError;
 use sieve_types::RunId;
 
 #[test]
@@ -47,6 +48,32 @@ fn build_planner_messages_uses_context_and_conversation() {
         .as_str()
         .expect("redacted string")
         .contains("TRUSTED_REDACTED_STEP_OBSERVATION"));
+}
+
+#[test]
+fn decode_planner_output_error_preview_does_not_split_utf8_codepoints() {
+    let mut input = None;
+    for filler_len in 0..240 {
+        let candidate = serde_json::json!({
+            "tool_calls": format!("{}é{}", "a".repeat(filler_len), "b".repeat(260))
+        });
+        let raw = serde_json::to_string(&candidate).expect("serialize candidate");
+        if raw.len() > 240 && !raw.is_char_boundary(240) {
+            input = Some(candidate);
+            break;
+        }
+    }
+    let input = input.expect("candidate crossing truncation boundary");
+
+    let err = match decode_planner_output(input) {
+        Ok(_) => panic!("invalid tool_calls should fail"),
+        Err(err) => err,
+    };
+
+    match err {
+        LlmError::Decode(message) => assert!(message.contains("[truncated]")),
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

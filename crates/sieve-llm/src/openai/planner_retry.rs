@@ -1,4 +1,5 @@
 use crate::json_util::to_json_value;
+use crate::truncate;
 use crate::wire::{
     decode_planner_output, extract_openai_planner_output_json,
     planner_regeneration_diagnostic_prompt, PlannerDecodeOutcome,
@@ -197,10 +198,5 @@ pub(crate) fn backoff(base: Duration, attempt: usize) -> Duration {
 }
 
 pub(crate) fn truncate_for_error(input: &str) -> String {
-    const MAX: usize = 512;
-    if input.len() <= MAX {
-        input.to_string()
-    } else {
-        format!("{}...[truncated]", &input[..MAX])
-    }
+    truncate::truncate_for_error(input, 512)
 }

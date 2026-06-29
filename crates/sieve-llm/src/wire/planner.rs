@@ -1,4 +1,5 @@
 use super::openai_envelope::ensure_not_refusal;
+use crate::truncate;
 use crate::LlmError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -539,11 +540,7 @@ pub(crate) fn decode_planner_output(content_json: Value) -> Result<PlannerDecode
 fn truncate_json_for_error(value: &Value, max_chars: usize) -> String {
     let raw =
         serde_json::to_string(value).unwrap_or_else(|_| "<non-serializable-json>".to_string());
-    if raw.len() <= max_chars {
-        raw
-    } else {
-        format!("{}...[truncated]", &raw[..max_chars])
-    }
+    truncate::truncate_for_error(&raw, max_chars)
 }
 
 fn recover_contract_span(

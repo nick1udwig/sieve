@@ -16,6 +16,7 @@ mod codex_auth;
 mod config;
 mod json_util;
 mod openai;
+mod truncate;
 mod wire;
 
 #[cfg(test)]

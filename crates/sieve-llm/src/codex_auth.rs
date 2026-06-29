@@ -1,4 +1,5 @@
 use crate::clock::now_ms;
+use crate::truncate;
 use crate::LlmError;
 use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
@@ -345,7 +346,7 @@ async fn parse_openai_codex_token_response(
         return Err(LlmError::Backend(format!(
             "openai_codex token request failed with status {}: {}",
             status.as_u16(),
-            truncate_for_error(&body)
+            truncate::truncate_for_error(&body, 512)
         )));
     }
 
@@ -388,13 +389,4 @@ fn extract_account_id(access_token: &str) -> Option<String> {
 pub(crate) fn trim_to_non_empty(raw: Option<String>) -> Option<String> {
     raw.map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn truncate_for_error(input: &str) -> String {
-    const MAX: usize = 512;
-    if input.len() <= MAX {
-        input.to_string()
-    } else {
-        format!("{}...[truncated]", &input[..MAX])
-    }
 }

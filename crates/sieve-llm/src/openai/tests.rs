@@ -89,6 +89,17 @@ fn exchange_logger_writes_transport_error_event() {
     let _ = fs::remove_file(path);
 }
 
+#[test]
+fn truncate_for_error_does_not_split_utf8_codepoints() {
+    let input = format!("{}é{}", "a".repeat(511), "tail");
+    assert!(!input.is_char_boundary(512));
+
+    let preview = truncate_for_error(&input);
+
+    assert!(preview.ends_with("...[truncated]"));
+    assert!(preview.starts_with(&"a".repeat(511)));
+}
+
 #[tokio::test]
 async fn planner_request_includes_openai_native_tools_payload() {
     let responses = Arc::new(Mutex::new(VecDeque::from(vec![
