@@ -21,7 +21,7 @@ fn test_manager(
         config: CodexManagerConfig {
             program: Some(script.to_string_lossy().to_string()),
             ws_url: None,
-            connect_timeout_ms: DEFAULT_CODEX_CONNECT_TIMEOUT_MS,
+            connect_timeout_ms: super::config::DEFAULT_CODEX_CONNECT_TIMEOUT_MS,
             model: Some("mock-model".to_string()),
             turn_timeout_ms: 5_000,
             request_timeout_ms: 5_000,

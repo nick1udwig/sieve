@@ -1,6 +1,7 @@
 use super::super::client::AppServerClient;
+use super::active::SteerCommand;
 use super::protocol::*;
-use super::{CodexManager, SessionRunContext, SteerCommand};
+use super::{CodexManager, SessionRunContext};
 use crate::json_util::to_json_value;
 use sieve_types::{ApprovalPromptKind, CodexSessionLifecycleStatus, CommandSegment};
 use tokio::sync::mpsc;

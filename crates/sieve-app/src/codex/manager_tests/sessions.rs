@@ -71,7 +71,7 @@ for line in sys.stdin:
         config: CodexManagerConfig {
             program: Some(script.to_string_lossy().to_string()),
             ws_url: None,
-            connect_timeout_ms: DEFAULT_CODEX_CONNECT_TIMEOUT_MS,
+            connect_timeout_ms: super::config::DEFAULT_CODEX_CONNECT_TIMEOUT_MS,
             model: Some("mock-model".to_string()),
             turn_timeout_ms: 5_000,
             request_timeout_ms: 100,
@@ -127,7 +127,7 @@ async fn codex_manager_live_session_smoke_real_prompt() {
                 .ok()
                 .and_then(|value| value.trim().parse::<u64>().ok())
                 .filter(|value| *value > 0)
-                .unwrap_or(DEFAULT_CODEX_CONNECT_TIMEOUT_MS),
+                .unwrap_or(super::config::DEFAULT_CODEX_CONNECT_TIMEOUT_MS),
             model: env::var("SIEVE_CODEX_MODEL")
                 .ok()
                 .filter(|value| !value.trim().is_empty())

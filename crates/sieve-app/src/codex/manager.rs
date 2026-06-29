@@ -3,13 +3,17 @@ use super::{
     session_name_from_instruction, summarize_instruction, CodexSessionStore, CodexTurnRecord,
     StoredCodexSession,
 };
+mod active;
+mod config;
 mod events;
 mod protocol;
 mod stream;
 
 use crate::json_util::to_json_value;
 use crate::logging::now_ms;
+use active::ActiveCodexTurn;
 use async_trait::async_trait;
+use config::CodexManagerConfig;
 use protocol::*;
 use sieve_runtime::{CodexExecToolResult, CodexSessionToolResult, CodexTool, RuntimeEventLog};
 use sieve_types::{
@@ -17,30 +21,12 @@ use sieve_types::{
     CodexTurnResult, PlannerCodexSession, RunId,
 };
 use std::collections::HashMap;
-use std::env;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::{timeout, Duration};
+use tokio::{sync::mpsc, time::Duration};
 use uuid::Uuid;
 
 use sieve_runtime::ApprovalBus;
-use std::future::Future;
-
-const DEFAULT_CODEX_PROGRAM: &str = "codex";
-const DEFAULT_CODEX_CONNECT_TIMEOUT_MS: u64 = 5 * 1000;
-const DEFAULT_TURN_TIMEOUT_MS: u64 = 15 * 60 * 1000;
-const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30 * 1000;
-
-#[derive(Debug, Clone)]
-struct CodexManagerConfig {
-    program: Option<String>,
-    ws_url: Option<String>,
-    connect_timeout_ms: u64,
-    model: Option<String>,
-    turn_timeout_ms: u64,
-    request_timeout_ms: u64,
-}
 
 pub(crate) struct CodexManager {
     config: CodexManagerConfig,
@@ -72,17 +58,6 @@ impl SessionRunContext {
     }
 }
 
-#[derive(Clone)]
-struct ActiveCodexTurn {
-    session_name: String,
-    steer_tx: mpsc::UnboundedSender<SteerCommand>,
-}
-
-struct SteerCommand {
-    text: String,
-    result_tx: oneshot::Sender<Result<(), String>>,
-}
-
 impl CodexManager {
     pub(crate) fn new(
         store_path: impl Into<PathBuf>,
@@ -90,36 +65,7 @@ impl CodexManager {
         event_log: Arc<dyn RuntimeEventLog>,
     ) -> Result<Self, String> {
         Ok(Self {
-            config: CodexManagerConfig {
-                program: env::var("SIEVE_CODEX_APP_SERVER_BIN")
-                    .ok()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .or_else(|| Some(DEFAULT_CODEX_PROGRAM.to_string())),
-                ws_url: env::var("SIEVE_CODEX_APP_SERVER_WS_URL")
-                    .ok()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty()),
-                connect_timeout_ms: env::var("SIEVE_CODEX_APP_SERVER_CONNECT_TIMEOUT_MS")
-                    .ok()
-                    .and_then(|value| value.trim().parse::<u64>().ok())
-                    .filter(|value| *value > 0)
-                    .unwrap_or(DEFAULT_CODEX_CONNECT_TIMEOUT_MS),
-                model: env::var("SIEVE_CODEX_MODEL")
-                    .ok()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty()),
-                turn_timeout_ms: env::var("SIEVE_CODEX_TURN_TIMEOUT_MS")
-                    .ok()
-                    .and_then(|value| value.trim().parse::<u64>().ok())
-                    .filter(|value| *value > 0)
-                    .unwrap_or(DEFAULT_TURN_TIMEOUT_MS),
-                request_timeout_ms: env::var("SIEVE_CODEX_REQUEST_TIMEOUT_MS")
-                    .ok()
-                    .and_then(|value| value.trim().parse::<u64>().ok())
-                    .filter(|value| *value > 0)
-                    .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
-            },
+            config: CodexManagerConfig::from_env(),
             store: CodexSessionStore::new(store_path.into())?,
             approval_bus,
             event_log,
@@ -388,7 +334,7 @@ impl CodexManager {
             self.register_active_session(session_id, &run_ctx.session_name, steer_tx)?;
         }
 
-        let streamed_result = timeout(
+        let streamed_result = tokio::time::timeout(
             Duration::from_millis(self.config.turn_timeout_ms),
             self.wait_for_turn_completion(
                 &mut client,
@@ -516,85 +462,6 @@ impl CodexManager {
         )
         .await?;
         Ok(thread_id)
-    }
-
-    fn register_active_session(
-        &self,
-        session_id: &str,
-        session_name: &str,
-        steer_tx: mpsc::UnboundedSender<SteerCommand>,
-    ) -> Result<(), String> {
-        self.active_sessions
-            .lock()
-            .map_err(|_| "codex active session lock poisoned".to_string())?
-            .insert(
-                session_id.to_string(),
-                ActiveCodexTurn {
-                    session_name: session_name.to_string(),
-                    steer_tx,
-                },
-            );
-        Ok(())
-    }
-
-    fn unregister_active_session(&self, session_id: Option<&str>) {
-        let Some(session_id) = session_id else {
-            return;
-        };
-        if let Ok(mut active) = self.active_sessions.lock() {
-            active.remove(session_id);
-        }
-    }
-
-    async fn steer_session_internal(&self, session_id: &str, text: &str) -> Result<(), String> {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return Err("codex steer text must be non-empty".to_string());
-        }
-        let active = self
-            .active_sessions
-            .lock()
-            .map_err(|_| "codex active session lock poisoned".to_string())?
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| format!("codex session `{session_id}` is not currently running"))?;
-        let (result_tx, result_rx) = oneshot::channel();
-        active
-            .steer_tx
-            .send(SteerCommand {
-                text: trimmed.to_string(),
-                result_tx,
-            })
-            .map_err(|_| {
-                format!(
-                    "codex session `{}` is no longer accepting steer input",
-                    active.session_name
-                )
-            })?;
-        result_rx.await.map_err(|_| {
-            format!(
-                "codex session `{}` dropped steer response channel",
-                active.session_name
-            )
-        })?
-    }
-
-    async fn call_with_timeout<T>(
-        &self,
-        label: &str,
-        future: impl Future<Output = Result<T, String>>,
-    ) -> Result<T, String> {
-        timeout(
-            Duration::from_millis(self.config.request_timeout_ms),
-            future,
-        )
-        .await
-        .map_err(|_| {
-            format!(
-                "{label} timed out after {}ms",
-                self.config.request_timeout_ms
-            )
-        })?
     }
 }
 
