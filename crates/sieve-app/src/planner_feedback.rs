@@ -136,15 +136,21 @@ fn is_sieve_lcm_query_command(command: &str) -> bool {
 
 pub(crate) fn trim_for_prompt(value: &str, max_chars: usize) -> String {
     let trimmed = value.trim();
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
+    if max_chars == 0 {
+        return String::new();
     }
-    let mut out = String::new();
-    for ch in trimmed.chars().take(max_chars.saturating_sub(3)) {
-        out.push(ch);
+
+    let mut preview = trimmed.chars().take(max_chars).collect::<String>();
+    if trimmed.chars().nth(max_chars).is_none() {
+        return preview;
     }
-    out.push_str("...");
-    out
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
+
+    preview = trimmed.chars().take(max_chars - 3).collect();
+    preview.push_str("...");
+    preview
 }
 
 pub(crate) async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) -> Option<String> {
@@ -212,4 +218,24 @@ pub(crate) async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) 
         return Some(lines.join("\n"));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_for_prompt_respects_small_char_budgets() {
+        assert_eq!(trim_for_prompt("abcdef", 0), "");
+        assert_eq!(trim_for_prompt("abcdef", 1), ".");
+        assert_eq!(trim_for_prompt("abcdef", 2), "..");
+        assert_eq!(trim_for_prompt("abcdef", 3), "...");
+        assert_eq!(trim_for_prompt("abcdef", 4), "a...");
+    }
+
+    #[test]
+    fn trim_for_prompt_trims_and_preserves_unicode_boundary() {
+        assert_eq!(trim_for_prompt("  éclair  ", 5), "éc...");
+        assert_eq!(trim_for_prompt("  éclair  ", 6), "éclair");
+    }
 }
