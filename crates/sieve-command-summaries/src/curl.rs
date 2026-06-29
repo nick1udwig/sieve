@@ -12,6 +12,39 @@ struct SinkArg {
     value: String,
 }
 
+const PAYLOAD_VALUE_FLAGS: &[&str] = &[
+    "-d",
+    "--data",
+    "--data-raw",
+    "--data-binary",
+    "--data-ascii",
+    "--data-urlencode",
+    "--json",
+];
+
+const LONG_PAYLOAD_VALUE_FLAGS: &[&str] = &[
+    "--data",
+    "--data-raw",
+    "--data-binary",
+    "--data-ascii",
+    "--data-urlencode",
+    "--json",
+];
+
+const IGNORED_NO_VALUE_FLAGS: &[&str] = &[
+    "-s",
+    "-S",
+    "-L",
+    "-k",
+    "-f",
+    "--silent",
+    "--show-error",
+    "--location",
+    "--insecure",
+    "--fail",
+    "--fail-with-body",
+];
+
 pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     if !is_curl_command(argv) {
         return None;
@@ -88,14 +121,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
-            if arg == "-d"
-                || arg == "--data"
-                || arg == "--data-raw"
-                || arg == "--data-binary"
-                || arg == "--data-ascii"
-                || arg == "--data-urlencode"
-                || arg == "--json"
-            {
+            if PAYLOAD_VALUE_FLAGS.contains(&arg.as_str()) {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl payload flag missing value"));
                 }
@@ -120,15 +146,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             }
 
             if let Some((flag, value)) = split_flag_value(arg) {
-                if matches!(
-                    flag,
-                    "--data"
-                        | "--data-raw"
-                        | "--data-binary"
-                        | "--data-ascii"
-                        | "--data-urlencode"
-                        | "--json"
-                ) {
+                if LONG_PAYLOAD_VALUE_FLAGS.contains(&flag) {
                     payloads.push(SinkArg {
                         flag: flag.to_string(),
                         value_index: i,
@@ -139,19 +157,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 }
             }
 
-            if matches!(
-                arg.as_str(),
-                "-s" | "-S"
-                    | "-L"
-                    | "-k"
-                    | "-f"
-                    | "--silent"
-                    | "--show-error"
-                    | "--location"
-                    | "--insecure"
-                    | "--fail"
-                    | "--fail-with-body"
-            ) {
+            if IGNORED_NO_VALUE_FLAGS.contains(&arg.as_str()) {
                 i += 1;
                 continue;
             }
