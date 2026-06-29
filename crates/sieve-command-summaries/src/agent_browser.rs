@@ -14,6 +14,7 @@ const UNSUPPORTED_GLOBAL_FLAGS_REASON: &str = "unsupported agent-browser global 
 const UNSUPPORTED_COMMAND_FLAGS_REASON: &str = "unsupported agent-browser flags";
 const GLOBAL_HEADER_REASON: &str =
     "agent-browser --headers requires a single explicit navigation origin";
+const DIFF_URL_VALUE_FLAGS: &[&str] = &["--wait-until", "--selector", "--depth"];
 
 pub(super) fn summarize_agent_browser(argv: &[String]) -> Option<SummaryOutcome> {
     if super::basename(argv.first()).is_none_or(|cmd| cmd != "agent-browser") {
@@ -267,6 +268,15 @@ fn summarize_diff_url(parsed: &ParsedGlobals) -> SummaryOutcome {
     let mut i = 4usize;
     while i < parsed.remaining.len() {
         let arg = parsed.remaining[i].value.as_str();
+        if let Some((_, value)) = split_supported_value_flag(arg, DIFF_URL_VALUE_FLAGS) {
+            if value.is_empty() {
+                return super::unknown_outcome(&format!(
+                    "agent-browser diff url flag missing value: {arg}"
+                ));
+            }
+            i += 1;
+            continue;
+        }
         match arg {
             "--screenshot" | "--full" | "-c" | "--compact" => i += 1,
             "--wait-until" | "-s" | "--selector" | "-d" | "--depth" => {
@@ -408,6 +418,11 @@ fn net_connect_caps(origins: &[SinkKey]) -> Vec<Capability> {
         push_capability(&mut out, Resource::Net, Action::Connect, origin.0.clone());
     }
     out
+}
+
+fn split_supported_value_flag<'a>(arg: &'a str, flags: &[&str]) -> Option<(&'a str, &'a str)> {
+    let (flag, value) = super::split_flag_value(arg)?;
+    flags.contains(&flag).then_some((flag, value))
 }
 
 fn push_capability(
