@@ -111,6 +111,14 @@ fn progress_contract_requires_non_asset_fetch_target() {
 }
 
 #[test]
+fn asset_url_detection_keeps_content_paths_containing_favicon_word() {
+    assert!(url_is_likely_asset("https://example.com/favicon.ico"));
+    assert!(!url_is_likely_asset(
+        "https://example.com/blog/favicon-history"
+    ));
+}
+
+#[test]
 fn progress_contract_normalizes_time_bound_continue_to_primary_fetch() {
     let tool_results = vec![PlannerToolResult::Bash {
         command: "bravesearch search --query \"x\" --count 5 --output json".to_string(),

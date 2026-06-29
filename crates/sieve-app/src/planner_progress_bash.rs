@@ -58,9 +58,7 @@ fn contains_asset_extension(lower: &str) -> bool {
 
 pub(super) fn command_targets_likely_asset(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
-    lower.contains("imgs.search.brave.com")
-        || lower.contains("favicon")
-        || contains_asset_extension(&lower)
+    lower.contains("imgs.search.brave.com") || contains_asset_extension(&lower)
 }
 
 pub(crate) fn url_is_likely_asset(url: &str) -> bool {
