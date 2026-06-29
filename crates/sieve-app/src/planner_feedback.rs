@@ -140,17 +140,15 @@ pub(crate) fn trim_for_prompt(value: &str, max_chars: usize) -> String {
         return String::new();
     }
 
-    let mut preview = trimmed.chars().take(max_chars).collect::<String>();
-    if trimmed.chars().nth(max_chars).is_none() {
-        return preview;
+    match trimmed.char_indices().nth(max_chars) {
+        None => trimmed.to_string(),
+        Some(_) if max_chars <= 3 => ".".repeat(max_chars),
+        Some(_) => {
+            let mut preview: String = trimmed.chars().take(max_chars - 3).collect();
+            preview.push_str("...");
+            preview
+        }
     }
-    if max_chars <= 3 {
-        return ".".repeat(max_chars);
-    }
-
-    preview = trimmed.chars().take(max_chars - 3).collect();
-    preview.push_str("...");
-    preview
 }
 
 pub(crate) async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) -> Option<String> {
