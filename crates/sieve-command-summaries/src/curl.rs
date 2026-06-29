@@ -52,6 +52,12 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
+            if let Some(raw) = arg.strip_prefix("-X").filter(|raw| !raw.is_empty()) {
+                method = Some(raw.to_ascii_uppercase());
+                i += 1;
+                continue;
+            }
+
             if arg == "--url" {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl url flag missing value"));

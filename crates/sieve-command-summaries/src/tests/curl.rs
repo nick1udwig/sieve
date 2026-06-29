@@ -20,6 +20,23 @@ fn curl_post_url_requires_net_write_no_payload_sink_checks() {
 }
 
 #[test]
+fn curl_attached_short_request_method_requires_net_write() {
+    let out = summarize_argv(&argv(&["curl", "-XPOST", "https://api.example.com/v1"]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Net,
+            action: Action::Write,
+            scope: "https://api.example.com/v1".to_string()
+        }]
+    );
+    assert!(summary.sink_checks.is_empty());
+}
+
+#[test]
 fn curl_post_with_payload_extracts_sink_check() {
     let out = summarize_argv(&argv(&[
         "curl",
