@@ -343,6 +343,37 @@ fn agent_browser_diff_url_accepts_attached_value_flags() {
 }
 
 #[test]
+fn agent_browser_diff_url_accepts_attached_short_value_flags() {
+    let out = summarize_argv(&argv(&[
+        "agent-browser",
+        "diff",
+        "url",
+        "https://staging.example.com",
+        "https://prod.example.com",
+        "-smain",
+        "-d2",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://staging.example.com/".to_string(),
+            },
+            Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://prod.example.com/".to_string(),
+            }
+        ]
+    );
+}
+
+#[test]
 fn agent_browser_record_start_with_url_requires_fs_write_and_connect() {
     let out = summarize_argv(&argv(&[
         "agent-browser",

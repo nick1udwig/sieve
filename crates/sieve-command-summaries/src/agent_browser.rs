@@ -268,6 +268,10 @@ fn summarize_diff_url(parsed: &ParsedGlobals) -> SummaryOutcome {
     let mut i = 4usize;
     while i < parsed.remaining.len() {
         let arg = parsed.remaining[i].value.as_str();
+        if split_supported_short_value_flag(arg, &["-s", "-d"]).is_some() {
+            i += 1;
+            continue;
+        }
         if let Some((_, value)) = split_supported_value_flag(arg, DIFF_URL_VALUE_FLAGS) {
             if value.is_empty() {
                 return super::unknown_outcome(&format!(
@@ -423,6 +427,15 @@ fn net_connect_caps(origins: &[SinkKey]) -> Vec<Capability> {
 fn split_supported_value_flag<'a>(arg: &'a str, flags: &[&str]) -> Option<(&'a str, &'a str)> {
     let (flag, value) = super::split_flag_value(arg)?;
     flags.contains(&flag).then_some((flag, value))
+}
+
+fn split_supported_short_value_flag<'a>(arg: &'a str, flags: &[&str]) -> Option<&'a str> {
+    for flag in flags {
+        if arg.starts_with(flag) && arg.len() > flag.len() {
+            return Some(&arg[flag.len()..]);
+        }
+    }
+    None
 }
 
 fn push_capability(
