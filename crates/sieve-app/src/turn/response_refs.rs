@@ -11,7 +11,7 @@ use sieve_llm::{
 use sieve_runtime::{PlannerRunResult, PlannerToolResult, RuntimeDisposition};
 use sieve_shell::{BasicShellAnalyzer, ShellAnalyzer};
 use sieve_tool_contracts::planner_exposed_tool_names;
-use sieve_types::{CommandKnowledge, Integrity, InteractionModality, RunId, TrustedToolEffect};
+use sieve_types::{CommandKnowledge, Integrity, InteractionModality, RunId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -118,7 +118,13 @@ pub(crate) fn build_response_turn_input(
     let mut trusted_effects = Vec::new();
     for tool_result in &planner_result.tool_results {
         tool_outcomes.push(summarize_tool_result(tool_result, &mut render_refs));
-        trusted_effects.extend(trusted_effects_for_tool_result(tool_result));
+        if let PlannerToolResult::Automation {
+            effect: Some(effect),
+            ..
+        } = tool_result
+        {
+            trusted_effects.push(effect.clone());
+        }
     }
 
     (
@@ -646,16 +652,6 @@ fn summarize_tool_result(
                 ],
             }
         }
-    }
-}
-
-fn trusted_effects_for_tool_result(result: &PlannerToolResult) -> Vec<TrustedToolEffect> {
-    match result {
-        PlannerToolResult::Automation {
-            effect: Some(effect),
-            ..
-        } => vec![effect.clone()],
-        _ => Vec::new(),
     }
 }
 

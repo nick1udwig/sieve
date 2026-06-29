@@ -114,6 +114,43 @@ fn build_response_turn_input_handles_zero_tool_turn() {
 }
 
 #[test]
+fn build_response_turn_input_preserves_automation_effects() {
+    let run_id = RunId("run-1".to_string());
+    let effect = sieve_types::TrustedToolEffect::CronAdded {
+        job_id: "cron-1".to_string(),
+        target: sieve_types::AutomationTarget::Main,
+        run_at_ms: 123,
+        prompt: "standup".to_string(),
+        delivery_mode: sieve_types::AutomationDeliveryMode::MainSessionMessage,
+    };
+    let planner_result = PlannerRunResult {
+        thoughts: None,
+        tool_results: vec![PlannerToolResult::Automation {
+            request: sieve_types::AutomationRequest {
+                action: sieve_types::AutomationAction::CronAdd,
+                target: Some(sieve_types::AutomationTarget::Main),
+                schedule: None,
+                prompt: Some("standup".to_string()),
+                job_id: None,
+            },
+            message: Some("scheduled".to_string()),
+            effect: Some(effect.clone()),
+            failure_reason: None,
+        }],
+    };
+
+    let (input, refs) = build_response_turn_input(
+        &run_id,
+        "remind me",
+        InteractionModality::Text,
+        &planner_result,
+    );
+
+    assert_eq!(input.trusted_effects, vec![effect]);
+    assert!(refs.is_empty());
+}
+
+#[test]
 fn requires_output_visibility_detects_non_empty_stdout_or_stderr_refs() {
     let input = ResponseTurnInput {
         run_id: RunId("run-1".to_string()),
