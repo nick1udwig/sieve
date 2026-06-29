@@ -4,7 +4,7 @@ use serde_json::Value;
 use sieve_runtime::{
     MainlineArtifactKind, MainlineRunReport, PlannerToolResult, RuntimeDisposition,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -139,9 +139,10 @@ fn extract_handles_from_report(report: &MainlineRunReport) -> Option<Vec<String>
     let value = serde_json::from_str::<Value>(&raw).ok()?;
     let messages = value.get("messages")?.as_array()?;
     let mut handles = Vec::new();
+    let mut seen_handles = BTreeSet::new();
     for message in messages {
         if let Some(id) = message.get("id").and_then(Value::as_str).map(str::trim) {
-            if !id.is_empty() {
+            if !id.is_empty() && seen_handles.insert(id) {
                 handles.push(id.to_string());
             }
         }
