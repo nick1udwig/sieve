@@ -127,6 +127,12 @@ const IGNORED_VALUE_FLAGS: &[ValueFlagSpec] = &[
     },
 ];
 
+const OUTPUT_VALUE_FLAGS: &[ValueFlagSpec] = &[ValueFlagSpec {
+    short: Some("-o"),
+    long: "--output",
+    missing_reason: "curl output flag missing value",
+}];
+
 pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     if !is_curl_command(argv) {
         return None;
@@ -136,6 +142,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     let mut url_raw: Option<String> = None;
     let mut payloads: Vec<SinkArg> = Vec::new();
     let mut request_values: Vec<SinkArg> = Vec::new();
+    let mut output_paths: Vec<String> = Vec::new();
     let mut unsupported_flags: Vec<String> = Vec::new();
     let mut i = 1usize;
     let mut saw_end_of_flags = false;
@@ -258,6 +265,18 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
+            if let Some(parsed) = parse_value_flag(argv, i, OUTPUT_VALUE_FLAGS) {
+                let parsed = match parsed {
+                    Ok(parsed) => parsed,
+                    Err(reason) => return Some(unknown_outcome(reason)),
+                };
+                if parsed.value != "-" {
+                    output_paths.push(parsed.value);
+                }
+                i += parsed.consumed;
+                continue;
+            }
+
             if let Some(parsed) = parse_request_value_flag(argv, i) {
                 let parsed = match parsed {
                     Ok(parsed) => parsed,
@@ -321,6 +340,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             action: Action::Connect,
             scope: sink.0.clone(),
         }];
+        required_capabilities.extend(file_write_capabilities(output_paths));
         required_capabilities.extend(file_read_caps);
         return Some(known_summary_outcome(required_capabilities, sink_checks));
     }
@@ -345,6 +365,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         action: Action::Write,
         scope: sink.0.clone(),
     }];
+    required_capabilities.extend(file_write_capabilities(output_paths));
     required_capabilities.extend(file_read_capabilities(&request_values));
     let sink_checks = sink_checks_for_args(request_values, sink.clone());
 
@@ -435,6 +456,17 @@ fn file_read_capabilities(args: &[SinkArg]) -> Vec<Capability> {
         .map(|scope| Capability {
             resource: Resource::Fs,
             action: Action::Read,
+            scope,
+        })
+        .collect()
+}
+
+fn file_write_capabilities(paths: Vec<String>) -> Vec<Capability> {
+    paths
+        .into_iter()
+        .map(|scope| Capability {
+            resource: Resource::Fs,
+            action: Action::Write,
             scope,
         })
         .collect()

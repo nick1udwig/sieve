@@ -504,6 +504,71 @@ fn curl_get_with_bearer_token_extracts_sink_check() {
 }
 
 #[test]
+fn curl_get_with_output_file_requires_fs_write_capability() {
+    for argv_raw in [
+        vec![
+            "curl",
+            "-o",
+            "response.json",
+            "https://api.example.com/v1/resource",
+        ],
+        vec![
+            "curl",
+            "--output=response.json",
+            "https://api.example.com/v1/resource",
+        ],
+        vec![
+            "curl",
+            "-oresponse.json",
+            "https://api.example.com/v1/resource",
+        ],
+    ] {
+        let out = summarize_argv(&argv(&argv_raw));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known, "{argv_raw:?}");
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![
+                Capability {
+                    resource: Resource::Net,
+                    action: Action::Connect,
+                    scope: "https://api.example.com/".to_string(),
+                },
+                Capability {
+                    resource: Resource::Fs,
+                    action: Action::Write,
+                    scope: "response.json".to_string(),
+                },
+            ],
+            "{argv_raw:?}"
+        );
+        assert_eq!(summary.sink_checks, Vec::<SinkCheck>::new(), "{argv_raw:?}");
+    }
+}
+
+#[test]
+fn curl_get_with_stdout_output_requires_only_net_connect() {
+    let out = summarize_argv(&argv(&[
+        "curl",
+        "-o",
+        "-",
+        "https://api.example.com/v1/resource",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.required_capabilities,
+        vec![Capability {
+            resource: Resource::Net,
+            action: Action::Connect,
+            scope: "https://api.example.com/".to_string(),
+        }]
+    );
+}
+
+#[test]
 fn sudo_curl_header_sink_ref_uses_original_argv_index() {
     let out = summarize_argv(&argv(&[
         "sudo",
