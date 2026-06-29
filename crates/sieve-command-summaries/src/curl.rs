@@ -12,6 +12,19 @@ struct SinkArg {
     value: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RequestValueFlag {
+    short: Option<&'static str>,
+    long: &'static str,
+    missing_reason: &'static str,
+}
+
+#[derive(Debug)]
+struct ParsedSinkArg {
+    arg: SinkArg,
+    consumed: usize,
+}
+
 const PAYLOAD_VALUE_FLAGS: &[&str] = &[
     "-d",
     "--data",
@@ -49,6 +62,29 @@ const IGNORED_NO_VALUE_FLAGS: &[&str] = &[
     "--ipv4",
     "--ipv6",
     "--no-progress-meter",
+];
+
+const REQUEST_VALUE_FLAGS: &[RequestValueFlag] = &[
+    RequestValueFlag {
+        short: Some("-H"),
+        long: "--header",
+        missing_reason: "curl header flag missing value",
+    },
+    RequestValueFlag {
+        short: Some("-u"),
+        long: "--user",
+        missing_reason: "curl user flag missing value",
+    },
+    RequestValueFlag {
+        short: Some("-A"),
+        long: "--user-agent",
+        missing_reason: "curl user-agent flag missing value",
+    },
+    RequestValueFlag {
+        short: Some("-e"),
+        long: "--referer",
+        missing_reason: "curl referer flag missing value",
+    },
 ];
 
 pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
@@ -173,77 +209,13 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
-            if arg == "-H" || arg == "--header" {
-                if i + 1 >= argv.len() {
-                    return Some(unknown_outcome("curl header flag missing value"));
-                }
-                let value = argv[i + 1].clone();
-                request_values.push(SinkArg {
-                    flag: arg.clone(),
-                    value_index: i + 1,
-                    value,
-                });
-                i += 2;
-                continue;
-            }
-
-            if let Some(raw) = arg.strip_prefix("--header=") {
-                if raw.is_empty() {
-                    return Some(unknown_outcome("curl header flag missing value"));
-                }
-                request_values.push(SinkArg {
-                    flag: "--header".to_string(),
-                    value_index: i,
-                    value: raw.to_string(),
-                });
-                i += 1;
-                continue;
-            }
-
-            if let Some(raw) = attached_short_value(arg, "-H") {
-                request_values.push(SinkArg {
-                    flag: "-H".to_string(),
-                    value_index: i,
-                    value: raw.to_string(),
-                });
-                i += 1;
-                continue;
-            }
-
-            if arg == "-u" || arg == "--user" {
-                if i + 1 >= argv.len() {
-                    return Some(unknown_outcome("curl user flag missing value"));
-                }
-                let value = argv[i + 1].clone();
-                request_values.push(SinkArg {
-                    flag: arg.clone(),
-                    value_index: i + 1,
-                    value,
-                });
-                i += 2;
-                continue;
-            }
-
-            if let Some(raw) = arg.strip_prefix("--user=") {
-                if raw.is_empty() {
-                    return Some(unknown_outcome("curl user flag missing value"));
-                }
-                request_values.push(SinkArg {
-                    flag: "--user".to_string(),
-                    value_index: i,
-                    value: raw.to_string(),
-                });
-                i += 1;
-                continue;
-            }
-
-            if let Some(raw) = attached_short_value(arg, "-u") {
-                request_values.push(SinkArg {
-                    flag: "-u".to_string(),
-                    value_index: i,
-                    value: raw.to_string(),
-                });
-                i += 1;
+            if let Some(parsed) = parse_request_value_flag(argv, i) {
+                let parsed = match parsed {
+                    Ok(parsed) => parsed,
+                    Err(reason) => return Some(unknown_outcome(reason)),
+                };
+                request_values.push(parsed.arg);
+                i += parsed.consumed;
                 continue;
             }
 
@@ -336,6 +308,60 @@ fn canonicalize_url_sink(raw: &str) -> Option<SinkKey> {
 
 fn attached_short_value<'a>(arg: &'a str, flag: &str) -> Option<&'a str> {
     arg.strip_prefix(flag).filter(|raw| !raw.is_empty())
+}
+
+fn parse_request_value_flag(
+    argv: &[String],
+    i: usize,
+) -> Option<Result<ParsedSinkArg, &'static str>> {
+    let arg = argv.get(i)?;
+
+    for spec in REQUEST_VALUE_FLAGS {
+        if arg == spec.long || spec.short.is_some_and(|short| arg == short) {
+            let Some(value) = argv.get(i + 1) else {
+                return Some(Err(spec.missing_reason));
+            };
+            return Some(Ok(ParsedSinkArg {
+                arg: SinkArg {
+                    flag: arg.clone(),
+                    value_index: i + 1,
+                    value: value.clone(),
+                },
+                consumed: 2,
+            }));
+        }
+
+        if let Some((flag, value)) = split_flag_value(arg) {
+            if flag == spec.long {
+                if value.is_empty() {
+                    return Some(Err(spec.missing_reason));
+                }
+                return Some(Ok(ParsedSinkArg {
+                    arg: SinkArg {
+                        flag: spec.long.to_string(),
+                        value_index: i,
+                        value: value.to_string(),
+                    },
+                    consumed: 1,
+                }));
+            }
+        }
+
+        if let Some(short) = spec.short {
+            if let Some(value) = attached_short_value(arg, short) {
+                return Some(Ok(ParsedSinkArg {
+                    arg: SinkArg {
+                        flag: short.to_string(),
+                        value_index: i,
+                        value: value.to_string(),
+                    },
+                    consumed: 1,
+                }));
+            }
+        }
+    }
+
+    None
 }
 
 fn sink_checks_for_args(args: Vec<SinkArg>, sink: SinkKey) -> Vec<SinkCheck> {

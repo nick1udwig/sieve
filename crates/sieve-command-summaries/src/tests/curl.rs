@@ -371,6 +371,93 @@ fn curl_get_with_user_extracts_sink_check() {
 }
 
 #[test]
+fn curl_get_with_metadata_values_extracts_sink_check() {
+    let cases = [
+        (
+            vec![
+                "curl",
+                "-A",
+                "test-agent",
+                "https://api.example.com/v1/resource",
+            ],
+            "-A",
+            "argv:2",
+        ),
+        (
+            vec![
+                "curl",
+                "--user-agent=test-agent",
+                "https://api.example.com/v1/resource",
+            ],
+            "--user-agent",
+            "argv:1",
+        ),
+        (
+            vec![
+                "curl",
+                "-Atest-agent",
+                "https://api.example.com/v1/resource",
+            ],
+            "-A",
+            "argv:1",
+        ),
+        (
+            vec![
+                "curl",
+                "-e",
+                "https://referrer.example/path",
+                "https://api.example.com/v1/resource",
+            ],
+            "-e",
+            "argv:2",
+        ),
+        (
+            vec![
+                "curl",
+                "--referer=https://referrer.example/path",
+                "https://api.example.com/v1/resource",
+            ],
+            "--referer",
+            "argv:1",
+        ),
+        (
+            vec![
+                "curl",
+                "-ehttps://referrer.example/path",
+                "https://api.example.com/v1/resource",
+            ],
+            "-e",
+            "argv:1",
+        ),
+    ];
+
+    for (argv_raw, argument_name, value_ref) in cases {
+        let out = summarize_argv(&argv(&argv_raw));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known, "{argv_raw:?}");
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.example.com/".to_string(),
+            }],
+            "{argv_raw:?}"
+        );
+        assert_eq!(
+            summary.sink_checks,
+            vec![SinkCheck {
+                argument_name: argument_name.to_string(),
+                sink: SinkKey("https://api.example.com/v1/resource".to_string()),
+                value_refs: vec![ValueRef(value_ref.to_string())],
+            }],
+            "{argv_raw:?}"
+        );
+    }
+}
+
+#[test]
 fn sudo_curl_header_sink_ref_uses_original_argv_index() {
     let out = summarize_argv(&argv(&[
         "sudo",
