@@ -43,6 +43,12 @@ const IGNORED_NO_VALUE_FLAGS: &[&str] = &[
     "--insecure",
     "--fail",
     "--fail-with-body",
+    "--compressed",
+    "--http1.1",
+    "--http2",
+    "--ipv4",
+    "--ipv6",
+    "--no-progress-meter",
 ];
 
 pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
@@ -162,7 +168,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
-            if is_short_flag_cluster(arg, &['s', 'S', 'L', 'k', 'f']) {
+            if is_short_flag_cluster(arg, &['s', 'S', 'L', 'k', 'f', '4', '6']) {
                 i += 1;
                 continue;
             }

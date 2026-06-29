@@ -600,6 +600,39 @@ fn curl_get_url_requires_net_connect_capability() {
 }
 
 #[test]
+fn curl_get_with_safe_transport_flags_requires_net_connect_capability() {
+    for flag in [
+        "--compressed",
+        "--no-progress-meter",
+        "--http1.1",
+        "--http2",
+        "--ipv4",
+        "--ipv6",
+        "-4",
+        "-6",
+    ] {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            flag,
+            "https://api.example.com/v1/resource",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known, "flag: {flag}");
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.sink_checks, Vec::<SinkCheck>::new(), "flag: {flag}");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.example.com/".to_string(),
+            }],
+            "flag: {flag}"
+        );
+    }
+}
+
+#[test]
 fn curl_head_flags_require_net_connect_capability() {
     for flag in ["-I", "--head"] {
         let out = summarize_argv(&argv(&[
