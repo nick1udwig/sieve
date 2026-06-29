@@ -58,6 +58,12 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
+            if matches!(arg.as_str(), "-I" | "--head") {
+                method = Some("HEAD".to_string());
+                i += 1;
+                continue;
+            }
+
             if arg == "--url" {
                 if i + 1 >= argv.len() {
                     return Some(unknown_outcome("curl url flag missing value"));

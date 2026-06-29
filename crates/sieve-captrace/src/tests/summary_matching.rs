@@ -58,17 +58,23 @@ async fn matches_existing_command_summaries_for_all_supported_cases() {
 #[tokio::test]
 async fn preserves_existing_unknown_summary_for_unsupported_flags() {
     let generator = CapTraceGenerator::new(Arc::new(CurlNetTraceRunner), None);
-    let definition = generator
-        .generate(GenerateDefinitionRequest {
-            command: "curl".to_string(),
-            seed_shell_cases: vec!["curl -I https://example.com".to_string()],
-            include_llm_cases: false,
-            max_llm_cases: 1,
-        })
-        .await
-        .expect("definition should generate");
+    let definition =
+        generator
+            .generate(GenerateDefinitionRequest {
+                command: "curl".to_string(),
+                seed_shell_cases: vec![
+                    "curl --upload-file payload.bin https://example.com".to_string()
+                ],
+                include_llm_cases: false,
+                max_llm_cases: 1,
+            })
+            .await
+            .expect("definition should generate");
 
-    let variant = definition.variants.first().expect("curl -I variant");
+    let variant = definition
+        .variants
+        .first()
+        .expect("curl --upload-file variant");
 
     assert_eq!(variant.summary_outcome.knowledge, CommandKnowledge::Unknown);
     let summary = variant
@@ -77,7 +83,9 @@ async fn preserves_existing_unknown_summary_for_unsupported_flags() {
         .clone()
         .expect("summary should exist for unsupported flags");
     assert!(
-        summary.unsupported_flags.contains(&"-I".to_string()),
+        summary
+            .unsupported_flags
+            .contains(&"--upload-file".to_string()),
         "unsupported flags should be preserved"
     );
     assert!(

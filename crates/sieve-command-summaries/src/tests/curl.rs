@@ -497,6 +497,30 @@ fn curl_get_url_requires_net_connect_capability() {
 }
 
 #[test]
+fn curl_head_flags_require_net_connect_capability() {
+    for flag in ["-I", "--head"] {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            flag,
+            "https://api.example.com/v1/resource",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known, "flag: {flag}");
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(summary.sink_checks, Vec::<SinkCheck>::new());
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.example.com/".to_string(),
+            }],
+            "flag: {flag}"
+        );
+    }
+}
+
+#[test]
 fn curl_get_connect_scope_keeps_non_default_port() {
     let out = summarize_argv(&argv(&["curl", "https://example.com:8443/path?q=1"]));
 
