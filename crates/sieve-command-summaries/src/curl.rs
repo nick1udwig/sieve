@@ -20,7 +20,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
     let mut method: Option<String> = None;
     let mut url_raw: Option<String> = None;
     let mut payloads: Vec<SinkArg> = Vec::new();
-    let mut headers: Vec<SinkArg> = Vec::new();
+    let mut request_values: Vec<SinkArg> = Vec::new();
     let mut unsupported_flags: Vec<String> = Vec::new();
     let mut i = 1usize;
     let mut saw_end_of_flags = false;
@@ -166,7 +166,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                     return Some(unknown_outcome("curl header flag missing value"));
                 }
                 let value = argv[i + 1].clone();
-                headers.push(SinkArg {
+                request_values.push(SinkArg {
                     flag: arg.clone(),
                     value_index: i + 1,
                     value,
@@ -179,7 +179,7 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 if raw.is_empty() {
                     return Some(unknown_outcome("curl header flag missing value"));
                 }
-                headers.push(SinkArg {
+                request_values.push(SinkArg {
                     flag: "--header".to_string(),
                     value_index: i,
                     value: raw.to_string(),
@@ -189,8 +189,45 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
             }
 
             if let Some(raw) = attached_short_value(arg, "-H") {
-                headers.push(SinkArg {
+                request_values.push(SinkArg {
                     flag: "-H".to_string(),
+                    value_index: i,
+                    value: raw.to_string(),
+                });
+                i += 1;
+                continue;
+            }
+
+            if arg == "-u" || arg == "--user" {
+                if i + 1 >= argv.len() {
+                    return Some(unknown_outcome("curl user flag missing value"));
+                }
+                let value = argv[i + 1].clone();
+                request_values.push(SinkArg {
+                    flag: arg.clone(),
+                    value_index: i + 1,
+                    value,
+                });
+                i += 2;
+                continue;
+            }
+
+            if let Some(raw) = arg.strip_prefix("--user=") {
+                if raw.is_empty() {
+                    return Some(unknown_outcome("curl user flag missing value"));
+                }
+                request_values.push(SinkArg {
+                    flag: "--user".to_string(),
+                    value_index: i,
+                    value: raw.to_string(),
+                });
+                i += 1;
+                continue;
+            }
+
+            if let Some(raw) = attached_short_value(arg, "-u") {
+                request_values.push(SinkArg {
+                    flag: "-u".to_string(),
                     value_index: i,
                     value: raw.to_string(),
                 });
@@ -233,14 +270,14 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         let Some(sink) = canonicalize_url_connect_scope(&url) else {
             return Some(unknown_outcome("curl request has invalid URL sink"));
         };
-        let file_read_caps = file_read_capabilities(&headers);
-        let sink_checks = if headers.is_empty() {
+        let file_read_caps = file_read_capabilities(&request_values);
+        let sink_checks = if request_values.is_empty() {
             Vec::new()
         } else {
             let Some(header_sink) = canonicalize_url_sink(&url) else {
                 return Some(unknown_outcome("curl request has invalid URL sink"));
             };
-            sink_checks_for_args(headers, header_sink)
+            sink_checks_for_args(request_values, header_sink)
         };
         let mut required_capabilities = vec![Capability {
             resource: Resource::Net,
@@ -265,14 +302,14 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
         ));
     };
 
-    headers.extend(payloads);
+    request_values.extend(payloads);
     let mut required_capabilities = vec![Capability {
         resource: Resource::Net,
         action: Action::Write,
         scope: sink.0.clone(),
     }];
-    required_capabilities.extend(file_read_capabilities(&headers));
-    let sink_checks = sink_checks_for_args(headers, sink.clone());
+    required_capabilities.extend(file_read_capabilities(&request_values));
+    let sink_checks = sink_checks_for_args(request_values, sink.clone());
 
     Some(known_summary_outcome(required_capabilities, sink_checks))
 }
