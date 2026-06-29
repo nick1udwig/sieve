@@ -458,6 +458,52 @@ fn curl_get_with_metadata_values_extracts_sink_check() {
 }
 
 #[test]
+fn curl_get_with_bearer_token_extracts_sink_check() {
+    for (argv_raw, value_ref) in [
+        (
+            vec![
+                "curl",
+                "--oauth2-bearer",
+                "secret-token",
+                "https://api.example.com/v1/resource",
+            ],
+            "argv:2",
+        ),
+        (
+            vec![
+                "curl",
+                "--oauth2-bearer=secret-token",
+                "https://api.example.com/v1/resource",
+            ],
+            "argv:1",
+        ),
+    ] {
+        let out = summarize_argv(&argv(&argv_raw));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known, "{argv_raw:?}");
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.example.com/".to_string(),
+            }],
+            "{argv_raw:?}"
+        );
+        assert_eq!(
+            summary.sink_checks,
+            vec![SinkCheck {
+                argument_name: "--oauth2-bearer".to_string(),
+                sink: SinkKey("https://api.example.com/v1/resource".to_string()),
+                value_refs: vec![ValueRef(value_ref.to_string())],
+            }],
+            "{argv_raw:?}"
+        );
+    }
+}
+
+#[test]
 fn sudo_curl_header_sink_ref_uses_original_argv_index() {
     let out = summarize_argv(&argv(&[
         "sudo",

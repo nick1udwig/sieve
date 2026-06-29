@@ -87,6 +87,11 @@ const REQUEST_VALUE_FLAGS: &[ValueFlagSpec] = &[
         long: "--referer",
         missing_reason: "curl referer flag missing value",
     },
+    ValueFlagSpec {
+        short: None,
+        long: "--oauth2-bearer",
+        missing_reason: "curl oauth2 bearer flag missing value",
+    },
 ];
 
 const IGNORED_VALUE_FLAGS: &[ValueFlagSpec] = &[
