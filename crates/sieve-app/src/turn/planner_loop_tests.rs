@@ -1,5 +1,5 @@
 use super::*;
-use sieve_types::CodexSandboxMode;
+use sieve_types::{CodexSandboxMode, PlannerCodexSession};
 
 fn sample_session() -> PlannerCodexSession {
     PlannerCodexSession {
