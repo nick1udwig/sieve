@@ -11,8 +11,9 @@ pub(crate) fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
         if trimmed.is_empty() {
             continue;
         }
-        if seen.insert(trimmed.to_string()) {
-            out.push(trimmed.to_string());
+        let value = trimmed.to_string();
+        if seen.insert(value.clone()) {
+            out.push(value);
         }
     }
     out

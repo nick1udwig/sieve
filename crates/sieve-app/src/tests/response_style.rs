@@ -1,4 +1,21 @@
 use super::*;
+
+#[test]
+fn dedupe_preserve_order_trims_blanks_and_keeps_first_occurrence() {
+    assert_eq!(
+        dedupe_preserve_order(vec![
+            "  https://example.com/a  ".to_string(),
+            String::new(),
+            "https://example.com/a".to_string(),
+            " https://example.com/b ".to_string(),
+        ]),
+        vec![
+            "https://example.com/a".to_string(),
+            "https://example.com/b".to_string(),
+        ]
+    );
+}
+
 #[test]
 fn enforce_link_policy_appends_plain_urls_when_link_claim_has_no_url() {
     let message = "For more information, visit the provided link.".to_string();
