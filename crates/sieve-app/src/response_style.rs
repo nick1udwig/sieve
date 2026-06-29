@@ -114,27 +114,27 @@ fn contains_plain_url(message: &str) -> bool {
 fn contains_linkish_placeholder(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
     [
-        "provided link",
-        "provided links",
-        "provided url",
-        "provided urls",
-        "full results",
-        "search results",
-        "source above",
-        "source below",
-        "sources above",
-        "sources below",
-        "url above",
-        "url below",
-        "urls above",
-        "urls below",
-        "link above",
-        "link below",
-        "links above",
-        "links below",
+        &["provided", "link"][..],
+        &["provided", "links"],
+        &["provided", "url"],
+        &["provided", "urls"],
+        &["full", "results"],
+        &["search", "results"],
+        &["source", "above"],
+        &["source", "below"],
+        &["sources", "above"],
+        &["sources", "below"],
+        &["url", "above"],
+        &["url", "below"],
+        &["urls", "above"],
+        &["urls", "below"],
+        &["link", "above"],
+        &["link", "below"],
+        &["links", "above"],
+        &["links", "below"],
     ]
     .iter()
-    .any(|pattern| normalized.contains(pattern))
+    .any(|phrase| contains_phrase_words(&normalized, phrase))
 }
 
 fn split_sentences(message: &str) -> Vec<String> {

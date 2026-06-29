@@ -73,6 +73,13 @@ fn enforce_link_policy_keeps_source_origin_wording() {
 }
 
 #[test]
+fn enforce_link_policy_does_not_treat_curl_above_as_url_above() {
+    let message = "The curl above succeeded. The command returned JSON.".to_string();
+    let enforced = enforce_link_policy(message.clone(), &[], "just answer briefly");
+    assert_eq!(enforced, message);
+}
+
+#[test]
 fn filter_non_asset_urls_removes_asset_links() {
     let filtered = filter_non_asset_urls(vec![
             "https://www.accuweather.com/en/us/livermore/94550/weather-forecast/337125"
