@@ -18,13 +18,18 @@ fn strip_words_for_simple_exec<'a>(words: &[&'a str]) -> Vec<&'a str> {
         {
             start += 1;
         }
-        if shell_basename(words.get(start).copied().unwrap_or_default()) == "sudo"
-            && words
-                .get(start + 1)
-                .is_some_and(|arg| !arg.starts_with('-'))
-        {
-            start += 1;
-            continue;
+        if shell_basename(words.get(start).copied().unwrap_or_default()) == "sudo" {
+            let mut next = start + 1;
+            while words
+                .get(next)
+                .is_some_and(|arg| is_no_value_sudo_flag(arg))
+            {
+                next += 1;
+            }
+            if words.get(next).is_some_and(|arg| !arg.starts_with('-')) {
+                start = next;
+                continue;
+            }
         }
         if shell_basename(words.get(start).copied().unwrap_or_default()) == "env" {
             let mut next = start + 1;
@@ -40,6 +45,21 @@ fn strip_words_for_simple_exec<'a>(words: &[&'a str]) -> Vec<&'a str> {
             return words[start..].to_vec();
         }
     }
+}
+
+fn is_no_value_sudo_flag(token: &str) -> bool {
+    if !token.starts_with('-') || token == "-" || token == "--" {
+        return false;
+    }
+    if let Some(flag) = token.strip_prefix("--") {
+        return matches!(
+            flag,
+            "non-interactive" | "preserve-env" | "reset-timestamp" | "validate"
+        );
+    }
+    token[1..]
+        .chars()
+        .all(|flag| matches!(flag, 'n' | 'E' | 'H' | 'S' | 'v' | 'k'))
 }
 
 fn is_shell_assignment(token: &str) -> bool {
@@ -71,6 +91,13 @@ mod tests {
     #[test]
     fn command_words_for_simple_exec_skips_env_and_plain_sudo() {
         let words = command_words_for_simple_exec("A=1 sudo B=2 curl -sS https://example.com");
+
+        assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
+    }
+
+    #[test]
+    fn command_words_for_simple_exec_skips_no_value_sudo_flags() {
+        let words = command_words_for_simple_exec("sudo -n -E curl -sS https://example.com");
 
         assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
     }
