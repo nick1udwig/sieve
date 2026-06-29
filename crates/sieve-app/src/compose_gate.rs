@@ -81,12 +81,16 @@ const NEGATING_PASS_WORDS: &[&str] = &[
 ];
 
 fn pass_word_is_negated(text: &str, pass_idx: usize) -> bool {
-    text[..pass_idx]
+    let current_clause = text[..pass_idx]
+        .rsplit(['\n', '.', ';'])
+        .next()
+        .unwrap_or_default();
+    current_clause
         .split(|ch: char| !is_word_char(ch) && ch != '\'')
         .rev()
-        .find(|word| !word.is_empty())
-        .map(|word| NEGATING_PASS_WORDS.contains(&word))
-        .unwrap_or(false)
+        .filter(|word| !word.is_empty())
+        .take(4)
+        .any(|word| NEGATING_PASS_WORDS.contains(&word))
 }
 
 fn revise_word_is_negated(text: &str, revise_idx: usize) -> bool {

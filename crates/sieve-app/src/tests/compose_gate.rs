@@ -24,6 +24,15 @@ fn gate_requires_retry_does_not_treat_negated_pass_text_as_pass() {
 }
 
 #[test]
+fn gate_requires_retry_does_not_treat_not_a_pass_as_pass() {
+    let gate = Some("Gate verdict: not a pass; the answer lacks evidence.");
+    assert!(gate_requires_retry(gate).is_some());
+
+    let parsed = parse_compose_gate_output(gate).expect("negated pass verdict should parse");
+    assert_eq!(parsed.verdict, "REVISE");
+}
+
+#[test]
 fn gate_requires_retry_does_not_treat_negated_revise_text_as_retry() {
     let gate = Some("No need to revise; verdict: PASS.");
     assert!(gate_requires_retry(gate).is_none());
