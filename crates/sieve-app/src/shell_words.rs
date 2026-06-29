@@ -19,24 +19,13 @@ fn strip_words_for_simple_exec<'a>(words: &[&'a str]) -> Vec<&'a str> {
             start += 1;
         }
         if shell_basename(words.get(start).copied().unwrap_or_default()) == "sudo" {
-            let mut next = start + 1;
-            while words
-                .get(next)
-                .is_some_and(|arg| is_no_value_sudo_flag(arg))
-            {
-                next += 1;
-            }
-            if words.get(next).is_some_and(|arg| !arg.starts_with('-')) {
+            if let Some(next) = command_after_sudo_wrapper(words, start) {
                 start = next;
                 continue;
             }
         }
         if shell_basename(words.get(start).copied().unwrap_or_default()) == "env" {
-            let mut next = start + 1;
-            while words.get(next).is_some_and(|arg| is_env_assignment(arg)) {
-                next += 1;
-            }
-            if next > start + 1 && next < words.len() {
+            if let Some(next) = command_after_env_wrapper(words, start) {
                 start = next;
                 continue;
             }
@@ -47,19 +36,109 @@ fn strip_words_for_simple_exec<'a>(words: &[&'a str]) -> Vec<&'a str> {
     }
 }
 
-fn is_no_value_sudo_flag(token: &str) -> bool {
-    if !token.starts_with('-') || token == "-" || token == "--" {
-        return false;
+fn command_after_sudo_wrapper(words: &[&str], start: usize) -> Option<usize> {
+    command_after_wrapper_options(words, start, false, sudo_flag_value_words)
+}
+
+fn command_after_env_wrapper(words: &[&str], start: usize) -> Option<usize> {
+    command_after_wrapper_options(words, start, true, env_flag_value_words)
+}
+
+fn command_after_wrapper_options(
+    words: &[&str],
+    start: usize,
+    skip_assignments: bool,
+    flag_value_words: fn(&str) -> Option<usize>,
+) -> Option<usize> {
+    let mut next = start + 1;
+    while let Some(arg) = words.get(next) {
+        if skip_assignments && is_env_assignment(arg) {
+            next += 1;
+            continue;
+        }
+        let Some(value_words) = flag_value_words(arg) else {
+            break;
+        };
+        if next + value_words >= words.len() {
+            return None;
+        }
+        next += 1 + value_words;
     }
+    words
+        .get(next)
+        .is_some_and(|arg| !arg.starts_with('-'))
+        .then_some(next)
+}
+
+fn sudo_flag_value_words(token: &str) -> Option<usize> {
+    const NO_VALUE_LONG: &[&str] = &[
+        "askpass",
+        "background",
+        "non-interactive",
+        "preserve-env",
+        "reset-timestamp",
+        "set-home",
+        "stdin",
+        "validate",
+    ];
+    const VALUE_LONG: &[&str] = &[
+        "chdir",
+        "close-from",
+        "command-timeout",
+        "group",
+        "host",
+        "login-class",
+        "prompt",
+        "role",
+        "type",
+        "user",
+    ];
     if let Some(flag) = token.strip_prefix("--") {
-        return matches!(
-            flag,
-            "non-interactive" | "preserve-env" | "reset-timestamp" | "validate"
-        );
+        return long_flag_value_words(flag, NO_VALUE_LONG, VALUE_LONG);
     }
-    token[1..]
-        .chars()
-        .all(|flag| matches!(flag, 'n' | 'E' | 'H' | 'S' | 'v' | 'k'))
+    short_flag_value_words(token, "AbEHknSv", "CDghprtTu")
+}
+
+fn env_flag_value_words(token: &str) -> Option<usize> {
+    const NO_VALUE_LONG: &[&str] = &["debug", "ignore-environment", "null"];
+    const VALUE_LONG: &[&str] = &["argv0", "chdir", "split-string", "unset"];
+    if let Some(flag) = token.strip_prefix("--") {
+        return long_flag_value_words(flag, NO_VALUE_LONG, VALUE_LONG);
+    }
+    short_flag_value_words(token, "0iv", "aCSu")
+}
+
+fn long_flag_value_words(flag: &str, no_value: &[&str], value: &[&str]) -> Option<usize> {
+    if flag.is_empty() {
+        return Some(0);
+    }
+    let name = flag.split_once('=').map_or(flag, |(name, _)| name);
+    if no_value.contains(&name) {
+        return Some(0);
+    }
+    value
+        .contains(&name)
+        .then_some(usize::from(!flag.contains('=')))
+}
+
+fn short_flag_value_words(token: &str, no_value: &str, value: &str) -> Option<usize> {
+    if token == "--" {
+        return Some(0);
+    }
+    if !token.starts_with('-') || token == "-" {
+        return None;
+    }
+    let mut chars = token[1..].chars().peekable();
+    while let Some(flag) = chars.next() {
+        if no_value.contains(flag) {
+            continue;
+        }
+        if value.contains(flag) {
+            return Some(usize::from(chars.peek().is_none()));
+        }
+        return None;
+    }
+    Some(0)
 }
 
 fn is_shell_assignment(token: &str) -> bool {
@@ -98,6 +177,32 @@ mod tests {
     #[test]
     fn command_words_for_simple_exec_skips_no_value_sudo_flags() {
         let words = command_words_for_simple_exec("sudo -n -E curl -sS https://example.com");
+
+        assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
+    }
+
+    #[test]
+    fn command_words_for_simple_exec_skips_sudo_flags_with_values() {
+        let words = command_words_for_simple_exec(
+            "sudo -u root --preserve-env=PATH curl -sS https://example.com",
+        );
+
+        assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
+    }
+
+    #[test]
+    fn command_words_for_simple_exec_skips_env_flags() {
+        let words =
+            command_words_for_simple_exec("env -i -u TOKEN A=1 curl -sS https://example.com");
+
+        assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
+    }
+
+    #[test]
+    fn command_words_for_simple_exec_skips_option_separators() {
+        let words = command_words_for_simple_exec(
+            "sudo -- env --ignore-environment A=1 curl -sS https://example.com",
+        );
 
         assert_eq!(words, vec!["curl", "-sS", "https://example.com"]);
     }
