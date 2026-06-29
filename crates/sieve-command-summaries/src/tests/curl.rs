@@ -95,6 +95,40 @@ fn curl_explicit_get_with_payload_extracts_sink_check() {
 }
 
 #[test]
+fn curl_get_flags_with_payload_extract_sink_check() {
+    for flag in ["-G", "--get"] {
+        let out = summarize_argv(&argv(&[
+            "curl",
+            flag,
+            "-d",
+            "token=secret",
+            "https://api.example.com/v1/query",
+        ]));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known, "flag: {flag}");
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Write,
+                scope: "https://api.example.com/v1/query".to_string(),
+            }],
+            "flag: {flag}"
+        );
+        assert_eq!(
+            summary.sink_checks,
+            vec![SinkCheck {
+                argument_name: "-d".to_string(),
+                sink: SinkKey("https://api.example.com/v1/query".to_string()),
+                value_refs: vec![ValueRef("argv:3".to_string())],
+            }],
+            "flag: {flag}"
+        );
+    }
+}
+
+#[test]
 fn curl_payload_without_explicit_method_defaults_to_post() {
     let out = summarize_argv(&argv(&[
         "curl",
