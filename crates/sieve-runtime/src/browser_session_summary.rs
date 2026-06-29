@@ -8,6 +8,8 @@ mod parse;
 
 pub(crate) use parse::{parse_agent_browser, ParsedAgentBrowser};
 
+const SNAPSHOT_VALUE_FLAGS: &[&str] = &["--depth", "--selector"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionTransition {
     None,
@@ -124,6 +126,13 @@ fn parse_snapshot(parsed: &ParsedAgentBrowser, connect_cap: Capability) -> Summa
     let mut i = 1usize;
     while i < parsed.remaining.len() {
         let arg = parsed.remaining[i].value.as_str();
+        if let Some((_, value)) = split_supported_value_flag(arg, SNAPSHOT_VALUE_FLAGS) {
+            if value.is_empty() {
+                return unknown(&format!("agent-browser snapshot flag missing value: {arg}"));
+            }
+            i += 1;
+            continue;
+        }
         match arg {
             "-i" | "-C" | "-c" | "--interactive" | "--cursor" | "--compact" => i += 1,
             "-d" | "--depth" | "-s" | "--selector" => {
@@ -136,6 +145,11 @@ fn parse_snapshot(parsed: &ParsedAgentBrowser, connect_cap: Capability) -> Summa
         }
     }
     known(vec![connect_cap], Vec::new())
+}
+
+fn split_supported_value_flag<'a>(arg: &'a str, flags: &[&str]) -> Option<(&'a str, &'a str)> {
+    let (flag, value) = arg.split_once('=')?;
+    flags.contains(&flag).then_some((flag, value))
 }
 
 fn parse_get(parsed: &ParsedAgentBrowser, connect_cap: Capability) -> SummaryOutcome {

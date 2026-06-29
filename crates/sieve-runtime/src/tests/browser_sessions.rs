@@ -89,6 +89,52 @@ require_trusted_control_for_mutating = false
 }
 
 #[tokio::test]
+async fn contextual_agent_browser_snapshot_accepts_attached_value_flags() {
+    let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
+        r#"
+[[allow_capabilities]]
+resource = "net"
+action = "connect"
+scope = "https://example.com/"
+
+[options]
+violation_mode = "deny"
+trusted_control = true
+require_trusted_control_for_mutating = false
+"#,
+    );
+
+    let first = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-ab-snapshot-attached-1".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "agent-browser --session demo open https://example.com".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("first run");
+    assert!(matches!(first, RuntimeDisposition::ExecuteMainline(_)));
+
+    let second = runtime
+        .orchestrate_shell(ShellRunRequest {
+            run_id: RunId("run-ab-snapshot-attached-2".to_string()),
+            cwd: "/tmp/workspace".to_string(),
+            script: "agent-browser --session demo snapshot --selector=main --depth=2".to_string(),
+            control_value_refs: BTreeSet::new(),
+            control_endorsed_by: None,
+            unknown_mode: UnknownMode::Deny,
+            uncertain_mode: UncertainMode::Deny,
+        })
+        .await
+        .expect("second run");
+
+    assert!(matches!(second, RuntimeDisposition::ExecuteMainline(_)));
+}
+
+#[tokio::test]
 async fn contextual_agent_browser_preserves_global_profile_capabilities() {
     let (runtime, _approval_bus, _event_log) = mk_runtime_with_real_summary_and_policy(
         r#"
