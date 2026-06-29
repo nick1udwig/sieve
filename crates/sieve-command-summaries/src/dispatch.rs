@@ -3,7 +3,7 @@ use codex_shell_command::command_safety::is_safe_command::is_known_safe_command;
 
 use crate::{
     agent_browser, brave_search, builtin, curl, gws, known_empty_outcome, rebase_argv_value_refs,
-    st, strip_env_assignments_with_offset, strip_sudo_with_offset, unknown_outcome, SummaryOutcome,
+    st, strip_env_wrapper_with_offset, strip_sudo_with_offset, unknown_outcome, SummaryOutcome,
 };
 
 pub(crate) fn summarize_argv(argv: &[String]) -> SummaryOutcome {
@@ -16,7 +16,7 @@ pub(crate) fn summarize_argv(argv: &[String]) -> SummaryOutcome {
         return rebase_argv_value_refs(summarize_argv(sudo_stripped.argv), sudo_stripped.offset);
     }
 
-    let env_stripped = strip_env_assignments_with_offset(argv);
+    let env_stripped = strip_env_wrapper_with_offset(argv);
     if env_stripped.offset > 0 {
         return rebase_argv_value_refs(summarize_argv(env_stripped.argv), env_stripped.offset);
     }

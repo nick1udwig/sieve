@@ -66,6 +66,35 @@ fn sudo_agent_browser_header_sink_ref_uses_original_argv_index() {
 }
 
 #[test]
+fn optioned_wrappers_agent_browser_header_sink_ref_uses_original_argv_index() {
+    let out = summarize_argv(&argv(&[
+        "sudo",
+        "-n",
+        "-u",
+        "root",
+        "env",
+        "-i",
+        "TOKEN=secret",
+        "agent-browser",
+        "open",
+        "https://api.example.com/v1",
+        "--headers",
+        "{\"Authorization\":\"Bearer secret\"}",
+    ]));
+
+    assert_eq!(out.knowledge, CommandKnowledge::Known);
+    let summary = out.summary.expect("expected summary");
+    assert_eq!(
+        summary.sink_checks,
+        vec![SinkCheck {
+            argument_name: "--headers".to_string(),
+            sink: SinkKey("https://api.example.com/".to_string()),
+            value_refs: vec![ValueRef("argv:11".to_string())],
+        }]
+    );
+}
+
+#[test]
 fn agent_browser_open_profile_and_state_add_fs_caps() {
     let out = summarize_argv(&argv(&[
         "agent-browser",

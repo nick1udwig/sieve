@@ -122,35 +122,123 @@ pub(crate) fn is_curl_command(argv: &[String]) -> bool {
 }
 
 pub(crate) fn strip_sudo_with_offset(argv: &[String]) -> ArgvView<'_> {
-    if basename(argv.first()).is_some_and(|cmd| cmd == "sudo")
-        && argv.get(1).is_some_and(|arg| !arg.starts_with('-'))
-    {
-        ArgvView {
-            argv: &argv[1..],
-            offset: 1,
-        }
-    } else {
-        ArgvView { argv, offset: 0 }
-    }
-}
-
-pub(crate) fn strip_env_assignments_with_offset(argv: &[String]) -> ArgvView<'_> {
-    if basename(argv.first()).is_some_and(|cmd| cmd == "env") {
-        let mut i = 1usize;
-        while argv
-            .get(i)
-            .is_some_and(|arg| is_env_assignment(arg.as_str()))
-        {
-            i += 1;
-        }
-        if i > 1 && i < argv.len() {
+    if basename(argv.first()).is_some_and(|cmd| cmd == "sudo") {
+        if let Some(next) = command_after_wrapper_options(argv, 0, true, sudo_flag_value_words) {
             return ArgvView {
-                argv: &argv[i..],
-                offset: i,
+                argv: &argv[next..],
+                offset: next,
             };
         }
     }
     ArgvView { argv, offset: 0 }
+}
+
+pub(crate) fn strip_env_wrapper_with_offset(argv: &[String]) -> ArgvView<'_> {
+    if basename(argv.first()).is_some_and(|cmd| cmd == "env") {
+        if let Some(next) = command_after_wrapper_options(argv, 0, true, env_flag_value_words) {
+            return ArgvView {
+                argv: &argv[next..],
+                offset: next,
+            };
+        }
+    }
+    ArgvView { argv, offset: 0 }
+}
+
+fn command_after_wrapper_options(
+    argv: &[String],
+    start: usize,
+    skip_assignments: bool,
+    flag_value_words: fn(&str) -> Option<usize>,
+) -> Option<usize> {
+    let mut next = start + 1;
+    while let Some(arg) = argv.get(next).map(String::as_str) {
+        if skip_assignments && is_env_assignment(arg) {
+            next += 1;
+            continue;
+        }
+        let Some(value_words) = flag_value_words(arg) else {
+            break;
+        };
+        if next + value_words >= argv.len() {
+            return None;
+        }
+        next += 1 + value_words;
+    }
+    argv.get(next)
+        .is_some_and(|arg| !arg.starts_with('-'))
+        .then_some(next)
+}
+
+fn sudo_flag_value_words(token: &str) -> Option<usize> {
+    const NO_VALUE_LONG: &[&str] = &[
+        "askpass",
+        "background",
+        "non-interactive",
+        "preserve-env",
+        "reset-timestamp",
+        "set-home",
+        "stdin",
+        "validate",
+    ];
+    const VALUE_LONG: &[&str] = &[
+        "chdir",
+        "close-from",
+        "command-timeout",
+        "group",
+        "host",
+        "login-class",
+        "prompt",
+        "role",
+        "type",
+        "user",
+    ];
+    if let Some(flag) = token.strip_prefix("--") {
+        return long_flag_value_words(flag, NO_VALUE_LONG, VALUE_LONG);
+    }
+    short_flag_value_words(token, "AbEHknSv", "CDghprtTu")
+}
+
+fn env_flag_value_words(token: &str) -> Option<usize> {
+    const NO_VALUE_LONG: &[&str] = &["debug", "ignore-environment", "null"];
+    const VALUE_LONG: &[&str] = &["argv0", "chdir", "split-string", "unset"];
+    if let Some(flag) = token.strip_prefix("--") {
+        return long_flag_value_words(flag, NO_VALUE_LONG, VALUE_LONG);
+    }
+    short_flag_value_words(token, "0iv", "aCSu")
+}
+
+fn long_flag_value_words(flag: &str, no_value: &[&str], value: &[&str]) -> Option<usize> {
+    if flag.is_empty() {
+        return Some(0);
+    }
+    let name = flag.split_once('=').map_or(flag, |(name, _)| name);
+    if no_value.contains(&name) {
+        return Some(0);
+    }
+    value
+        .contains(&name)
+        .then_some(usize::from(!flag.contains('=')))
+}
+
+fn short_flag_value_words(token: &str, no_value: &str, value: &str) -> Option<usize> {
+    if token == "--" {
+        return Some(0);
+    }
+    if !token.starts_with('-') || token == "-" {
+        return None;
+    }
+    let mut chars = token[1..].chars().peekable();
+    while let Some(flag) = chars.next() {
+        if no_value.contains(flag) {
+            continue;
+        }
+        if value.contains(flag) {
+            return Some(usize::from(chars.peek().is_none()));
+        }
+        return None;
+    }
+    Some(0)
 }
 
 fn is_env_assignment(arg: &str) -> bool {
