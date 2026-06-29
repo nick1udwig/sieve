@@ -1,19 +1,11 @@
-use super::response_refs::{
-    build_response_evidence_records, build_response_turn_input, non_empty_output_ref_ids,
-    requires_output_visibility, response_evidence_fingerprint,
-    response_has_visible_selected_output,
-};
-use crate::automation::{parse_heartbeat_planner_action, HeartbeatPlannerAction};
+use super::response_refs::response_evidence_fingerprint;
 use crate::compose::{
     compose_assistant_message, ComposeAssistantOutcome, ComposePlannerDecision, ComposeRequest,
 };
 use crate::config::persist_runtime_approval_allowances;
 use crate::ingress::TurnKind;
 use crate::json_util::to_json_value;
-use crate::logging::{
-    append_turn_controller_event, now_ms, ConversationLogRecord, ConversationRole,
-    FanoutRuntimeEventLog,
-};
+use crate::logging::{append_turn_controller_event, now_ms};
 use crate::planner_conversation::history_entries_to_planner_messages;
 use crate::planner_conversation::{build_planner_conversation, planner_step_trace_messages};
 use crate::planner_feedback::{planner_memory_feedback, planner_policy_feedback};
@@ -22,150 +14,33 @@ use crate::planner_progress::{
     build_guidance_prompt, guidance_continue_decision, has_repeated_bash_outcome,
     progress_contract_override_signal,
 };
-use crate::render_refs::render_assistant_message;
-use crate::response_style::strip_unexpanded_render_tokens;
-use crate::turn::TurnDeps;
 use chrono::{SecondsFormat, TimeZone, Utc};
-use serde::Serialize;
-use sieve_runtime::{EventLogError, PlannerRunRequest, PlannerRunResult, RuntimeEventLog};
+use sieve_runtime::{PlannerRunRequest, PlannerRunResult};
 use sieve_types::{
-    AssistantMessageEvent, InteractionModality, PlannerConversationMessage, PlannerGuidanceFrame,
-    PlannerGuidanceInput, PlannerGuidanceSignal, RunId, RuntimeEvent,
+    PlannerConversationMessage, PlannerGuidanceFrame, PlannerGuidanceInput, PlannerGuidanceSignal,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 mod codex_status;
+mod compose_continue;
+mod errors;
+mod heartbeat;
+mod payloads;
+mod response_draft;
+mod types;
 
 use codex_status::{
     find_referenced_codex_session, format_codex_session_status_reply,
     looks_like_codex_status_query, reply_to_codex_session_id,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum GeneratedAssistantMessage {
-    Deliver {
-        message: String,
-        reply_to_session_id: Option<String>,
-    },
-    SuppressHeartbeat,
-}
-
-pub(super) struct GenerateAssistantRequest<'a> {
-    pub(super) deps: &'a TurnDeps,
-    pub(super) run_id: &'a RunId,
-    pub(super) session_key: &'a str,
-    pub(super) trusted_user_message: &'a str,
-    pub(super) response_modality: InteractionModality,
-    pub(super) turn_kind: &'a TurnKind,
-}
-
-#[derive(Serialize)]
-struct PlannerRepeatGuardPayload {
-    step_number: usize,
-    planner_steps_taken: usize,
-    reason: &'static str,
-    #[serde(rename = "continue")]
-    should_continue: bool,
-    next_signal_code: u16,
-}
-
-#[derive(Serialize)]
-struct StepCounterPayload {
-    step_number: usize,
-    planner_steps_taken: usize,
-}
-
-#[derive(Serialize)]
-struct PlannerGuidancePayload {
-    step_number: usize,
-    signal_code: u16,
-    effective_signal_code: u16,
-    override_reason: Option<String>,
-    #[serde(rename = "continue")]
-    should_continue: bool,
-    step_tool_count: usize,
-    planner_steps_taken: usize,
-    planner_step_limit: usize,
-    planner_step_hard_limit: usize,
-    auto_extended_limit: bool,
-    consecutive_empty_steps: usize,
-}
-
-#[derive(Serialize)]
-struct HeartbeatFinalizePayload {
-    planner_steps_taken: usize,
-    planner_step_limit: usize,
-    planner_step_hard_limit: usize,
-    compose_followup_cycles: usize,
-    delivered: bool,
-}
-
-#[derive(Serialize)]
-struct TurnFinalizePayload {
-    planner_steps_taken: usize,
-    planner_step_limit: usize,
-    planner_step_hard_limit: usize,
-    compose_followup_cycles: usize,
-    quality_gate_len: usize,
-    summary_calls_used: usize,
-    summary_call_budget: usize,
-}
-
-#[derive(Serialize)]
-struct ComposeDecisionPayload {
-    planner_decision_code: u16,
-    quality_gate_len: usize,
-    planner_steps_taken: usize,
-    planner_step_limit: usize,
-    planner_step_hard_limit: usize,
-    compose_followup_cycles: usize,
-    #[serde(rename = "continue")]
-    should_continue: bool,
-    continue_block_reason: Option<&'static str>,
-    summary_calls_used: usize,
-    summary_call_budget: usize,
-}
-
-fn finalize_heartbeat_message(thoughts: Option<&str>) -> GeneratedAssistantMessage {
-    match parse_heartbeat_planner_action(thoughts.unwrap_or_default()) {
-        Some(HeartbeatPlannerAction::Noop) | None => GeneratedAssistantMessage::SuppressHeartbeat,
-        Some(HeartbeatPlannerAction::Deliver { message }) => {
-            let trimmed = message.trim();
-            if trimmed.is_empty() {
-                GeneratedAssistantMessage::SuppressHeartbeat
-            } else {
-                GeneratedAssistantMessage::Deliver {
-                    message: trimmed.to_string(),
-                    reply_to_session_id: None,
-                }
-            }
-        }
-    }
-}
-
-pub(super) async fn emit_assistant_error_message(
-    event_log: &FanoutRuntimeEventLog,
-    run_id: &RunId,
-    error_message: String,
-) -> Result<(), EventLogError> {
-    event_log
-        .append(RuntimeEvent::AssistantMessage(AssistantMessageEvent {
-            schema_version: 1,
-            run_id: run_id.clone(),
-            message: error_message.clone(),
-            reply_to_session_id: None,
-            created_at_ms: now_ms(),
-        }))
-        .await?;
-    event_log
-        .append_conversation(ConversationLogRecord::new(
-            run_id.clone(),
-            ConversationRole::Assistant,
-            error_message,
-            now_ms(),
-        ))
-        .await
-}
+use compose_continue::{continue_guidance_frame, handle_compose_continue, ComposeContinueRequest};
+pub(super) use errors::emit_assistant_error_message;
+use heartbeat::{finalize_heartbeat_turn, HeartbeatFinalizeRequest};
+use payloads::{
+    PlannerGuidancePayload, PlannerRepeatGuardPayload, StepCounterPayload, TurnFinalizePayload,
+};
+use response_draft::{write_response_draft, WriteResponseDraftRequest};
+pub(super) use types::{GenerateAssistantRequest, GeneratedAssistantMessage};
 
 pub(super) async fn generate_assistant_message(
     request: GenerateAssistantRequest<'_>,
@@ -465,52 +340,31 @@ pub(super) async fn generate_assistant_message(
         }
 
         if matches!(turn_kind, TurnKind::Heartbeat { .. }) {
-            let heartbeat_message =
-                finalize_heartbeat_message(aggregated_result.thoughts.as_deref());
-            append_turn_controller_event(
+            return Ok(finalize_heartbeat_turn(HeartbeatFinalizeRequest {
                 event_log,
                 run_id,
-                "heartbeat_finalize",
-                to_json_value(
-                    HeartbeatFinalizePayload {
-                        planner_steps_taken,
-                        planner_step_limit,
-                        planner_step_hard_limit,
-                        compose_followup_cycles,
-                        delivered: matches!(
-                            heartbeat_message,
-                            GeneratedAssistantMessage::Deliver { .. }
-                        ),
-                    },
-                    "heartbeat finalize payload",
-                ),
-            )
-            .await;
-            return Ok(heartbeat_message);
+                thoughts: aggregated_result.thoughts.as_deref(),
+                planner_steps_taken,
+                planner_step_limit,
+                planner_step_hard_limit,
+                compose_followup_cycles,
+            })
+            .await);
         }
 
-        let (response_input, render_refs) = build_response_turn_input(
+        let response_draft = match write_response_draft(WriteResponseDraftRequest {
+            response_model,
+            summary_model: summary_model.as_ref(),
             run_id,
             trusted_user_message,
             response_modality,
-            &aggregated_result,
-        );
-        let mut response_input = response_input;
-        response_input.extracted_evidence = build_response_evidence_records(
-            summary_model.as_ref(),
-            run_id,
-            trusted_user_message,
-            &response_input,
-            &render_refs,
-            &mut summary_calls_used,
-            cfg.max_summary_calls_per_turn,
-        )
-        .await;
-        let mut response_output = match response_model
-            .write_turn_response(response_input.clone())
-            .await
+            aggregated_result: &aggregated_result,
+            summary_calls_used: &mut summary_calls_used,
+            summary_call_budget: cfg.max_summary_calls_per_turn,
+        })
+        .await
         {
-            Ok(response) => response,
+            Ok(response_draft) => response_draft,
             Err(err) => {
                 if let Err(log_err) =
                     emit_assistant_error_message(event_log, run_id, format!("error: {err}")).await
@@ -520,82 +374,10 @@ pub(super) async fn generate_assistant_message(
                 return Err(err.into());
             }
         };
-
-        if requires_output_visibility(&response_input)
-            && !response_has_visible_selected_output(&response_input, &response_output)
-        {
-            let diagnostics = "Non-empty output refs exist (stdout/stderr). Include at least one output token directly in `message` using [[ref:<id>]] or [[summary:<id>]], and list the same id in referenced_ref_ids or summarized_ref_ids.";
-            response_input.planner_thoughts = Some(match response_input.planner_thoughts.take() {
-                Some(existing) if !existing.trim().is_empty() => {
-                    format!("{existing}\n{diagnostics}")
-                }
-                _ => diagnostics.to_string(),
-            });
-
-            response_output = match response_model
-                .write_turn_response(response_input.clone())
-                .await
-            {
-                Ok(response) => response,
-                Err(err) => {
-                    if let Err(log_err) =
-                        emit_assistant_error_message(event_log, run_id, format!("error: {err}"))
-                            .await
-                    {
-                        eprintln!("failed to append assistant error conversation log: {log_err}");
-                    }
-                    return Err(err.into());
-                }
-            };
-
-            if !response_has_visible_selected_output(&response_input, &response_output) {
-                if let Some(fallback_ref_id) =
-                    non_empty_output_ref_ids(&response_input).into_iter().next()
-                {
-                    response_output
-                        .summarized_ref_ids
-                        .insert(fallback_ref_id.clone());
-                    let token = format!("[[summary:{fallback_ref_id}]]");
-                    if !response_output.message.contains(&token) {
-                        let base = response_output.message.trim();
-                        response_output.message = if base.is_empty() {
-                            token
-                        } else {
-                            format!("{base}\n{token}")
-                        };
-                    }
-                }
-            }
-        }
-
-        let output_visibility_required = requires_output_visibility(&response_input);
+        let response_input = response_draft.response_input;
+        let render_refs = response_draft.render_refs;
+        let draft_message = response_draft.draft_message;
         let evidence_fingerprint = response_evidence_fingerprint(&response_input);
-        let draft_message = if output_visibility_required {
-            render_assistant_message(
-                &response_output.message,
-                &response_output.referenced_ref_ids,
-                &response_output.summarized_ref_ids,
-                &render_refs,
-                summary_model.as_ref(),
-                run_id,
-            )
-            .await
-        } else {
-            let stripped = strip_unexpanded_render_tokens(&response_output.message);
-            if stripped.trim().is_empty() {
-                render_assistant_message(
-                    &response_output.message,
-                    &response_output.referenced_ref_ids,
-                    &response_output.summarized_ref_ids,
-                    &render_refs,
-                    summary_model.as_ref(),
-                    run_id,
-                )
-                .await
-            } else {
-                stripped
-            }
-        };
         let zero_tool_no_action_needed = aggregated_result.tool_results.is_empty()
             && matches!(
                 planner_guidance
@@ -659,53 +441,24 @@ pub(super) async fn generate_assistant_message(
         summary_calls_used = summary_calls_used.saturating_add(composed.summary_calls);
 
         if let ComposePlannerDecision::Continue(signal) = composed.planner_decision {
-            let mut can_continue = planner_steps_taken < planner_step_hard_limit
-                && compose_followup_cycles < max_compose_followup_cycles;
-            let mut continue_block_reason: Option<&str> = None;
-            if can_continue && summary_calls_used >= cfg.max_summary_calls_per_turn {
-                can_continue = false;
-                continue_block_reason = Some("summary_budget_exhausted");
-            }
-            if can_continue && !compose_continue_fingerprints.insert(evidence_fingerprint.clone()) {
-                can_continue = false;
-                continue_block_reason = Some("no_new_evidence");
-            }
-            append_turn_controller_event(
+            let can_continue = handle_compose_continue(ComposeContinueRequest {
                 event_log,
                 run_id,
-                "compose_decision",
-                to_json_value(
-                    ComposeDecisionPayload {
-                        planner_decision_code: signal.code(),
-                        quality_gate_len: composed
-                            .quality_gate
-                            .as_deref()
-                            .map(str::len)
-                            .unwrap_or(0),
-                        planner_steps_taken,
-                        planner_step_limit,
-                        planner_step_hard_limit,
-                        compose_followup_cycles,
-                        should_continue: can_continue,
-                        continue_block_reason,
-                        summary_calls_used,
-                        summary_call_budget: cfg.max_summary_calls_per_turn,
-                    },
-                    "compose decision payload",
-                ),
-            )
+                composed: &composed,
+                signal,
+                evidence_fingerprint: &evidence_fingerprint,
+                compose_continue_fingerprints: &mut compose_continue_fingerprints,
+                planner_steps_taken,
+                planner_step_limit: &mut planner_step_limit,
+                planner_step_hard_limit,
+                compose_followup_cycles: &mut compose_followup_cycles,
+                max_compose_followup_cycles,
+                summary_calls_used,
+                summary_call_budget: cfg.max_summary_calls_per_turn,
+            })
             .await;
             if can_continue {
-                compose_followup_cycles = compose_followup_cycles.saturating_add(1);
-                planner_step_limit = planner_step_limit
-                    .saturating_add(1)
-                    .min(planner_step_hard_limit.max(1));
-                planner_guidance = Some(PlannerGuidanceFrame {
-                    code: signal.code(),
-                    confidence_bps: 9_000,
-                    source_hit_index: None,
-                    evidence_ref_index: None,
-                });
+                planner_guidance = Some(continue_guidance_frame(signal));
                 continue;
             }
         }
