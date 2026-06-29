@@ -2,6 +2,37 @@ use crate::{BasicShellAnalyzer, ShellAnalysisError, ShellAnalyzer};
 use sieve_types::{CommandKnowledge, CompositionOperator};
 
 #[test]
+fn command_wrappers_strip_nested_optioned_sudo_env() {
+    let argv = [
+        "sudo",
+        "-n",
+        "-u",
+        "root",
+        "env",
+        "-i",
+        "TOKEN=secret",
+        "curl",
+        "-sS",
+        "https://example.com",
+    ];
+
+    let view = crate::strip_command_wrappers(&argv);
+
+    assert_eq!(view.offset, 7);
+    assert_eq!(view.argv, &argv[7..]);
+}
+
+#[test]
+fn command_wrappers_leave_incomplete_value_flag_unchanged() {
+    let argv = ["sudo", "-u"];
+
+    let view = crate::strip_command_wrappers(&argv);
+
+    assert_eq!(view.offset, 0);
+    assert_eq!(view.argv, &argv[..]);
+}
+
+#[test]
 fn known_for_supported_composed_commands() {
     let analyzer = BasicShellAnalyzer;
     let analysis = analyzer

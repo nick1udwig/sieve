@@ -1,3 +1,5 @@
+use sieve_shell::strip_command_wrappers;
+
 pub(crate) fn command_words_for_simple_exec(command: &str) -> Vec<&str> {
     let words = command.split_whitespace().collect::<Vec<_>>();
     strip_words_for_simple_exec(&words)
@@ -18,127 +20,15 @@ fn strip_words_for_simple_exec<'a>(words: &[&'a str]) -> Vec<&'a str> {
         {
             start += 1;
         }
-        if shell_basename(words.get(start).copied().unwrap_or_default()) == "sudo" {
-            if let Some(next) = command_after_sudo_wrapper(words, start) {
-                start = next;
-                continue;
-            }
-        }
-        if shell_basename(words.get(start).copied().unwrap_or_default()) == "env" {
-            if let Some(next) = command_after_env_wrapper(words, start) {
-                start = next;
-                continue;
-            }
+        let inner = strip_command_wrappers(&words[start..]);
+        if inner.offset > 0 {
+            start += inner.offset;
+            continue;
         }
         if start == before {
             return words[start..].to_vec();
         }
     }
-}
-
-fn command_after_sudo_wrapper(words: &[&str], start: usize) -> Option<usize> {
-    command_after_wrapper_options(words, start, false, sudo_flag_value_words)
-}
-
-fn command_after_env_wrapper(words: &[&str], start: usize) -> Option<usize> {
-    command_after_wrapper_options(words, start, true, env_flag_value_words)
-}
-
-fn command_after_wrapper_options(
-    words: &[&str],
-    start: usize,
-    skip_assignments: bool,
-    flag_value_words: fn(&str) -> Option<usize>,
-) -> Option<usize> {
-    let mut next = start + 1;
-    while let Some(arg) = words.get(next) {
-        if skip_assignments && is_env_assignment(arg) {
-            next += 1;
-            continue;
-        }
-        let Some(value_words) = flag_value_words(arg) else {
-            break;
-        };
-        if next + value_words >= words.len() {
-            return None;
-        }
-        next += 1 + value_words;
-    }
-    words
-        .get(next)
-        .is_some_and(|arg| !arg.starts_with('-'))
-        .then_some(next)
-}
-
-fn sudo_flag_value_words(token: &str) -> Option<usize> {
-    const NO_VALUE_LONG: &[&str] = &[
-        "askpass",
-        "background",
-        "non-interactive",
-        "preserve-env",
-        "reset-timestamp",
-        "set-home",
-        "stdin",
-        "validate",
-    ];
-    const VALUE_LONG: &[&str] = &[
-        "chdir",
-        "close-from",
-        "command-timeout",
-        "group",
-        "host",
-        "login-class",
-        "prompt",
-        "role",
-        "type",
-        "user",
-    ];
-    if let Some(flag) = token.strip_prefix("--") {
-        return long_flag_value_words(flag, NO_VALUE_LONG, VALUE_LONG);
-    }
-    short_flag_value_words(token, "AbEHknSv", "CDghprtTu")
-}
-
-fn env_flag_value_words(token: &str) -> Option<usize> {
-    const NO_VALUE_LONG: &[&str] = &["debug", "ignore-environment", "null"];
-    const VALUE_LONG: &[&str] = &["argv0", "chdir", "split-string", "unset"];
-    if let Some(flag) = token.strip_prefix("--") {
-        return long_flag_value_words(flag, NO_VALUE_LONG, VALUE_LONG);
-    }
-    short_flag_value_words(token, "0iv", "aCSu")
-}
-
-fn long_flag_value_words(flag: &str, no_value: &[&str], value: &[&str]) -> Option<usize> {
-    if flag.is_empty() {
-        return Some(0);
-    }
-    let name = flag.split_once('=').map_or(flag, |(name, _)| name);
-    if no_value.contains(&name) {
-        return Some(0);
-    }
-    value
-        .contains(&name)
-        .then_some(usize::from(!flag.contains('=')))
-}
-
-fn short_flag_value_words(token: &str, no_value: &str, value: &str) -> Option<usize> {
-    if token == "--" {
-        return Some(0);
-    }
-    if !token.starts_with('-') || token == "-" {
-        return None;
-    }
-    let mut chars = token[1..].chars().peekable();
-    while let Some(flag) = chars.next() {
-        if no_value.contains(flag) {
-            continue;
-        }
-        if value.contains(flag) {
-            return Some(usize::from(chars.peek().is_none()));
-        }
-        return None;
-    }
-    Some(0)
 }
 
 fn is_shell_assignment(token: &str) -> bool {
@@ -151,16 +41,6 @@ fn is_shell_assignment(token: &str) -> bool {
     };
     (first == '_' || first.is_ascii_alphabetic())
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-}
-
-fn shell_basename(value: &str) -> &str {
-    value.rsplit('/').next().unwrap_or(value)
-}
-
-fn is_env_assignment(token: &str) -> bool {
-    token
-        .split_once('=')
-        .is_some_and(|(name, _)| !name.is_empty())
 }
 
 #[cfg(test)]

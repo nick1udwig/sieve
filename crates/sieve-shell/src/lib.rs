@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod command_wrappers;
+
+pub use command_wrappers::{strip_command_wrappers, CommandWrapperView};
+
 use sieve_types::{CommandKnowledge, CommandSegment, CompositionOperator};
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};

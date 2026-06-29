@@ -7,4 +7,5 @@ version.workspace = true
 [dependencies]
 codex-shell-command = { git = "https://github.com/openai/codex.git", rev = "6cd11f06ea2a556ff09887f97e9a712d9f9b6ad7", package = "codex-shell-command" }
 sieve-policy = { path = "../sieve-policy" }
+sieve-shell = { path = "../sieve-shell" }
 sieve-types = { path = "../sieve-types" }

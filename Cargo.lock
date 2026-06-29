@@ -3298,6 +3298,7 @@ version = "0.1.14"
 dependencies = [
  "codex-shell-command",
  "sieve-policy",
+ "sieve-shell",
  "sieve-types",
 ]
 
