@@ -111,6 +111,9 @@ fn extract_gws_gmail_message_handles(result: &PlannerToolResult) -> Option<Vec<S
     else {
         return None;
     };
+    if report.exit_code != Some(0) {
+        return None;
+    }
     if !is_gws_gmail_messages_list(command) {
         return None;
     }

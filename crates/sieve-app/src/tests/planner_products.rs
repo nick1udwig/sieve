@@ -73,6 +73,45 @@ fn planner_step_trace_includes_opaque_handle_products_without_raw_ids() {
 }
 
 #[test]
+fn planner_products_ignore_failed_gws_message_list_output() {
+    let temp_path = std::env::temp_dir().join(format!(
+        "sieve-planner-products-failed-{}.json",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::write(
+        &temp_path,
+        r#"{"messages":[{"id":"should-not-be-used"}],"resultSizeEstimate":1}"#,
+    )
+    .expect("write artifact");
+
+    let tool_result = PlannerToolResult::Bash {
+        command: "gws gmail users messages list --params '{\"userId\":\"me\"}'".to_string(),
+        disposition: RuntimeDisposition::ExecuteMainline(MainlineRunReport {
+            run_id: RunId("run-products-failed".to_string()),
+            exit_code: Some(1),
+            artifacts: vec![MainlineArtifact {
+                ref_id: "artifact-gws-list-failed".to_string(),
+                kind: MainlineArtifactKind::Stdout,
+                path: temp_path.display().to_string(),
+                byte_count: 65,
+                line_count: 1,
+            }],
+        }),
+    };
+
+    let mut store = PlannerOpaqueHandleStore::default();
+    let products = store.record_step_products(&[tool_result]);
+
+    assert!(products.is_empty());
+    assert!(store.placeholder_values().is_empty());
+
+    let _ = std::fs::remove_file(temp_path);
+}
+
+#[test]
 fn planner_step_trace_includes_gws_schema_cli_shape_product() {
     let tool_result = PlannerToolResult::Bash {
         command: "sudo env GWS_CONFIG_DIR=/tmp/gws gws schema gmail.users.messages.list"
