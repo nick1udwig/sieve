@@ -13,15 +13,17 @@ struct SinkArg {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct RequestValueFlag {
+struct ValueFlagSpec {
     short: Option<&'static str>,
     long: &'static str,
     missing_reason: &'static str,
 }
 
 #[derive(Debug)]
-struct ParsedSinkArg {
-    arg: SinkArg,
+struct ParsedValueArg {
+    flag: String,
+    value_index: usize,
+    value: String,
     consumed: usize,
 }
 
@@ -64,26 +66,59 @@ const IGNORED_NO_VALUE_FLAGS: &[&str] = &[
     "--no-progress-meter",
 ];
 
-const REQUEST_VALUE_FLAGS: &[RequestValueFlag] = &[
-    RequestValueFlag {
+const REQUEST_VALUE_FLAGS: &[ValueFlagSpec] = &[
+    ValueFlagSpec {
         short: Some("-H"),
         long: "--header",
         missing_reason: "curl header flag missing value",
     },
-    RequestValueFlag {
+    ValueFlagSpec {
         short: Some("-u"),
         long: "--user",
         missing_reason: "curl user flag missing value",
     },
-    RequestValueFlag {
+    ValueFlagSpec {
         short: Some("-A"),
         long: "--user-agent",
         missing_reason: "curl user-agent flag missing value",
     },
-    RequestValueFlag {
+    ValueFlagSpec {
         short: Some("-e"),
         long: "--referer",
         missing_reason: "curl referer flag missing value",
+    },
+];
+
+const IGNORED_VALUE_FLAGS: &[ValueFlagSpec] = &[
+    ValueFlagSpec {
+        short: None,
+        long: "--connect-timeout",
+        missing_reason: "curl ignored value flag missing value",
+    },
+    ValueFlagSpec {
+        short: Some("-m"),
+        long: "--max-time",
+        missing_reason: "curl ignored value flag missing value",
+    },
+    ValueFlagSpec {
+        short: None,
+        long: "--max-redirs",
+        missing_reason: "curl ignored value flag missing value",
+    },
+    ValueFlagSpec {
+        short: None,
+        long: "--retry",
+        missing_reason: "curl ignored value flag missing value",
+    },
+    ValueFlagSpec {
+        short: None,
+        long: "--retry-delay",
+        missing_reason: "curl ignored value flag missing value",
+    },
+    ValueFlagSpec {
+        short: None,
+        long: "--retry-max-time",
+        missing_reason: "curl ignored value flag missing value",
     },
 ];
 
@@ -209,12 +244,25 @@ pub(crate) fn summarize_curl(argv: &[String]) -> Option<SummaryOutcome> {
                 continue;
             }
 
+            if let Some(parsed) = parse_value_flag(argv, i, IGNORED_VALUE_FLAGS) {
+                let parsed = match parsed {
+                    Ok(parsed) => parsed,
+                    Err(reason) => return Some(unknown_outcome(reason)),
+                };
+                i += parsed.consumed;
+                continue;
+            }
+
             if let Some(parsed) = parse_request_value_flag(argv, i) {
                 let parsed = match parsed {
                     Ok(parsed) => parsed,
                     Err(reason) => return Some(unknown_outcome(reason)),
                 };
-                request_values.push(parsed.arg);
+                request_values.push(SinkArg {
+                    flag: parsed.flag,
+                    value_index: parsed.value_index,
+                    value: parsed.value,
+                });
                 i += parsed.consumed;
                 continue;
             }
@@ -313,20 +361,26 @@ fn attached_short_value<'a>(arg: &'a str, flag: &str) -> Option<&'a str> {
 fn parse_request_value_flag(
     argv: &[String],
     i: usize,
-) -> Option<Result<ParsedSinkArg, &'static str>> {
+) -> Option<Result<ParsedValueArg, &'static str>> {
+    parse_value_flag(argv, i, REQUEST_VALUE_FLAGS)
+}
+
+fn parse_value_flag(
+    argv: &[String],
+    i: usize,
+    specs: &[ValueFlagSpec],
+) -> Option<Result<ParsedValueArg, &'static str>> {
     let arg = argv.get(i)?;
 
-    for spec in REQUEST_VALUE_FLAGS {
+    for spec in specs {
         if arg == spec.long || spec.short.is_some_and(|short| arg == short) {
             let Some(value) = argv.get(i + 1) else {
                 return Some(Err(spec.missing_reason));
             };
-            return Some(Ok(ParsedSinkArg {
-                arg: SinkArg {
-                    flag: arg.clone(),
-                    value_index: i + 1,
-                    value: value.clone(),
-                },
+            return Some(Ok(ParsedValueArg {
+                flag: arg.clone(),
+                value_index: i + 1,
+                value: value.clone(),
                 consumed: 2,
             }));
         }
@@ -336,12 +390,10 @@ fn parse_request_value_flag(
                 if value.is_empty() {
                     return Some(Err(spec.missing_reason));
                 }
-                return Some(Ok(ParsedSinkArg {
-                    arg: SinkArg {
-                        flag: spec.long.to_string(),
-                        value_index: i,
-                        value: value.to_string(),
-                    },
+                return Some(Ok(ParsedValueArg {
+                    flag: spec.long.to_string(),
+                    value_index: i,
+                    value: value.to_string(),
                     consumed: 1,
                 }));
             }
@@ -349,12 +401,10 @@ fn parse_request_value_flag(
 
         if let Some(short) = spec.short {
             if let Some(value) = attached_short_value(arg, short) {
-                return Some(Ok(ParsedSinkArg {
-                    arg: SinkArg {
-                        flag: short.to_string(),
-                        value_index: i,
-                        value: value.to_string(),
-                    },
+                return Some(Ok(ParsedValueArg {
+                    flag: short.to_string(),
+                    value_index: i,
+                    value: value.to_string(),
                     consumed: 1,
                 }));
             }

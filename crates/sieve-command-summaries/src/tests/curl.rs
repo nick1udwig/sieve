@@ -720,6 +720,65 @@ fn curl_get_with_safe_transport_flags_requires_net_connect_capability() {
 }
 
 #[test]
+fn curl_get_with_safe_value_flags_requires_net_connect_capability() {
+    let cases = [
+        vec![
+            "curl",
+            "--connect-timeout",
+            "3",
+            "https://api.example.com/v1/resource",
+        ],
+        vec![
+            "curl",
+            "--max-time=5",
+            "https://api.example.com/v1/resource",
+        ],
+        vec!["curl", "-m", "5", "https://api.example.com/v1/resource"],
+        vec!["curl", "-m5", "https://api.example.com/v1/resource"],
+        vec![
+            "curl",
+            "--retry",
+            "2",
+            "https://api.example.com/v1/resource",
+        ],
+        vec![
+            "curl",
+            "--retry-delay=1",
+            "https://api.example.com/v1/resource",
+        ],
+        vec![
+            "curl",
+            "--retry-max-time",
+            "10",
+            "https://api.example.com/v1/resource",
+        ],
+        vec![
+            "curl",
+            "--max-redirs",
+            "3",
+            "https://api.example.com/v1/resource",
+        ],
+    ];
+
+    for argv_raw in cases {
+        let out = summarize_argv(&argv(&argv_raw));
+
+        assert_eq!(out.knowledge, CommandKnowledge::Known, "{argv_raw:?}");
+        let summary = out.summary.expect("expected summary");
+        assert_eq!(
+            summary.required_capabilities,
+            vec![Capability {
+                resource: Resource::Net,
+                action: Action::Connect,
+                scope: "https://api.example.com/".to_string(),
+            }],
+            "{argv_raw:?}"
+        );
+        assert_eq!(summary.sink_checks, Vec::<SinkCheck>::new(), "{argv_raw:?}");
+    }
+}
+
+#[test]
 fn curl_head_flags_require_net_connect_capability() {
     for flag in ["-I", "--head"] {
         let out = summarize_argv(&argv(&[
