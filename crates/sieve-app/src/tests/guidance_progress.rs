@@ -113,9 +113,11 @@ fn progress_contract_requires_non_asset_fetch_target() {
 #[test]
 fn asset_url_detection_keeps_content_paths_containing_favicon_word() {
     assert!(url_is_likely_asset("https://example.com/favicon.ico"));
+    assert!(url_is_likely_asset("https://example.com/assets/app.js?v=1"));
     assert!(!url_is_likely_asset(
         "https://example.com/blog/favicon-history"
     ));
+    assert!(!url_is_likely_asset("https://docs.js.org/guide"));
 }
 
 #[test]

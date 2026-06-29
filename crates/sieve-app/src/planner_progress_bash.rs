@@ -51,9 +51,17 @@ fn contains_asset_extension(lower: &str) -> bool {
             lower[idx + extension.len()..]
                 .chars()
                 .next()
-                .is_none_or(|ch| !ch.is_ascii_alphanumeric())
+                .is_none_or(is_asset_extension_terminator)
         })
     })
+}
+
+fn is_asset_extension_terminator(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '?' | '#' | '&' | '"' | '\'' | '`' | ')' | ']' | '}' | '<' | '>' | ',' | ';' | ':'
+        )
 }
 
 pub(super) fn command_targets_likely_asset(command: &str) -> bool {
