@@ -52,14 +52,7 @@ pub(crate) fn summarize_instruction(instruction: &str) -> String {
     if trimmed.is_empty() {
         return "codex task".to_string();
     }
-    let mut out = String::new();
-    for ch in trimmed.chars() {
-        if out.chars().count() >= 120 {
-            break;
-        }
-        out.push(ch);
-    }
-    out
+    trimmed.chars().take(120).collect()
 }
 
 fn tokenize(input: &str) -> Vec<String> {
@@ -122,5 +115,14 @@ mod tests {
         existing.insert("fix-auth-flow".to_string());
         let name = session_name_from_instruction("fix auth flow", &existing);
         assert_eq!(name, "fix-auth-flow-2");
+    }
+
+    #[test]
+    fn summarize_instruction_trims_and_caps_at_chars() {
+        let summary = summarize_instruction(&format!("  {}éextra", "a".repeat(119)));
+
+        assert_eq!(summary.chars().count(), 120);
+        assert!(summary.ends_with('é'));
+        assert!(!summary.contains("extra"));
     }
 }
