@@ -137,10 +137,6 @@ fn contains_linkish_placeholder(message: &str) -> bool {
     .any(|pattern| normalized.contains(pattern))
 }
 
-fn mentions_linkish_text(message: &str) -> bool {
-    contains_linkish_placeholder(message)
-}
-
 fn split_sentences(message: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
@@ -187,7 +183,7 @@ pub(crate) fn enforce_link_policy(
     source_urls: &[String],
     trusted_user_message: &str,
 ) -> String {
-    if !mentions_linkish_text(&message) || contains_plain_url(&message) {
+    if !contains_linkish_placeholder(&message) || contains_plain_url(&message) {
         return message;
     }
     if !source_urls.is_empty() && user_requested_sources(trusted_user_message) {
@@ -239,10 +235,7 @@ pub(crate) fn user_requested_detailed_output(trusted_user_message: &str) -> bool
 }
 
 fn sentence_like_count(message: &str) -> usize {
-    split_sentences(message)
-        .into_iter()
-        .filter(|sentence| !sentence.trim().is_empty())
-        .count()
+    split_sentences(message).len()
 }
 
 pub(crate) fn concise_style_diagnostic(

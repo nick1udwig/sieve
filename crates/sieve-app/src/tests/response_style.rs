@@ -147,6 +147,15 @@ fn concise_style_diagnostic_flags_unsolicited_source_dump() {
 }
 
 #[test]
+fn concise_style_diagnostic_flags_too_many_sentences() {
+    let message = "One. Two. Three. Four. Five.";
+    let diagnostic = concise_style_diagnostic(message, "Keep it short");
+    assert!(diagnostic.is_some());
+    let detail_ok = concise_style_diagnostic(message, "Explain in detail");
+    assert!(detail_ok.is_none());
+}
+
+#[test]
 fn compact_single_line_collapses_whitespace_before_truncating() {
     assert_eq!(
         compact_single_line("  alpha\n\tbeta   gamma  ", 80),
