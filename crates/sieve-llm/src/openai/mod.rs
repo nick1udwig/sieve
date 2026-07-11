@@ -6,7 +6,8 @@ mod requests;
 
 pub(crate) use exchange_logger::LlmExchangeLogger;
 pub use models::{
-    OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel,
+    OpenAiGuidanceModel, OpenAiModelSet, OpenAiPlannerModel, OpenAiResponseModel,
+    OpenAiSummaryModel,
 };
 pub(crate) use planner_retry::{backoff, is_transient_status, truncate_for_error};
 

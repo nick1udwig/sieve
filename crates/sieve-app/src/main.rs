@@ -40,11 +40,10 @@ use ingress::{
 };
 use lcm_integration::LcmIntegration;
 use logging::FanoutRuntimeEventLog;
-use sieve_command_summaries::{command_available, DefaultCommandSummarizer};
-use sieve_llm::{
-    GuidanceModel, OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel,
-    OpenAiSummaryModel, ResponseModel, SummaryModel,
-};
+use sieve_command_summaries::DefaultCommandSummarizer;
+use sieve_llm::{GuidanceModel, OpenAiModelSet, ResponseModel, SummaryModel};
+#[cfg(test)]
+use sieve_llm::{OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel};
 use sieve_policy::{canonicalize_net_origin_scope, TomlPolicyEngine};
 use sieve_quarantine::BwrapQuarantineRunner;
 use sieve_runtime::{
@@ -162,10 +161,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let planner = OpenAiPlannerModel::from_env()?;
-    let guidance_model: Arc<dyn GuidanceModel> = Arc::new(OpenAiGuidanceModel::from_env()?);
-    let response_model: Arc<dyn ResponseModel> = Arc::new(OpenAiResponseModel::from_env()?);
-    let summary_model: Arc<dyn SummaryModel> = Arc::new(OpenAiSummaryModel::from_env()?);
+    let (planner, guidance, response, summary) = OpenAiModelSet::from_env()?.into_parts();
+    let guidance_model: Arc<dyn GuidanceModel> = Arc::new(guidance);
+    let response_model: Arc<dyn ResponseModel> = Arc::new(response);
+    let summary_model: Arc<dyn SummaryModel> = Arc::new(summary);
     let approval_bus = Arc::new(InProcessApprovalBus::new());
     let (event_tx, event_rx) = mpsc::channel();
     let event_log = Arc::new(FanoutRuntimeEventLog::new(
@@ -312,7 +311,7 @@ fn load_policy_toml(path: &Path, explicit_override: bool) -> io::Result<String> 
 
 fn initialize_sieve_home_from_env() -> bool {
     let sieve_home = parse_sieve_home(env::var("SIEVE_HOME").ok(), env::var("HOME").ok());
-    if !command_available("git") {
+    if !host::RuntimeCapabilityManifest::current().git_available() {
         if let Err(err) = sieve_home::ensure_sieve_home_dirs(&sieve_home) {
             eprintln!(
                 "failed to initialize sieve home at {}: {}",

@@ -47,6 +47,7 @@ impl CaseGenerator for PlannerCaseGenerator {
                 user_message,
                 conversation: Vec::new(),
                 allowed_tools: vec!["bash".to_string()],
+                available_commands: Vec::new(),
                 current_time_utc: None,
                 current_timezone: None,
                 allowed_net_connect_scopes: Vec::new(),

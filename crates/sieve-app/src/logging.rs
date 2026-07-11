@@ -1,15 +1,21 @@
+mod event_hub;
+mod projection;
+
 use async_trait::async_trait;
+pub(crate) use event_hub::RuntimeEventHub;
+use projection::InMemoryEventProjection;
+#[cfg(test)]
+pub(crate) use projection::{
+    MAX_RETAINED_CONVERSATION_ENTRIES, MAX_RETAINED_RUNTIME_EVENTS, MAX_RETAINED_TURN_CONTEXTS,
+};
 use serde::Serialize;
 use sieve_runtime::{EventLogError, JsonlRuntimeEventLog, RuntimeEventLog};
 use sieve_types::{
     ApprovalRequestedEvent, ApprovalResolvedEvent, AssistantMessageEvent, CodexSessionStatusEvent,
     PolicyEvaluatedEvent, QuarantineCompletedEvent, RunId, RuntimeEvent,
 };
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::Sender;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -164,33 +170,29 @@ pub(crate) struct FanoutRuntimeEventLog {
     jsonl: JsonlRuntimeEventLog,
     session_id: String,
     next_turn_seq: AtomicU64,
-    turn_contexts: Mutex<BTreeMap<RunId, TurnLogContext>>,
-    history: Mutex<Vec<RuntimeEvent>>,
-    conversation_history: Mutex<Vec<ConversationHistoryEntry>>,
-    telegram_tx: Mutex<Sender<TelegramLoopEvent>>,
+    projection: InMemoryEventProjection,
+    event_hub: RuntimeEventHub,
 }
 
 impl FanoutRuntimeEventLog {
     pub(crate) fn new(
         path: impl Into<PathBuf>,
-        telegram_tx: Sender<TelegramLoopEvent>,
+        event_hub: impl Into<RuntimeEventHub>,
     ) -> Result<Self, EventLogError> {
-        Self::with_session_id(path, telegram_tx, fresh_session_id())
+        Self::with_session_id(path, event_hub, fresh_session_id())
     }
 
     pub(crate) fn with_session_id(
         path: impl Into<PathBuf>,
-        telegram_tx: Sender<TelegramLoopEvent>,
+        event_hub: impl Into<RuntimeEventHub>,
         session_id: String,
     ) -> Result<Self, EventLogError> {
         Ok(Self {
             jsonl: JsonlRuntimeEventLog::new(path.into())?,
             session_id,
             next_turn_seq: AtomicU64::new(1),
-            turn_contexts: Mutex::new(BTreeMap::new()),
-            history: Mutex::new(Vec::new()),
-            conversation_history: Mutex::new(Vec::new()),
-            telegram_tx: Mutex::new(telegram_tx),
+            projection: InMemoryEventProjection::new(),
+            event_hub: event_hub.into(),
         })
     }
 
@@ -207,36 +209,24 @@ impl FanoutRuntimeEventLog {
     ) -> ReservedTurn {
         let turn_seq = self.next_turn_seq.fetch_add(1, Ordering::Relaxed);
         let run_id = RunId(format!("{}-t{}", self.session_id, turn_seq));
-        self.turn_contexts
-            .lock()
-            .expect("turn log contexts lock poisoned")
-            .insert(
-                run_id.clone(),
-                TurnLogContext {
-                    turn_seq,
-                    source: source.to_string(),
-                    session_key: session_key.to_string(),
-                    turn_kind: turn_kind.to_string(),
-                },
-            );
+        self.projection.insert_turn_context(
+            run_id.clone(),
+            TurnLogContext {
+                turn_seq,
+                source: source.to_string(),
+                session_key: session_key.to_string(),
+                turn_kind: turn_kind.to_string(),
+            },
+        );
         ReservedTurn { run_id, turn_seq }
     }
 
     pub(crate) fn snapshot(&self) -> Vec<RuntimeEvent> {
-        self.history
-            .lock()
-            .expect("runtime event history lock poisoned")
-            .clone()
+        self.projection.runtime_snapshot()
     }
 
     pub(crate) fn snapshot_conversation(&self, session_key: &str) -> Vec<ConversationHistoryEntry> {
-        self.conversation_history
-            .lock()
-            .expect("conversation history lock poisoned")
-            .iter()
-            .filter(|entry| entry.session_key == session_key)
-            .cloned()
-            .collect()
+        self.projection.conversation_snapshot(session_key)
     }
 
     pub(crate) async fn append_conversation(
@@ -256,22 +246,19 @@ impl FanoutRuntimeEventLog {
         )?;
         self.jsonl.append_json_value(&value).await?;
         let session_key = self
-            .turn_contexts
-            .lock()
-            .map_err(|_| EventLogError::Append("turn log contexts lock poisoned".to_string()))?
-            .get(&record.run_id)
+            .projection
+            .turn_context(&record.run_id)?
+            .as_ref()
             .map(|context| context.session_key.clone())
             .unwrap_or_else(|| "main".to_string());
-        self.conversation_history
-            .lock()
-            .map_err(|_| EventLogError::Append("conversation history lock poisoned".to_string()))?
-            .push(ConversationHistoryEntry {
+        self.projection
+            .push_conversation_entry(ConversationHistoryEntry {
                 run_id: record.run_id,
                 session_key,
                 role: record.role,
                 message: record.message,
                 created_at_ms: record.created_at_ms,
-            });
+            })?;
         Ok(())
     }
 
@@ -298,12 +285,7 @@ impl FanoutRuntimeEventLog {
         created_at_ms: u64,
         payload: &T,
     ) -> Result<serde_json::Value, EventLogError> {
-        let context = self
-            .turn_contexts
-            .lock()
-            .map_err(|_| EventLogError::Append("turn log contexts lock poisoned".to_string()))?
-            .get(run_id)
-            .cloned();
+        let context = self.projection.turn_context(run_id)?;
         serde_json::to_value(TurnScopedRecord {
             schema_version: 2,
             event,
@@ -447,6 +429,16 @@ impl FanoutRuntimeEventLog {
             ),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn retained_turn_context_count(&self) -> usize {
+        self.projection.retained_turn_context_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_retained_turn_context(&self, run_id: &RunId) -> bool {
+        self.projection.has_retained_turn_context(run_id)
+    }
 }
 
 #[async_trait]
@@ -454,17 +446,8 @@ impl RuntimeEventLog for FanoutRuntimeEventLog {
     async fn append(&self, event: RuntimeEvent) -> Result<(), EventLogError> {
         let value = self.runtime_event_record(&event)?;
         self.jsonl.append_json_value(&value).await?;
-        self.history
-            .lock()
-            .map_err(|_| EventLogError::Append("runtime event history lock poisoned".to_string()))?
-            .push(event.clone());
-        self.telegram_tx
-            .lock()
-            .map_err(|_| EventLogError::Append("telegram event sender lock poisoned".to_string()))?
-            .send(TelegramLoopEvent::Runtime(Box::new(event)))
-            .map_err(|err| {
-                EventLogError::Append(format!("failed to forward runtime event: {err}"))
-            })?;
+        self.projection.push_runtime_event(event.clone())?;
+        self.event_hub.publish(&event);
         Ok(())
     }
 }

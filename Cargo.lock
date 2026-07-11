@@ -3244,7 +3244,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sieve-command-summaries",
  "sieve-prompts",
  "sieve-tool-contracts",
  "sieve-types",

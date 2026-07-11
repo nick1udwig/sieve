@@ -15,12 +15,22 @@ pub struct LlmConfigs {
 
 impl LlmConfigs {
     pub fn from_env() -> Result<Self, LlmError> {
-        Ok(Self {
-            planner: load_model_config_from_env("SIEVE_PLANNER", &env_getter)?,
-            guidance: load_model_config_from_env("SIEVE_GUIDANCE", &env_getter)
-                .or_else(|_| load_model_config_from_env("SIEVE_PLANNER", &env_getter))?,
-        })
+        let planner = load_model_config_from_env("SIEVE_PLANNER", &env_getter)?;
+        let guidance =
+            load_optional_model_config_from_env("SIEVE_GUIDANCE", &planner, &env_getter)?;
+        Ok(Self { planner, guidance })
     }
+}
+
+pub(crate) fn load_optional_model_config_from_env(
+    prefix: &str,
+    fallback: &LlmModelConfig,
+    getter: &dyn Fn(&str) -> Option<String>,
+) -> Result<LlmModelConfig, LlmError> {
+    if getter(&format!("{prefix}_MODEL")).is_none() {
+        return Ok(fallback.clone());
+    }
+    load_model_config_from_env(prefix, getter)
 }
 
 pub(crate) fn load_model_config_from_env(

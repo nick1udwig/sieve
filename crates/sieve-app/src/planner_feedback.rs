@@ -128,10 +128,14 @@ pub(crate) fn planner_policy_feedback(tool_results: &[PlannerToolResult]) -> Opt
 
 fn is_sieve_lcm_query_command(command: &str) -> bool {
     let mut parts = command_words_for_simple_exec(command).into_iter();
-    matches!(
-        (parts.next(), parts.next()),
-        (Some("sieve-lcm-cli"), Some("query"))
-    )
+    let Some(program) = parts.next() else {
+        return false;
+    };
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("sieve-lcm-cli")
+        && parts.next() == Some("query")
 }
 
 pub(crate) fn trim_for_prompt(value: &str, max_chars: usize) -> String {
@@ -221,6 +225,13 @@ pub(crate) async fn planner_memory_feedback(tool_results: &[PlannerToolResult]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_query_recognizes_an_absolute_lcm_binary() {
+        assert!(is_sieve_lcm_query_command(
+            "/opt/sieve/bin/sieve-lcm-cli query --lane both --query memory --json"
+        ));
+    }
 
     #[test]
     fn trim_for_prompt_respects_small_char_budgets() {

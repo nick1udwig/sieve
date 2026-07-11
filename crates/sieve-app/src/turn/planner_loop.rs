@@ -108,10 +108,11 @@ pub(super) async fn generate_assistant_message(
             let policy_feedback = planner_policy_feedback(&aggregated_result.tool_results);
             let memory_feedback = planner_memory_feedback(&aggregated_result.tool_results).await;
             let has_known_value_refs = runtime.has_known_value_refs()?;
+            let host_capabilities = crate::host::RuntimeCapabilityManifest::current();
             let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
                 &cfg.allowed_tools,
                 has_known_value_refs,
-                sieve_command_summaries::command_available("bash"),
+                host_capabilities.bash_available(),
                 runtime.has_automation_tool(),
                 runtime.has_codex_tool(),
             );
@@ -136,6 +137,7 @@ pub(super) async fn generate_assistant_message(
                     user_message: trusted_user_message.to_string(),
                     conversation: planner_conversation,
                     allowed_tools: allowed_tools_for_turn,
+                    available_commands: host_capabilities.planner_commands().to_vec(),
                     current_time_utc,
                     current_timezone: Some("UTC".to_string()),
                     allowed_net_connect_scopes: cfg.allowed_net_connect_scopes.clone(),

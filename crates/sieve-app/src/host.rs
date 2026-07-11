@@ -1,7 +1,11 @@
 use serde::Serialize;
-use sieve_command_summaries::resolve_command;
-use std::env;
 use std::process::Command;
+
+mod manifest;
+
+#[cfg(test)]
+use manifest::HostProbe;
+pub(crate) use manifest::RuntimeCapabilityManifest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct HostReport {
@@ -33,89 +37,7 @@ enum CapabilityStatus {
 
 impl HostReport {
     pub(crate) fn detect() -> Self {
-        let package_manager = detect_package_manager();
-        let lcm_cli = lcm_cli_program();
-        let capabilities = vec![
-            executable_capability(
-                "shell",
-                "Known shell-command execution",
-                &["bash"],
-                package_hint(&package_manager, &["bash"]),
-            ),
-            quarantine_capability(&package_manager),
-            executable_capability(
-                "git_history",
-                "Sieve-home version history",
-                &["git"],
-                package_hint(&package_manager, &["git"]),
-            ),
-            executable_capability(
-                "web_fetch",
-                "Planner web fetching",
-                &["curl"],
-                package_hint(&package_manager, &["curl"]),
-            ),
-            alternative_capability(
-                "web_search",
-                "Brave web-search CLI",
-                &["bravesearch", "brave-search"],
-                Some("install bravesearch, then rerun sieve doctor".to_string()),
-            ),
-            executable_capability(
-                "browser",
-                "Browser automation",
-                &["agent-browser"],
-                Some("install agent-browser, then rerun sieve doctor".to_string()),
-            ),
-            codex_capability(),
-            executable_capability(
-                "audio",
-                "Voice transcription and synthesis",
-                &["st", "ffmpeg"],
-                Some("install st and ffmpeg, then rerun sieve doctor".to_string()),
-            ),
-            executable_capability(
-                "trash",
-                "Recoverable file deletion",
-                &["trash"],
-                package_hint(&package_manager, &["trash-cli"]),
-            ),
-            executable_capability(
-                "memory_cli",
-                "Explicit LCM memory queries",
-                &[lcm_cli.as_str()],
-                Some("install sieve-lcm-cli, then rerun sieve doctor".to_string()),
-            ),
-            executable_capability(
-                "google_workspace",
-                "Google Workspace operations",
-                &["gws"],
-                Some("install gws, then rerun sieve doctor".to_string()),
-            ),
-            executable_capability(
-                "file_search",
-                "Fast workspace search",
-                &["rg"],
-                package_hint(&package_manager, &["ripgrep"]),
-            ),
-            telegram_capability(),
-            model_config_capability(),
-            model_auth_capability(),
-        ];
-        let core_ready = ["model_config", "model_auth"].iter().all(|id| {
-            capabilities
-                .iter()
-                .find(|capability| capability.id == *id)
-                .is_some_and(|capability| capability.status == CapabilityStatus::Available)
-        });
-        Self {
-            schema_version: 1,
-            os: env::consts::OS.to_string(),
-            architecture: env::consts::ARCH.to_string(),
-            package_manager,
-            core_ready,
-            capabilities,
-        }
+        RuntimeCapabilityManifest::current().report()
     }
 
     pub(crate) fn print(&self, json: bool) -> Result<(), String> {
@@ -187,230 +109,12 @@ impl InstallPlan {
     }
 }
 
-pub(crate) fn recommended_install_plan() -> Option<InstallPlan> {
-    let manager = detect_package_manager()?;
-    let candidates: &[(&str, &str)] = match env::consts::OS {
-        "linux" => &[
-            ("bash", "bash"),
-            ("bwrap", "bubblewrap"),
-            ("strace", "strace"),
-            ("git", "git"),
-            ("curl", "curl"),
-            ("rg", "ripgrep"),
-            ("trash", "trash-cli"),
-        ],
-        "macos" => &[
-            ("git", "git"),
-            ("curl", "curl"),
-            ("rg", "ripgrep"),
-            ("trash", "trash-cli"),
-        ],
-        _ => return None,
-    };
-    let missing = candidates
-        .iter()
-        .filter(|(command, _)| resolve_command(command).is_none())
-        .copied()
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        return None;
-    }
-    let packages = missing
-        .iter()
-        .map(|(_, package)| *package)
-        .collect::<Vec<_>>();
-    let features = missing
-        .iter()
-        .map(|(command, _)| *command)
-        .collect::<Vec<_>>();
-    package_manager_install_plan(&manager, &packages, features)
-}
-
 pub(crate) fn quarantine_available() -> bool {
-    ["bash", "bwrap", "strace"]
-        .iter()
-        .all(|command| resolve_command(command).is_some())
+    RuntimeCapabilityManifest::current().quarantine_available()
 }
 
 pub(crate) fn codex_available() -> bool {
-    if non_empty_env("SIEVE_CODEX_APP_SERVER_WS_URL").is_some() {
-        return true;
-    }
-    non_empty_env("SIEVE_CODEX_APP_SERVER_BIN").map_or_else(
-        || resolve_command("codex").is_some(),
-        |program| resolve_command(&program).is_some(),
-    )
-}
-
-fn quarantine_capability(package_manager: &Option<String>) -> CapabilityReport {
-    if env::consts::OS != "linux" {
-        return CapabilityReport {
-            id: "quarantine",
-            description: "Sandboxed unknown-command tracing",
-            status: CapabilityStatus::Unsupported,
-            detail: "Linux bubblewrap/strace quarantine is unavailable on this OS".to_string(),
-            install_hint: None,
-        };
-    }
-    executable_capability(
-        "quarantine",
-        "Sandboxed unknown-command tracing",
-        &["bash", "bwrap", "strace"],
-        package_hint(package_manager, &["bash", "bubblewrap", "strace"]),
-    )
-}
-
-fn codex_capability() -> CapabilityReport {
-    if let Some(url) = non_empty_env("SIEVE_CODEX_APP_SERVER_WS_URL") {
-        return CapabilityReport {
-            id: "codex",
-            description: "Delegated coding and image OCR",
-            status: CapabilityStatus::Available,
-            detail: format!("configured app-server at {url}"),
-            install_hint: None,
-        };
-    }
-    let program =
-        non_empty_env("SIEVE_CODEX_APP_SERVER_BIN").unwrap_or_else(|| "codex".to_string());
-    executable_capability(
-        "codex",
-        "Delegated coding and image OCR",
-        &[program.as_str()],
-        Some("npm install -g @openai/codex".to_string()),
-    )
-}
-
-fn telegram_capability() -> CapabilityReport {
-    let configured = non_empty_env("TELEGRAM_BOT_TOKEN").is_some()
-        && non_empty_env("TELEGRAM_CHAT_ID").is_some();
-    CapabilityReport {
-        id: "telegram",
-        description: "Telegram ingress and approvals",
-        status: if configured {
-            CapabilityStatus::Available
-        } else {
-            CapabilityStatus::Unconfigured
-        },
-        detail: if configured {
-            "credentials configured".to_string()
-        } else {
-            "optional credentials not configured".to_string()
-        },
-        install_hint: Some("run sieve setup to configure Telegram".to_string()),
-    }
-}
-
-fn model_auth_capability() -> CapabilityReport {
-    let api_key = [
-        "SIEVE_PLANNER_OPENAI_API_KEY",
-        "OPENAI_API_KEY",
-        "OPENAI_CODEX_ACCESS_TOKEN",
-    ]
-    .iter()
-    .any(|key| non_empty_env(key).is_some());
-    let auth_file = sieve_llm::resolve_openai_codex_auth_json_path_from_env();
-    let configured = api_key || auth_file.is_file();
-    CapabilityReport {
-        id: "model_auth",
-        description: "Planner and response model authentication",
-        status: if configured {
-            CapabilityStatus::Available
-        } else {
-            CapabilityStatus::Unconfigured
-        },
-        detail: if configured {
-            "model credentials found".to_string()
-        } else {
-            "no model credentials found".to_string()
-        },
-        install_hint: Some("set OPENAI_API_KEY or run sieve auth login openai-codex".to_string()),
-    }
-}
-
-fn model_config_capability() -> CapabilityReport {
-    let model = non_empty_env("SIEVE_PLANNER_MODEL");
-    CapabilityReport {
-        id: "model_config",
-        description: "Primary model selection",
-        status: if model.is_some() {
-            CapabilityStatus::Available
-        } else {
-            CapabilityStatus::Unconfigured
-        },
-        detail: model
-            .map(|model| format!("planner model {model}"))
-            .unwrap_or_else(|| "no planner model selected".to_string()),
-        install_hint: Some("run sieve setup to select a model provider and model".to_string()),
-    }
-}
-
-fn executable_capability(
-    id: &'static str,
-    description: &'static str,
-    commands: &[&str],
-    install_hint: Option<String>,
-) -> CapabilityReport {
-    let resolved = commands
-        .iter()
-        .map(|command| (*command, resolve_command(command)))
-        .collect::<Vec<_>>();
-    let missing = resolved
-        .iter()
-        .filter_map(|(command, path)| path.is_none().then_some(*command))
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        let detail = resolved
-            .iter()
-            .filter_map(|(_, path)| path.as_ref())
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return CapabilityReport {
-            id,
-            description,
-            status: CapabilityStatus::Available,
-            detail,
-            install_hint: None,
-        };
-    }
-    CapabilityReport {
-        id,
-        description,
-        status: CapabilityStatus::Missing,
-        detail: format!("missing {}", missing.join(", ")),
-        install_hint,
-    }
-}
-
-fn alternative_capability(
-    id: &'static str,
-    description: &'static str,
-    commands: &[&str],
-    install_hint: Option<String>,
-) -> CapabilityReport {
-    if let Some(path) = commands.iter().find_map(|command| resolve_command(command)) {
-        return CapabilityReport {
-            id,
-            description,
-            status: CapabilityStatus::Available,
-            detail: path.display().to_string(),
-            install_hint: None,
-        };
-    }
-    CapabilityReport {
-        id,
-        description,
-        status: CapabilityStatus::Missing,
-        detail: format!("missing {}", commands.join(" or ")),
-        install_hint,
-    }
-}
-
-fn detect_package_manager() -> Option<String> {
-    ["apt-get", "dnf", "pacman", "brew", "pkg"]
-        .iter()
-        .find(|command| resolve_command(command).is_some())
-        .map(|command| (*command).to_string())
+    RuntimeCapabilityManifest::current().codex_available()
 }
 
 fn package_hint(package_manager: &Option<String>, packages: &[&str]) -> Option<String> {
@@ -425,10 +129,27 @@ fn package_hint(package_manager: &Option<String>, packages: &[&str]) -> Option<S
     })
 }
 
+#[cfg(test)]
 fn package_manager_install_plan(
     manager: &str,
     packages: &[&str],
     missing_features: Vec<&'static str>,
+) -> Option<InstallPlan> {
+    package_manager_install_plan_with_privilege(
+        manager,
+        packages,
+        missing_features,
+        current_user_is_root(),
+        sieve_command_summaries::command_available("sudo"),
+    )
+}
+
+fn package_manager_install_plan_with_privilege(
+    manager: &str,
+    packages: &[&str],
+    missing_features: Vec<&'static str>,
+    current_user_is_root: bool,
+    sudo_available: bool,
 ) -> Option<InstallPlan> {
     let (program, mut args) = match manager {
         "apt-get" => (
@@ -458,14 +179,16 @@ fn package_manager_install_plan(
             args,
         });
     }
-    if current_user_is_root() {
+    if current_user_is_root {
         return Some(InstallPlan {
             missing_features,
             program,
             args,
         });
     }
-    resolve_command("sudo")?;
+    if !sudo_available {
+        return None;
+    }
     let mut sudo_args = vec![program];
     sudo_args.extend(args);
     Some(InstallPlan {
@@ -475,6 +198,7 @@ fn package_manager_install_plan(
     })
 }
 
+#[cfg(test)]
 fn current_user_is_root() -> bool {
     Command::new("id")
         .arg("-u")
@@ -482,17 +206,6 @@ fn current_user_is_root() -> bool {
         .ok()
         .filter(|output| output.status.success())
         .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "0")
-}
-
-fn lcm_cli_program() -> String {
-    non_empty_env("SIEVE_LCM_CLI_BIN").unwrap_or_else(|| "sieve-lcm-cli".to_string())
-}
-
-fn non_empty_env(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]

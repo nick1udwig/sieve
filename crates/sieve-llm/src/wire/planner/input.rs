@@ -2,7 +2,6 @@ use super::PLANNER_SYSTEM_PROMPT;
 use crate::LlmError;
 use serde::Serialize;
 use serde_json::Value;
-use sieve_command_summaries::planner_available_command_catalog;
 use sieve_tool_contracts::tool_descriptor;
 use sieve_types::{
     PlannerBrowserSession, PlannerCodexSession, PlannerConversationMessage,
@@ -109,7 +108,8 @@ pub(crate) fn serialize_planner_input(input: &PlannerTurnInput) -> Result<Value,
         .guidance
         .as_ref()
         .and_then(planner_guidance_contract_payload);
-    let bash_command_catalog = planner_command_catalog_for_allowed_tools(&input.allowed_tools);
+    let bash_command_catalog =
+        planner_command_catalog_for_allowed_tools(&input.allowed_tools, &input.available_commands);
     serde_json::to_value(PlannerContextPayload {
         run_id: &input.run_id.0,
         trusted_user_message: &input.user_message,
@@ -248,18 +248,19 @@ fn planner_message(role: &'static str, content: String) -> Value {
         .expect("planner message serialization should succeed")
 }
 
-fn planner_command_catalog_for_allowed_tools(
+fn planner_command_catalog_for_allowed_tools<'a>(
     allowed_tools: &[String],
-) -> Vec<PlannerCommandCatalogEntry<'static>> {
+    available_commands: &'a [sieve_types::PlannerCommandSpec],
+) -> Vec<PlannerCommandCatalogEntry<'a>> {
     if !allowed_tools.iter().any(|tool| tool == "bash") {
         return Vec::new();
     }
 
-    planner_available_command_catalog()
-        .into_iter()
+    available_commands
+        .iter()
         .map(|descriptor| PlannerCommandCatalogEntry {
-            command: descriptor.command,
-            description: descriptor.description,
+            command: descriptor.command.as_str(),
+            description: descriptor.description.as_str(),
         })
         .collect()
 }

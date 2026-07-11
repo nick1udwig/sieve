@@ -39,6 +39,10 @@ async fn orchestrate_planner_turn_executes_bash_through_policy_and_approval() {
                     user_message: "delete tmp".to_string(),
                     conversation: Vec::new(),
                     allowed_tools: vec!["bash".to_string()],
+                    available_commands: vec![PlannerCommandSpec {
+                        command: "rm".to_string(),
+                        description: "Remove files".to_string(),
+                    }],
                     current_time_utc: None,
                     current_timezone: None,
                     allowed_net_connect_scopes: Vec::new(),
@@ -95,6 +99,13 @@ async fn orchestrate_planner_turn_executes_bash_through_policy_and_approval() {
     assert_eq!(planner_input.run_id, RunId("run-1".to_string()));
     assert_eq!(planner_input.user_message, "delete tmp");
     assert_eq!(planner_input.allowed_tools, vec!["bash".to_string()]);
+    assert_eq!(
+        planner_input.available_commands,
+        vec![PlannerCommandSpec {
+            command: "rm".to_string(),
+            description: "Remove files".to_string(),
+        }]
+    );
     assert_eq!(planner_input.previous_events.len(), 1);
 }
 #[tokio::test]
@@ -230,6 +241,7 @@ async fn orchestrate_planner_turn_runs_unknown_bash_in_quarantine_when_accepted(
             user_message: "run custom command".to_string(),
             conversation: Vec::new(),
             allowed_tools: vec!["bash".to_string()],
+            available_commands: Vec::new(),
             current_time_utc: None,
             current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),
@@ -349,6 +361,7 @@ async fn orchestrate_planner_turn_expands_opaque_handle_placeholders_before_main
             user_message: "fetch detail".to_string(),
             conversation: Vec::new(),
             allowed_tools: vec!["bash".to_string()],
+            available_commands: Vec::new(),
             current_time_utc: None,
             current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),

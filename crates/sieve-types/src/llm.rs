@@ -47,6 +47,13 @@ pub struct PlannerConversationMessage {
     pub content: String,
 }
 
+/// One host-resolved command the planner may invoke through the shell tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerCommandSpec {
+    pub command: String,
+    pub description: String,
+}
+
 /// Planner invocation input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannerTurnInput {
@@ -55,6 +62,8 @@ pub struct PlannerTurnInput {
     #[serde(default)]
     pub conversation: Vec<PlannerConversationMessage>,
     pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub available_commands: Vec<PlannerCommandSpec>,
     #[serde(default)]
     pub current_time_utc: Option<String>,
     #[serde(default)]

@@ -131,6 +131,7 @@ async fn tool_contract_failure_stays_internal_not_chat_visible() {
             user_message: "dangerous".to_string(),
             conversation: Vec::new(),
             allowed_tools: vec!["bash".to_string()],
+            available_commands: Vec::new(),
             current_time_utc: None,
             current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),

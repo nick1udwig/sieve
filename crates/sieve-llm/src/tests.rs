@@ -3,7 +3,9 @@ use crate::codex_auth::{
     default_openai_codex_auth_json_path, parse_openai_codex_authorization_input,
     read_openai_codex_auth_file, write_openai_codex_auth_file, OpenAiCodexStoredAuth,
 };
-use crate::config::{load_model_config_from_env, load_openai_api_key_from_env};
+use crate::config::{
+    load_model_config_from_env, load_openai_api_key_from_env, load_optional_model_config_from_env,
+};
 use crate::wire::{
     decode_guidance_output, decode_planner_output, decode_response_output,
     extract_openai_message_content_json, extract_openai_planner_output_json,
@@ -149,6 +151,47 @@ fn load_model_config_from_env_rejects_unsupported_provider() {
         "anthropic".to_string(),
     );
     let err = load_model_config_from_env("SIEVE_PLANNER", &map_getter(&env_map)).unwrap_err();
+    assert!(matches!(err, LlmError::Config(_)));
+}
+
+#[test]
+fn optional_model_config_uses_planner_only_when_role_model_is_absent() {
+    let planner = LlmModelConfig {
+        provider: LlmProvider::OpenAi,
+        model: "planner-model".to_string(),
+        api_base: None,
+    };
+    let env_map = BTreeMap::new();
+
+    let config =
+        load_optional_model_config_from_env("SIEVE_RESPONSE", &planner, &map_getter(&env_map))
+            .expect("planner fallback");
+
+    assert_eq!(config, planner);
+}
+
+#[test]
+fn optional_model_config_rejects_an_invalid_explicit_role() {
+    let planner = LlmModelConfig {
+        provider: LlmProvider::OpenAi,
+        model: "planner-model".to_string(),
+        api_base: None,
+    };
+    let env_map = BTreeMap::from([
+        (
+            "SIEVE_RESPONSE_MODEL".to_string(),
+            "response-model".to_string(),
+        ),
+        (
+            "SIEVE_RESPONSE_PROVIDER".to_string(),
+            "unsupported".to_string(),
+        ),
+    ]);
+
+    let err =
+        load_optional_model_config_from_env("SIEVE_RESPONSE", &planner, &map_getter(&env_map))
+            .expect_err("explicit invalid role must not silently fall back");
+
     assert!(matches!(err, LlmError::Config(_)));
 }
 
@@ -342,6 +385,7 @@ fn serialize_planner_input_only_sends_safe_shape() {
         user_message: "list files".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -664,6 +708,7 @@ async fn openai_live_planner_smoke_env_gated() {
                 content: "Use bash to print hello world.".to_string(),
             }],
             allowed_tools: vec!["bash".to_string()],
+            available_commands: Vec::new(),
             current_time_utc: None,
             current_timezone: None,
             allowed_net_connect_scopes: Vec::new(),

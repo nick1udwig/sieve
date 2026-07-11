@@ -37,10 +37,12 @@ pub(crate) async fn run_setup_command(
     non_interactive: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Sieve setup");
-    host::HostReport::detect()
+    let capabilities = host::RuntimeCapabilityManifest::current();
+    capabilities
+        .report()
         .print(false)
         .map_err(io::Error::other)?;
-    offer_host_dependencies(non_interactive)?;
+    offer_host_dependencies(non_interactive, capabilities)?;
 
     if non_interactive || !io::stdin().is_terminal() {
         println!();
@@ -83,8 +85,11 @@ pub(crate) async fn run_setup_command(
     Ok(())
 }
 
-fn offer_host_dependencies(non_interactive: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(plan) = host::recommended_install_plan() else {
+fn offer_host_dependencies(
+    non_interactive: bool,
+    capabilities: &host::RuntimeCapabilityManifest,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(plan) = capabilities.recommended_install_plan() else {
         return Ok(());
     };
     println!();

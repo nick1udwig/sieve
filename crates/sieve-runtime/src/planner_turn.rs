@@ -2,9 +2,10 @@ use super::{RuntimeDisposition, RuntimeError, RuntimeOrchestrator, ShellRunReque
 use sieve_tool_contracts::{validate_at_index, TypedCall, TOOL_CONTRACTS_VERSION};
 use sieve_types::{
     ApprovalRequestId, DeclassifyRequest, DeclassifyStateTransition, EndorseRequest,
-    EndorseStateTransition, PlannerBrowserSession, PlannerCodexSession, PlannerConversationMessage,
-    PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, RunId, RuntimeEvent,
-    ToolContractValidationReport, TrustedToolEffect, UncertainMode, UnknownMode, ValueRef,
+    EndorseStateTransition, PlannerBrowserSession, PlannerCodexSession, PlannerCommandSpec,
+    PlannerConversationMessage, PlannerGuidanceFrame, PlannerToolCall, PlannerTurnInput, RunId,
+    RuntimeEvent, ToolContractValidationReport, TrustedToolEffect, UncertainMode, UnknownMode,
+    ValueRef,
 };
 use std::collections::BTreeSet;
 
@@ -15,6 +16,7 @@ pub struct PlannerRunRequest {
     pub user_message: String,
     pub conversation: Vec<PlannerConversationMessage>,
     pub allowed_tools: Vec<String>,
+    pub available_commands: Vec<PlannerCommandSpec>,
     pub current_time_utc: Option<String>,
     pub current_timezone: Option<String>,
     pub allowed_net_connect_scopes: Vec<String>,
@@ -79,6 +81,7 @@ impl RuntimeOrchestrator {
                 user_message: request.user_message.clone(),
                 conversation: request.conversation.clone(),
                 allowed_tools: request.allowed_tools.clone(),
+                available_commands: request.available_commands.clone(),
                 current_time_utc: request.current_time_utc.clone(),
                 current_timezone: request.current_timezone.clone(),
                 allowed_net_connect_scopes: request.allowed_net_connect_scopes.clone(),

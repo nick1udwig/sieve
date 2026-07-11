@@ -38,6 +38,7 @@ async fn orchestrate_planner_turn_executes_endorse_with_approval() {
                     user_message: "endorse control".to_string(),
                     conversation: Vec::new(),
                     allowed_tools: vec!["endorse".to_string()],
+                    available_commands: Vec::new(),
                     current_time_utc: None,
                     current_timezone: None,
                     allowed_net_connect_scopes: Vec::new(),

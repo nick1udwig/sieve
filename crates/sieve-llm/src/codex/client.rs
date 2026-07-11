@@ -37,6 +37,11 @@ impl OpenAiCodexClient {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn auth(&self) -> &OpenAiCodexAuth {
+        &self.auth
+    }
+
     pub(crate) async fn create_response(&self, payload: Value) -> Result<Value, LlmError> {
         let endpoint = resolve_codex_url(self.api_base.as_deref());
         let mut attempt = 0usize;

@@ -1,6 +1,6 @@
 use super::*;
 use crate::LlmError;
-use sieve_types::RunId;
+use sieve_types::{PlannerCommandSpec, RunId};
 
 #[test]
 fn build_planner_messages_uses_context_and_conversation() {
@@ -20,6 +20,7 @@ fn build_planner_messages_uses_context_and_conversation() {
             },
         ],
         allowed_tools: vec!["bash".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -99,6 +100,7 @@ fn build_planner_messages_includes_shared_tool_guide_details() {
         user_message: "set a reminder".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["automation".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -133,6 +135,10 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
         user_message: "search for rust async docs".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
+        available_commands: vec![PlannerCommandSpec {
+            command: "/opt/sieve/bin/sieve-lcm-cli".to_string(),
+            description: "Configured memory command".to_string(),
+        }],
         current_time_utc: Some("2026-03-08T06:30:00Z".to_string()),
         current_timezone: Some("UTC".to_string()),
         allowed_net_connect_scopes: vec!["https://api.open-meteo.com".to_string()],
@@ -167,19 +173,18 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
         .pointer("/BASH_COMMAND_CATALOG")
         .and_then(Value::as_array)
         .expect("bash command catalog array");
-    assert!(!catalog.is_empty(), "catalog should not be empty");
+    assert_eq!(catalog.len(), 1);
     assert!(
         payload.pointer("/ALLOWED_TOOLS").is_none(),
         "tool availability is enforced via tool-calling schema, not duplicated in prompt JSON"
     );
-    assert!(catalog
-        .iter()
-        .any(|entry| { entry.get("command").and_then(Value::as_str) == Some("cp") }));
     assert_eq!(
-        catalog
-            .iter()
-            .any(|entry| { entry.get("command").and_then(Value::as_str) == Some("bravesearch") }),
-        sieve_command_summaries::command_available("bravesearch")
+        catalog[0].get("command").and_then(Value::as_str),
+        Some("/opt/sieve/bin/sieve-lcm-cli")
+    );
+    assert_eq!(
+        catalog[0].get("description").and_then(Value::as_str),
+        Some("Configured memory command")
     );
 }
 
@@ -190,6 +195,7 @@ fn serialize_planner_input_omits_bash_command_catalog_when_bash_disallowed() {
         user_message: "mark value trusted".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["endorse".to_string(), "declassify".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -214,6 +220,7 @@ fn serialize_planner_input_includes_browser_sessions() {
         user_message: "inspect the page".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -243,6 +250,7 @@ fn serialize_planner_input_includes_guidance_contract_for_fetch_signal() {
         user_message: "latest weather".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -285,6 +293,7 @@ fn serialize_planner_input_includes_action_change_contract_for_denied_tool_signa
         user_message: "status".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -315,6 +324,7 @@ fn serialize_planner_input_includes_fetch_contract_for_higher_quality_signal() {
         user_message: "status".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -357,6 +367,7 @@ fn serialize_planner_input_includes_browser_inspection_contract() {
         user_message: "what is the top video".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["bash".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),
@@ -397,6 +408,7 @@ fn serialize_planner_input_includes_codex_sessions() {
         user_message: "continue the implementation".to_string(),
         conversation: Vec::new(),
         allowed_tools: vec!["codex_session".to_string()],
+        available_commands: Vec::new(),
         current_time_utc: None,
         current_timezone: None,
         allowed_net_connect_scopes: Vec::new(),

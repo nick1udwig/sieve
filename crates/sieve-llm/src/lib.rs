@@ -32,7 +32,8 @@ pub use codex_auth::{
 };
 pub use config::LlmConfigs;
 pub use openai::{
-    OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel, OpenAiSummaryModel,
+    OpenAiGuidanceModel, OpenAiModelSet, OpenAiPlannerModel, OpenAiResponseModel,
+    OpenAiSummaryModel,
 };
 
 #[derive(Debug, Error)]

@@ -20,6 +20,8 @@ Run `sieve setup` to inspect the host, optionally install supported system packa
 The API-key path supports keep or replace behavior with masked input.
 The Codex path supports reuse or reauthentication of existing OAuth credentials.
 Both paths persist the selected provider and planner model so a fresh binary has complete model configuration.
+The runtime assembles planner, guidance, response, and quarantine roles as one model set, so roles using the same Codex credential source share refresh state and concurrent refreshes collapse into one request.
+An omitted optional role model inherits the planner configuration, while a present but invalid role model configuration fails startup instead of silently falling back.
 
 Optional configuration includes:
 
@@ -38,6 +40,8 @@ Optional configuration includes:
 - `BRAVE_API_KEY` and `SIEVE_BRAVE_API_BASE` for bash/CLI-based Brave search commands
 
 Optional integration CLIs are discovered from `PATH` and exposed only when available:
+
+Host capabilities are captured once per process and the same immutable manifest drives doctor output, setup recommendations, runtime feature construction, and the planner command catalog.
 
 - `trash` for safer file deletion via the desktop trash
      - repo: [`andreafrancia/trash-cli`](https://github.com/andreafrancia/trash-cli)
@@ -231,6 +235,8 @@ Long-running mode command surface:
 ### Runtime Logs, Artifacts, And Policy
 
 - Runtime JSONL logs are one canonical event stream at `$SIEVE_HOME/logs/runtime-events.jsonl`.
+- Durable JSONL append completes before in-memory projection and best-effort subscriber delivery, so absent or disconnected interfaces cannot fail an otherwise successful runtime event.
+- In-memory runtime events, conversation entries, and turn metadata retain bounded 512-entry windows while the JSONL stream remains complete.
 - Canonical events include runtime events, conversation turns, planner/controller decisions, and compose audit records.
 - Canonical event records include `session_id`, unique `turn_id`, and per-session `turn_seq`.
 - Canonical event records also include logical `turn_kind` and `logical_session_key` metadata for user, heartbeat, and cron turns.

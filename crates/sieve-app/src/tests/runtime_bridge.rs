@@ -242,6 +242,232 @@ async fn fanout_runtime_event_log_records_and_forwards_events() {
     let _ = fs::remove_file(path);
 }
 
+#[tokio::test]
+async fn fanout_runtime_event_log_append_succeeds_without_subscribers() {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-no-subscriber-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let log = FanoutRuntimeEventLog::with_session_id(
+        path.clone(),
+        crate::logging::RuntimeEventHub::default(),
+        "sess-no-subscriber".to_string(),
+    )
+    .expect("create fanout log");
+
+    log.append(test_policy_event("run-no-subscriber", 1))
+        .await
+        .expect("durable append must not require an event subscriber");
+
+    assert_eq!(log.snapshot().len(), 1);
+    assert!(fs::read_to_string(&path)
+        .expect("read durable log")
+        .contains("policy_evaluated"));
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn fanout_runtime_event_log_append_succeeds_after_subscriber_disconnects() {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-closed-subscriber-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let (telegram_tx, disconnected) = mpsc::channel();
+    drop(disconnected);
+    let log = FanoutRuntimeEventLog::with_session_id(
+        path.clone(),
+        telegram_tx,
+        "sess-closed-subscriber".to_string(),
+    )
+    .expect("create fanout log");
+
+    log.append(test_policy_event("run-closed-subscriber", 1))
+        .await
+        .expect("subscriber failure must remain best effort");
+
+    assert_eq!(log.snapshot().len(), 1);
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn runtime_event_hub_delivers_to_multiple_subscribers() {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-multiple-subscribers-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let hub = crate::logging::RuntimeEventHub::default();
+    let first = hub.subscribe();
+    let second = hub.subscribe();
+    let log = FanoutRuntimeEventLog::with_session_id(
+        path.clone(),
+        hub,
+        "sess-multiple-subscribers".to_string(),
+    )
+    .expect("create fanout log");
+    let event = test_policy_event("run-multiple-subscribers", 1);
+
+    log.append(event.clone()).await.expect("append event");
+
+    assert_eq!(
+        first
+            .recv_timeout(Duration::from_millis(50))
+            .expect("first subscriber event"),
+        event
+    );
+    assert_eq!(
+        second
+            .recv_timeout(Duration::from_millis(50))
+            .expect("second subscriber event"),
+        event
+    );
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn fanout_runtime_event_log_still_fails_when_durable_append_fails() {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-durable-failure-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("create directory at log path");
+    let hub = crate::logging::RuntimeEventHub::default();
+    let subscriber = hub.subscribe();
+    let log = FanoutRuntimeEventLog::with_session_id(
+        path.clone(),
+        hub,
+        "sess-durable-failure".to_string(),
+    )
+    .expect("create fanout log");
+
+    let err = log
+        .append(test_policy_event("run-durable-failure", 1))
+        .await
+        .expect_err("durable append failure must remain fatal");
+
+    assert!(err.to_string().contains("failed to append runtime event"));
+    assert!(log.snapshot().is_empty());
+    assert!(subscriber.recv_timeout(Duration::from_millis(20)).is_err());
+    let _ = fs::remove_dir_all(path);
+}
+
+#[tokio::test]
+async fn fanout_runtime_event_log_keeps_a_bounded_runtime_event_window() {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-bounded-runtime-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let log = FanoutRuntimeEventLog::with_session_id(
+        path.clone(),
+        crate::logging::RuntimeEventHub::default(),
+        "sess-bounded-runtime".to_string(),
+    )
+    .expect("create fanout log");
+
+    for index in 0..=crate::logging::MAX_RETAINED_RUNTIME_EVENTS {
+        log.append(test_policy_event(&format!("run-{index}"), index as u64))
+            .await
+            .expect("append event");
+    }
+
+    let retained = log.snapshot();
+    assert_eq!(retained.len(), crate::logging::MAX_RETAINED_RUNTIME_EVENTS);
+    assert_eq!(runtime_event_run_id(&retained[0]), "run-1");
+    let _ = fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn fanout_runtime_event_log_keeps_a_bounded_conversation_window() {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-bounded-conversation-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let log = FanoutRuntimeEventLog::with_session_id(
+        path.clone(),
+        crate::logging::RuntimeEventHub::default(),
+        "sess-bounded-conversation".to_string(),
+    )
+    .expect("create fanout log");
+
+    for index in 0..=crate::logging::MAX_RETAINED_CONVERSATION_ENTRIES {
+        let turn = log.reserve_turn_with_metadata("stdin", "main", "user");
+        log.append_conversation(ConversationLogRecord::new(
+            turn.run_id,
+            ConversationRole::User,
+            format!("message-{index}"),
+            index as u64,
+        ))
+        .await
+        .expect("append conversation");
+    }
+
+    let retained = log.snapshot_conversation("main");
+    assert_eq!(
+        retained.len(),
+        crate::logging::MAX_RETAINED_CONVERSATION_ENTRIES
+    );
+    assert_eq!(retained[0].message, "message-1");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fanout_runtime_event_log_keeps_bounded_turn_contexts() {
+    let path = std::env::temp_dir().join(format!(
+        "sieve-app-event-log-bounded-turns-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let log = FanoutRuntimeEventLog::with_session_id(
+        path.clone(),
+        crate::logging::RuntimeEventHub::default(),
+        "sess-bounded-turns".to_string(),
+    )
+    .expect("create fanout log");
+
+    let first = log.reserve_turn_with_metadata("stdin", "first", "user");
+    for _ in 0..crate::logging::MAX_RETAINED_TURN_CONTEXTS {
+        log.reserve_turn_with_metadata("stdin", "later", "user");
+    }
+
+    assert_eq!(
+        log.retained_turn_context_count(),
+        crate::logging::MAX_RETAINED_TURN_CONTEXTS
+    );
+    assert!(!log.has_retained_turn_context(&first.run_id));
+    let _ = fs::remove_file(path);
+}
+
+fn test_policy_event(run_id: &str, created_at_ms: u64) -> RuntimeEvent {
+    RuntimeEvent::PolicyEvaluated(PolicyEvaluatedEvent {
+        schema_version: 1,
+        run_id: RunId(run_id.to_string()),
+        decision: PolicyDecision {
+            kind: PolicyDecisionKind::Allow,
+            reason: "allow".to_string(),
+            blocked_rule_id: None,
+        },
+        inferred_capabilities: Vec::new(),
+        trace_path: None,
+        created_at_ms,
+    })
+}
+
+fn runtime_event_run_id(event: &RuntimeEvent) -> &str {
+    match event {
+        RuntimeEvent::ApprovalRequested(event) => &event.run_id.0,
+        RuntimeEvent::ApprovalResolved(event) => &event.run_id.0,
+        RuntimeEvent::PolicyEvaluated(event) => &event.run_id.0,
+        RuntimeEvent::QuarantineCompleted(event) => &event.run_id.0,
+        RuntimeEvent::CodexSessionStatus(event) => &event.run_id.0,
+        RuntimeEvent::AssistantMessage(event) => &event.run_id.0,
+    }
+}
+
 #[test]
 fn typing_guard_emits_start_and_stop_events() {
     let (tx, rx) = mpsc::channel();
