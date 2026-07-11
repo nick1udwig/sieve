@@ -209,3 +209,36 @@ fn load_dotenv_from_path_sets_values() {
     let _ = fs::remove_file(&env_path);
     let _ = fs::remove_dir(&tmp_dir);
 }
+
+#[test]
+fn load_dotenv_search_paths_include_sieve_home() {
+    let _guard = env_test_lock()
+        .lock()
+        .expect("dotenv env test lock poisoned");
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "sieve-app-home-dotenv-test-{}-{}",
+        std::process::id(),
+        now_ms()
+    ));
+    let workdir = tmp_dir.join("workdir");
+    let sieve_home = tmp_dir.join("home/.sieve");
+    fs::create_dir_all(&workdir).expect("create workdir");
+    fs::create_dir_all(&sieve_home).expect("create sieve home");
+    let key = format!(
+        "SIEVE_APP_HOME_DOTENV_TEST_{}_{}",
+        std::process::id(),
+        now_ms()
+    );
+    std::env::remove_var(&key);
+    fs::write(sieve_home.join(".env"), format!("{key}=from_sieve_home\n"))
+        .expect("write sieve-home dotenv");
+
+    load_dotenv_search_paths(&workdir, &sieve_home).expect("load dotenv search paths");
+    assert_eq!(
+        std::env::var(&key).expect("home dotenv value"),
+        "from_sieve_home"
+    );
+
+    std::env::remove_var(&key);
+    let _ = fs::remove_dir_all(&tmp_dir);
+}

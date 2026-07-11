@@ -168,6 +168,96 @@ jobs:
             VCS_REF=${{ needs.prepare.outputs.sha }}
             BUILD_DATE=${{ needs.prepare.outputs.created }}
 
+  build-binary:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: sieve-linux-x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            static: true
+          - asset: sieve-linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            static: true
+          - asset: sieve-darwin-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            static: false
+          - asset: sieve-darwin-aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            static: false
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install static-linking toolchain
+        if: matrix.static
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: standalone-${{ matrix.asset }}
+
+      - name: Build standalone binary
+        run: cargo build --locked --release -p sieve-app --target "${{ matrix.target }}"
+
+      - name: Verify standalone binary linkage
+        if: matrix.static
+        run: file "target/${{ matrix.target }}/release/sieve-app" | grep -Eq 'statically linked|static-pie linked'
+
+      - name: Prepare release asset
+        run: install -Dm755 "target/${{ matrix.target }}/release/sieve-app" dist/${{ matrix.asset }}
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish-release:
+    needs:
+      - prepare
+      - build-binary
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Download standalone binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sieve-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: cd dist && sha256sum sieve-* > checksums.txt
+
+      - name: Publish GitHub release
+        run: |
+          tag="v${{ needs.prepare.outputs.version }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/sieve-* dist/checksums.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" dist/sieve-* dist/checksums.txt --target "${{ needs.prepare.outputs.sha }}" --title "Sieve ${{ needs.prepare.outputs.version }}" --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi
+
   publish-manifest:
     needs:
       - prepare

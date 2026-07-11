@@ -9,8 +9,9 @@ pub(crate) use crate::compose_gate::{
     ComposeGateOutput,
 };
 pub(crate) use crate::config::{
-    load_dotenv_from_path, parse_policy_path, parse_telegram_allowed_sender_user_ids,
-    runtime_event_log_path, save_approval_allowances, DEFAULT_POLICY_PATH,
+    load_dotenv_from_path, load_dotenv_search_paths, parse_policy_path,
+    parse_telegram_allowed_sender_user_ids, runtime_event_log_path, save_approval_allowances,
+    DEFAULT_POLICY_PATH,
 };
 pub(crate) use crate::ingress::{TurnKind, TypingGuard};
 pub(crate) use crate::lcm_integration::LcmIntegrationConfig;

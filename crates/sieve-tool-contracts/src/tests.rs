@@ -376,15 +376,15 @@ fn planner_exposed_tool_names_respects_registry_availability() {
         "declassify".to_string(),
     ];
     assert_eq!(
-        planner_exposed_tool_names(&configured, false, false, false),
-        vec!["bash".to_string()]
+        planner_exposed_tool_names(&configured, false, false, false, false),
+        Vec::<String>::new()
     );
     assert_eq!(
-        planner_exposed_tool_names(&configured, false, true, false),
+        planner_exposed_tool_names(&configured, false, true, true, false),
         vec!["bash".to_string(), "automation".to_string()]
     );
     assert_eq!(
-        planner_exposed_tool_names(&configured, true, false, false),
+        planner_exposed_tool_names(&configured, true, true, false, false),
         vec![
             "bash".to_string(),
             "endorse".to_string(),
@@ -392,7 +392,7 @@ fn planner_exposed_tool_names_respects_registry_availability() {
         ]
     );
     assert_eq!(
-        planner_exposed_tool_names(&configured, true, true, true),
+        planner_exposed_tool_names(&configured, true, true, true, true),
         vec![
             "bash".to_string(),
             "automation".to_string(),

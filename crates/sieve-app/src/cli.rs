@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser, Clone, PartialEq, Eq)]
-#[command(name = "sieve-app")]
+#[command(name = "sieve", bin_name = "sieve", version)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -19,6 +19,18 @@ enum Command {
         #[command(subcommand)]
         command: AuthCommand,
     },
+    /// Inspect host capabilities and optional integrations.
+    Doctor {
+        /// Emit a machine-readable report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Configure authentication and inspect optional integrations.
+    Setup {
+        /// Skip prompts and print the remaining configuration actions.
+        #[arg(long)]
+        non_interactive: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +38,8 @@ pub(crate) enum CliCommand {
     Agent,
     Run { prompt: String },
     Auth(AuthCommand),
+    Doctor { json: bool },
+    Setup { non_interactive: bool },
 }
 
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
@@ -62,6 +76,8 @@ impl Cli {
                 None => CliCommand::Agent,
             },
             Command::Auth { command } => CliCommand::Auth(command),
+            Command::Doctor { json } => CliCommand::Doctor { json },
+            Command::Setup { non_interactive } => CliCommand::Setup { non_interactive },
         }
     }
 }
@@ -151,6 +167,24 @@ mod tests {
                 refresh_token: Some("refresh-123".to_string()),
                 expires_at_ms: Some(42),
             })
+        );
+    }
+
+    #[test]
+    fn parse_cli_args_accepts_doctor_json() {
+        assert_eq!(
+            parse_cli_args(&args(&["doctor", "--json"])).expect("parse"),
+            CliCommand::Doctor { json: true }
+        );
+    }
+
+    #[test]
+    fn parse_cli_args_accepts_non_interactive_setup() {
+        assert_eq!(
+            parse_cli_args(&args(&["setup", "--non-interactive"])).expect("parse"),
+            CliCommand::Setup {
+                non_interactive: true
+            }
         );
     }
 }

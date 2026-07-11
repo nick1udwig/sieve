@@ -47,6 +47,7 @@ fn ensure_sieve_home_repo_initializes_git_and_managed_docs() {
 
     let gitignore = fs::read_to_string(home.join(".gitignore")).expect("read gitignore");
     assert!(gitignore.contains("state/auth.json"));
+    assert!(gitignore.lines().any(|line| line == ".env"));
 
     let log = git(&home, &["log", "--oneline", "--max-count=1"]);
     assert!(log.contains("initialize sieve home"));
@@ -83,7 +84,7 @@ fn ensure_sieve_home_repo_refreshes_managed_agents_block() {
     let body = fs::read_to_string(home.join("AGENTS.md")).expect("read agents");
     assert!(body.contains("periodic runtime history snapshots"));
     assert!(body.contains("Git Behavior"));
-    assert!(body.contains("tracked files under `state/` or `lcm/`"));
+    assert!(body.contains("tracked `.env` files and files under `state/` or `lcm/`"));
     assert!(!body.contains("\nold\n"));
 }
 
@@ -111,7 +112,11 @@ fn ensure_sieve_home_repo_untracks_never_commit_state_files() {
 
     fs::write(home.join("state/auth.json"), "{\"token\":\"secret\"}\n").expect("write auth");
     fs::write(home.join("state/codex.db"), "sqlite-ish").expect("write db");
-    git(&home, &["add", "-f", "state/auth.json", "state/codex.db"]);
+    fs::write(home.join(".env"), "OPENAI_API_KEY=secret\n").expect("write dotenv");
+    git(
+        &home,
+        &["add", "-f", "state/auth.json", "state/codex.db", ".env"],
+    );
     git(&home, &["commit", "-m", "seed tracked state"]);
 
     ensure_sieve_home_repo(&home).expect("reinitialize sieve home repo");
@@ -121,6 +126,7 @@ fn ensure_sieve_home_repo_untracks_never_commit_state_files() {
     let tracked = git(&home, &["ls-files"]);
     assert!(!tracked.contains("state/auth.json"));
     assert!(!tracked.contains("state/codex.db"));
+    assert!(!tracked.lines().any(|line| line == ".env"));
 }
 
 #[test]

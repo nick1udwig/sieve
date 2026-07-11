@@ -65,9 +65,6 @@ impl AppConfig {
             parse_allowed_tools(&env::var("SIEVE_ALLOWED_TOOLS").unwrap_or_else(|_| {
                 "bash,codex_exec,codex_session,endorse,declassify".to_string()
             }));
-        if allowed_tools.is_empty() {
-            return Err("SIEVE_ALLOWED_TOOLS must include at least one tool".to_string());
-        }
         let max_concurrent_turns = parse_nonzero_usize_env("SIEVE_MAX_CONCURRENT_TURNS", 4)?;
         let max_planner_steps = parse_nonzero_usize_env("SIEVE_MAX_PLANNER_STEPS", 3)?;
         let max_summary_calls_per_turn =
@@ -97,6 +94,10 @@ impl AppConfig {
             max_summary_calls_per_turn,
             lcm,
         })
+    }
+
+    pub(crate) fn telegram_enabled(&self) -> bool {
+        !self.telegram_bot_token.trim().is_empty() && self.telegram_chat_id != 0
     }
 }
 
@@ -288,7 +289,15 @@ pub(crate) fn parse_telegram_allowed_sender_user_ids(
 }
 
 pub(crate) fn load_dotenv_if_present() -> Result<(), String> {
-    load_dotenv_from_path(PathBuf::from(".env").as_path())
+    load_dotenv_from_path(PathBuf::from(".env").as_path())?;
+    let sieve_home = parse_sieve_home(env::var("SIEVE_HOME").ok(), env::var("HOME").ok());
+    load_dotenv_from_path(&sieve_home.join(".env"))
+}
+
+#[cfg(test)]
+pub(crate) fn load_dotenv_search_paths(workdir: &Path, sieve_home: &Path) -> Result<(), String> {
+    load_dotenv_from_path(&workdir.join(".env"))?;
+    load_dotenv_from_path(&sieve_home.join(".env"))
 }
 
 pub(crate) fn load_dotenv_from_path(path: &Path) -> Result<(), String> {

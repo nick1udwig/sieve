@@ -174,7 +174,13 @@ fn serialize_planner_input_includes_bash_command_catalog_when_bash_allowed() {
     );
     assert!(catalog
         .iter()
-        .any(|entry| { entry.get("command").and_then(Value::as_str) == Some("bravesearch") }));
+        .any(|entry| { entry.get("command").and_then(Value::as_str) == Some("cp") }));
+    assert_eq!(
+        catalog
+            .iter()
+            .any(|entry| { entry.get("command").and_then(Value::as_str) == Some("bravesearch") }),
+        sieve_command_summaries::command_available("bravesearch")
+    );
 }
 
 #[test]

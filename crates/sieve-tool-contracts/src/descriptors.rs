@@ -174,6 +174,7 @@ pub fn is_native_planner_tool(name: &str) -> bool {
 pub fn planner_exposed_tool_names(
     configured_tools: &[String],
     has_known_value_refs: bool,
+    bash_available: bool,
     automation_available: bool,
     codex_available: bool,
 ) -> Vec<String> {
@@ -184,7 +185,7 @@ pub fn planner_exposed_tool_names(
                 return false;
             };
             match descriptor.exposure {
-                ToolExposure::Always => true,
+                ToolExposure::Always => descriptor.name != TOOL_BASH || bash_available,
                 ToolExposure::RequiresAutomation => automation_available,
                 ToolExposure::RequiresCodex => codex_available,
                 ToolExposure::RequiresValueRefs => has_known_value_refs,

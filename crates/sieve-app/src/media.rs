@@ -44,20 +44,15 @@ pub(crate) fn st_audio_tts_args(text_path: &Path, output_path: &Path) -> Vec<std
 
 async fn fetch_telegram_file_path(bot_token: &str, file_id: &str) -> Result<String, String> {
     let url = format!("https://api.telegram.org/bot{bot_token}/getFile");
-    let output = TokioCommand::new("curl")
-        .arg("-sS")
-        .arg("--fail")
-        .arg("--get")
-        .arg("--data-urlencode")
-        .arg(format!("file_id={file_id}"))
-        .arg(url)
-        .output()
+    let payload: serde_json::Value = reqwest::Client::new()
+        .get(url)
+        .query(&[("file_id", file_id)])
+        .send()
         .await
-        .map_err(|err| format!("failed to fetch telegram file metadata: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error_from_output("telegram getFile", &output));
-    }
-    let payload: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|err| format!("failed to fetch telegram file metadata: {err}"))?
+        .json()
+        .await
         .map_err(|err| format!("invalid telegram getFile response: {err}"))?;
     payload
         .pointer("/result/file_path")
@@ -72,19 +67,18 @@ async fn download_telegram_file(
     destination: &Path,
 ) -> Result<(), String> {
     let url = format!("https://api.telegram.org/file/bot{bot_token}/{file_path}");
-    let output = TokioCommand::new("curl")
-        .arg("-sS")
-        .arg("--fail")
-        .arg("-o")
-        .arg(destination)
-        .arg(url)
-        .output()
+    let bytes = reqwest::Client::new()
+        .get(url)
+        .send()
         .await
-        .map_err(|err| format!("failed to download telegram file: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error_from_output("telegram file download", &output));
-    }
-    Ok(())
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|err| format!("failed to download telegram file: {err}"))?
+        .bytes()
+        .await
+        .map_err(|err| format!("failed reading telegram file response: {err}"))?;
+    tokio::fs::write(destination, bytes)
+        .await
+        .map_err(|err| format!("failed writing telegram file: {err}"))
 }
 
 pub(crate) async fn transcribe_audio_prompt(
@@ -201,22 +195,17 @@ pub(crate) async fn send_telegram_voice(
     audio_path: &Path,
 ) -> Result<(), String> {
     let endpoint = format!("https://api.telegram.org/bot{bot_token}/sendVoice");
-    let voice_arg = format!("voice=@{}", audio_path.to_string_lossy());
-    let output = TokioCommand::new("curl")
-        .arg("-sS")
-        .arg("--fail")
-        .arg("-X")
-        .arg("POST")
-        .arg("-F")
-        .arg(format!("chat_id={chat_id}"))
-        .arg("-F")
-        .arg(voice_arg)
-        .arg(endpoint)
-        .output()
+    let form = reqwest::multipart::Form::new()
+        .text("chat_id", chat_id.to_string())
+        .file("voice", audio_path)
         .await
+        .map_err(|err| format!("failed reading telegram voice file: {err}"))?;
+    reqwest::Client::new()
+        .post(endpoint)
+        .multipart(form)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
         .map_err(|err| format!("failed to send telegram voice message: {err}"))?;
-    if !output.status.success() {
-        return Err(command_error_from_output("telegram sendVoice", &output));
-    }
     Ok(())
 }

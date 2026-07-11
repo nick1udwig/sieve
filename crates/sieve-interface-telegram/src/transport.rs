@@ -2,8 +2,8 @@ use crate::{
     TelegramLongPoll, TelegramMessage, TelegramMessageReaction, TelegramUpdate,
     TELEGRAM_IMAGE_PROMPT_PREFIX, TELEGRAM_VOICE_PROMPT_PREFIX,
 };
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 pub struct TelegramBotApiLongPoll<E = SystemCommandExecutor>
 where
@@ -19,7 +19,7 @@ impl TelegramBotApiLongPoll<SystemCommandExecutor> {
         Self {
             token: token.into(),
             base_url: "https://api.telegram.org".to_string(),
-            executor: SystemCommandExecutor,
+            executor: SystemCommandExecutor::default(),
         }
     }
 
@@ -27,7 +27,7 @@ impl TelegramBotApiLongPoll<SystemCommandExecutor> {
         Self {
             token: token.into(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            executor: SystemCommandExecutor,
+            executor: SystemCommandExecutor::default(),
         }
     }
 }
@@ -194,29 +194,46 @@ pub trait CommandExecutor: Send {
     fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String>;
 }
 
-pub struct SystemCommandExecutor;
+pub struct SystemCommandExecutor {
+    http: Client,
+}
+
+impl Default for SystemCommandExecutor {
+    fn default() -> Self {
+        Self {
+            http: Client::new(),
+        }
+    }
+}
 
 impl CommandExecutor for SystemCommandExecutor {
     fn run(&mut self, program: &str, args: &[&str]) -> Result<String, String> {
-        let output = Command::new(program)
-            .args(args)
-            .output()
-            .map_err(|err| format!("failed to spawn {program}: {err}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(format!(
-                "{program} failed: {}",
-                if stderr.is_empty() {
-                    "unknown error"
-                } else {
-                    &stderr
-                }
-            ));
+        if program != "curl" {
+            return Err(format!("unsupported HTTP compatibility program: {program}"));
         }
-
-        String::from_utf8(output.stdout)
-            .map_err(|err| format!("invalid utf-8 from {program}: {err}"))
+        let url = args
+            .last()
+            .copied()
+            .ok_or_else(|| "HTTP request missing URL".to_string())?;
+        let request = if args.windows(2).any(|pair| pair == ["-X", "POST"]) {
+            let payload = args
+                .windows(2)
+                .find(|pair| pair[0] == "-d")
+                .map(|pair| pair[1])
+                .ok_or_else(|| "HTTP POST missing JSON payload".to_string())?;
+            self.http
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(payload.to_string())
+        } else {
+            self.http.get(url)
+        };
+        request
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .map_err(|err| format!("telegram HTTP request failed: {err}"))?
+            .text()
+            .map_err(|err| format!("telegram HTTP response read failed: {err}"))
     }
 }
 

@@ -11,32 +11,43 @@ Inspired by:
 - [CaMeLs CUA](https://arxiv.org/abs/2601.09923)
 - [FIDES](https://arxiv.org/abs/2505.23643)
 
-## Dependencies
+## Install
 
-You need a Rust toolchain plus a `.env` copied from `.env.example`.
-The minimum setup is `OPENAI_API_KEY`; Telegram usage also needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-Optional host tools include `trash` for safer file deletion, `st` for voice-note I/O, `codex` for image OCR, and `sieve-lcm-cli` for LCM memory flows.
+On Linux or macOS x86-64 or ARM64, install the latest release binary and start guided setup with:
 
-Full dependency, env, runtime, logging, Telegram, troubleshooting, and external CLI repo links live in [docs/running.md](docs/running.md#running).
+```bash
+curl -fsSL https://raw.githubusercontent.com/nick1udwig/sieve/master/install.sh | bash
+```
+
+The installer detects the host, verifies the release checksum, installs `sieve`, reports available capabilities, offers to install useful system packages, and opens the model-provider wizard.
+Run `sieve doctor` at any time for the same capability report.
+Only model authentication is required for useful agent turns; Telegram, Git history, quarantine, Codex, browser automation, web-search, audio, and memory CLIs are optional enhancements.
+Missing tools are hidden from the planner, and missing quarantine support changes unknown-command handling to deny-by-default.
+
+To build from source instead, install Rust and run `cargo build --release -p sieve-app`.
+Full install, dependency, environment, runtime, and troubleshooting details live in [docs/running.md](docs/running.md#running).
 
 ## Running
 
-Start from `.env.example`, then set either `OPENAI_API_KEY` or Codex auth with `cargo run -p sieve-app -- auth login openai-codex`.
-The most common long-running extras are `SIEVE_PLANNER_MODEL`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`.
+Guided setup offers an OpenAI API key with pay-as-you-go billing or OpenAI Codex through a ChatGPT subscription.
+It stores provider and model selection in `$SIEVE_HOME/.env`, stores Codex OAuth separately in `$SIEVE_HOME/state/auth.json`, and masks API-key input when the terminal supports it.
+The default `SIEVE_HOME` is `~/.sieve`.
+Telegram ingress is enabled only when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are configured.
 
 Send a one-off request with:
 
 ```bash
-cargo run -p sieve-app -- run --prompt "review workspace status"
+sieve run --prompt "review workspace status"
 ```
 
 Start long-running mode with:
 
 ```bash
-cargo run -p sieve-app -- run
+sieve run
 ```
 
 Long-running mode also accepts automation commands on stdin or Telegram.
+For a source checkout, replace `sieve` with `cargo run -p sieve-app --` in these examples.
 
 ## Architecture
 

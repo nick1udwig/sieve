@@ -2,7 +2,7 @@ use super::PLANNER_SYSTEM_PROMPT;
 use crate::LlmError;
 use serde::Serialize;
 use serde_json::Value;
-use sieve_command_summaries::planner_command_catalog;
+use sieve_command_summaries::planner_available_command_catalog;
 use sieve_tool_contracts::tool_descriptor;
 use sieve_types::{
     PlannerBrowserSession, PlannerCodexSession, PlannerConversationMessage,
@@ -255,8 +255,8 @@ fn planner_command_catalog_for_allowed_tools(
         return Vec::new();
     }
 
-    planner_command_catalog()
-        .iter()
+    planner_available_command_catalog()
+        .into_iter()
         .map(|descriptor| PlannerCommandCatalogEntry {
             command: descriptor.command,
             description: descriptor.description,

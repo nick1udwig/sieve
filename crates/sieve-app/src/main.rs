@@ -8,6 +8,7 @@ mod codex;
 mod compose;
 mod compose_gate;
 mod config;
+mod host;
 mod ingress;
 mod json_util;
 mod lcm_integration;
@@ -19,6 +20,7 @@ mod planner_products;
 mod planner_progress;
 mod render_refs;
 mod response_style;
+mod setup;
 mod shell_words;
 mod sieve_home;
 mod text_match;
@@ -38,7 +40,7 @@ use ingress::{
 };
 use lcm_integration::LcmIntegration;
 use logging::FanoutRuntimeEventLog;
-use sieve_command_summaries::DefaultCommandSummarizer;
+use sieve_command_summaries::{command_available, DefaultCommandSummarizer};
 use sieve_llm::{
     GuidanceModel, OpenAiGuidanceModel, OpenAiPlannerModel, OpenAiResponseModel,
     OpenAiSummaryModel, ResponseModel, SummaryModel,
@@ -50,15 +52,19 @@ use sieve_runtime::{
     SystemClock as RuntimeClock,
 };
 use sieve_shell::BasicShellAnalyzer;
-use sieve_types::{Action, InteractionModality, Resource};
+use sieve_types::{Action, InteractionModality, Resource, UncertainMode, UnknownMode};
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io;
+use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc as tokio_mpsc;
 use turn::{run_turn, AppMainlineRunner, TurnDeps};
+
+const EMBEDDED_BASELINE_POLICY: &str = include_str!("../../../docs/policy/baseline-policy.toml");
+
 fn planner_allowed_net_connect_scopes(policy: &TomlPolicyEngine) -> Vec<String> {
     let mut scopes = Vec::new();
     let mut seen = BTreeSet::new();
@@ -90,7 +96,10 @@ fn ingress_mode_for_command(command: &cli::CliCommand) -> IngressMode {
             spawn_stdin_loop: true,
             spawn_telegram_loop: true,
         },
-        cli::CliCommand::Run { .. } | cli::CliCommand::Auth(_) => IngressMode {
+        cli::CliCommand::Run { .. }
+        | cli::CliCommand::Auth(_)
+        | cli::CliCommand::Doctor { .. }
+        | cli::CliCommand::Setup { .. } => IngressMode {
             spawn_stdin_loop: false,
             spawn_telegram_loop: false,
         },
@@ -102,7 +111,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_dotenv_if_present().map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
     let cli_command = cli::Cli::parse().into_command();
-    initialize_sieve_home_from_env();
+    if let cli::CliCommand::Doctor { json } = &cli_command {
+        host::HostReport::detect()
+            .print(*json)
+            .map_err(io::Error::other)?;
+        return Ok(());
+    }
+    let sieve_home_git_enabled = initialize_sieve_home_from_env();
+    if let cli::CliCommand::Setup { non_interactive } = &cli_command {
+        setup::run_setup_command(*non_interactive).await?;
+        return Ok(());
+    }
     if let cli::CliCommand::Auth(command) = cli_command.clone() {
         run_auth_command(command)
             .await
@@ -114,14 +133,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CliCommand::Run { prompt } => Some(prompt.clone()),
         _ => None,
     };
-    let ingress_mode = ingress_mode_for_command(&cli_command);
+    let mut ingress_mode = ingress_mode_for_command(&cli_command);
     let single_command_mode = cli_prompt.is_some();
 
-    let mut cfg = AppConfig::from_env_with_telegram(ingress_mode.spawn_telegram_loop)
+    let mut cfg = AppConfig::from_env_with_telegram(false)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
-    let policy_toml = fs::read_to_string(&cfg.policy_path)?;
+    ingress_mode.spawn_telegram_loop &= cfg.telegram_enabled();
+    let policy_override = env::var("SIEVE_POLICY_PATH")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    let policy_toml = load_policy_toml(&cfg.policy_path, policy_override)?;
     let policy = TomlPolicyEngine::from_toml_str(&policy_toml)?;
     cfg.allowed_net_connect_scopes = planner_allowed_net_connect_scopes(&policy);
+    if !host::quarantine_available() {
+        if cfg.unknown_mode != UnknownMode::Deny || cfg.uncertain_mode != UncertainMode::Deny {
+            eprintln!(
+                "quarantine unavailable (requires bash, bwrap, and strace); unknown and uncertain commands will be denied"
+            );
+        }
+        cfg.unknown_mode = UnknownMode::Deny;
+        cfg.uncertain_mode = UncertainMode::Deny;
+    }
     let lcm = if cfg.lcm.enabled {
         Some(Arc::new(
             LcmIntegration::new(cfg.lcm.clone()).map_err(io::Error::other)?,
@@ -140,11 +172,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg.event_log_path.clone(),
         event_tx.clone(),
     )?);
-    let codex: Arc<dyn sieve_runtime::CodexTool> = Arc::new(CodexManager::new(
-        cfg.codex_store_path.clone(),
-        approval_bus.clone(),
-        event_log.clone(),
-    )?);
+    let codex: Option<Arc<dyn sieve_runtime::CodexTool>> = if host::codex_available() {
+        Some(Arc::new(CodexManager::new(
+            cfg.codex_store_path.clone(),
+            approval_bus.clone(),
+            event_log.clone(),
+        )?))
+    } else {
+        None
+    };
     let (prompt_tx, prompt_rx, _stdin_thread, bridge) = if ingress_mode.spawn_stdin_loop {
         let (prompt_tx, prompt_rx) = tokio_mpsc::unbounded_channel();
         let stdin_thread = spawn_stdin_prompt_loop(prompt_tx.clone());
@@ -154,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(stdin_thread),
             Some(RuntimeBridge::with_prompt_tx(
                 approval_bus.clone(),
-                Some(codex.clone()),
+                codex.clone(),
                 prompt_tx,
             )),
         )
@@ -168,10 +204,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             event_rx,
         ))
     } else {
+        drop(event_rx);
         None
     };
     let typing_tx = event_tx.clone();
-    let _sieve_home_watcher = sieve_home::spawn_sieve_home_git_watcher(cfg.sieve_home.clone());
+    let _sieve_home_watcher = sieve_home_git_enabled
+        .then(|| sieve_home::spawn_sieve_home_git_watcher(cfg.sieve_home.clone()));
 
     let automation = match prompt_tx {
         Some(prompt_tx) => Some(Arc::new(AutomationManager::new(
@@ -191,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         automation: automation
             .clone()
             .map(|manager| -> Arc<dyn AutomationTool> { manager }),
-        codex: Some(codex),
+        codex,
         approval_bus,
         event_log: event_log.clone(),
         clock: Arc::new(RuntimeClock),
@@ -262,15 +300,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn initialize_sieve_home_from_env() {
+fn load_policy_toml(path: &Path, explicit_override: bool) -> io::Result<String> {
+    match fs::read_to_string(path) {
+        Ok(policy) => Ok(policy),
+        Err(err) if err.kind() == io::ErrorKind::NotFound && !explicit_override => {
+            Ok(EMBEDDED_BASELINE_POLICY.to_string())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn initialize_sieve_home_from_env() -> bool {
     let sieve_home = parse_sieve_home(env::var("SIEVE_HOME").ok(), env::var("HOME").ok());
+    if !command_available("git") {
+        if let Err(err) = sieve_home::ensure_sieve_home_dirs(&sieve_home) {
+            eprintln!(
+                "failed to initialize sieve home at {}: {}",
+                sieve_home.display(),
+                err
+            );
+        }
+        return false;
+    }
     if let Err(err) = sieve_home::ensure_sieve_home_repo(&sieve_home) {
         eprintln!(
             "failed to initialize sieve home repo at {}: {}",
             sieve_home.display(),
             err
         );
+        return false;
     }
+    true
 }
 
 #[cfg(test)]

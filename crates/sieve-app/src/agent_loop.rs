@@ -23,10 +23,14 @@ pub(crate) async fn run_agent_loop(
 ) {
     let semaphore = Arc::new(Semaphore::new(deps.turn.cfg.max_concurrent_turns));
 
-    eprintln!(
-        "sieve-app agent mode ready; prompts accepted from stdin + Telegram chat {}",
-        deps.turn.cfg.telegram_chat_id
-    );
+    if deps.turn.cfg.telegram_enabled() {
+        eprintln!(
+            "sieve-app agent mode ready; prompts accepted from stdin + Telegram chat {}",
+            deps.turn.cfg.telegram_chat_id
+        );
+    } else {
+        eprintln!("sieve-app agent mode ready; prompts accepted from stdin");
+    }
 
     while let Some(prompt) = prompt_rx.recv().await {
         let permit = match semaphore.clone().acquire_owned().await {

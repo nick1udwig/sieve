@@ -32,14 +32,15 @@ Runtime commits use two buckets.
 - `artifacts/`: per-turn artifacts, committed periodically.
 - `media/`: downloaded or uploaded media, committed periodically.
 - `lcm/`: local memory databases, not auto-committed.
+- `.env`: local provider credentials and configuration, never committed.
 - `.gitignore`: managed default ignores for local-only runtime files.
 
 ## Git Behavior
 
 - Immediate auto-commit: `AGENTS.md`, `config/`, and other local metadata.
 - Periodic auto-commit: `logs/`, `artifacts/`, and `media/`.
-- Never auto-commit: `state/` and `lcm/`.
-- Startup cleanup: tracked files under `state/` or `lcm/` are removed from the git index.
+- Never auto-commit: `.env`, `state/`, and `lcm/`.
+- Startup cleanup: tracked `.env` files and files under `state/` or `lcm/` are removed from the git index.
 
 ## Notes
 
@@ -50,6 +51,7 @@ Prefer small, reviewable commits.
 
 const MANAGED_GITIGNORE_BLOCK: &str = "\
 # --- sieve home ignores ---
+.env
 state/auth.json
 # --- /sieve home ignores ---
 ";
@@ -151,6 +153,12 @@ pub(crate) fn commit_sieve_home_changes_for_bucket(
     let path_refs = changed_paths.iter().map(String::as_str).collect::<Vec<_>>();
     commit_paths(sieve_home, &path_refs, &commit_message)?;
     Ok(true)
+}
+
+pub(crate) fn ensure_sieve_home_dirs(sieve_home: &Path) -> Result<(), String> {
+    fs::create_dir_all(sieve_home)
+        .map_err(|err| format!("create sieve home {} failed: {err}", sieve_home.display()))?;
+    create_standard_dirs(sieve_home)
 }
 
 fn create_standard_dirs(sieve_home: &Path) -> Result<(), String> {
@@ -354,6 +362,7 @@ fn classify_path(path: &str) -> SieveHomePathClass {
         || normalized.starts_with("state/")
         || normalized == "lcm"
         || normalized.starts_with("lcm/")
+        || normalized == ".env"
         || normalized.ends_with(".db")
     {
         return SieveHomePathClass::Never;

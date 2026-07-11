@@ -111,6 +111,18 @@ fn parse_policy_path_honors_explicit_env_override() {
 }
 
 #[test]
+fn load_policy_toml_falls_back_to_embedded_baseline_outside_checkout() {
+    let missing = std::env::temp_dir().join(format!(
+        "sieve-missing-policy-{}-{}.toml",
+        std::process::id(),
+        now_ms()
+    ));
+    let loaded = load_policy_toml(&missing, false).expect("embedded policy");
+    assert!(loaded.contains("[[deny_rules]]"));
+    assert!(loaded.contains("[options]"));
+}
+
+#[test]
 fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() {
     let configured = vec![
         "bash".to_string(),
@@ -122,15 +134,15 @@ fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() 
         "declassify".to_string(),
     ];
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, false, false, false),
-        vec!["bash".to_string()]
+        planner_allowed_tools_for_turn(&configured, false, false, false, false),
+        Vec::<String>::new()
     );
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, false, true, false),
+        planner_allowed_tools_for_turn(&configured, false, true, true, false),
         vec!["bash".to_string(), "automation".to_string()]
     );
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, true, false, false),
+        planner_allowed_tools_for_turn(&configured, true, true, false, false),
         vec![
             "bash".to_string(),
             "endorse".to_string(),
@@ -138,7 +150,7 @@ fn planner_allowed_tools_for_turn_hides_explicit_ref_tools_without_value_refs() 
         ]
     );
     assert_eq!(
-        planner_allowed_tools_for_turn(&configured, true, true, true),
+        planner_allowed_tools_for_turn(&configured, true, true, true, true),
         vec![
             "bash".to_string(),
             "automation".to_string(),
@@ -441,10 +453,36 @@ fn app_config_from_env_without_telegram_allows_one_shot_mode() {
     let cfg = AppConfig::from_env_with_telegram(false).expect("config");
     assert_eq!(cfg.telegram_bot_token, "");
     assert_eq!(cfg.telegram_chat_id, 0);
+    assert!(!cfg.telegram_enabled());
     assert_eq!(
         cfg.heartbeat_file_path,
         PathBuf::from("/tmp/sieve-runtime/HEARTBEAT.md")
     );
+}
+
+#[test]
+fn app_config_allows_no_planner_tools() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    std::env::set_var("SIEVE_ALLOWED_TOOLS", "   ");
+    std::env::set_var("SIEVE_LCM_ENABLED", "0");
+
+    let cfg = AppConfig::from_env_with_telegram(false).expect("tool-less config");
+    assert!(cfg.allowed_tools.is_empty());
+}
+
+#[test]
+fn telegram_requires_both_token_and_chat_id() {
+    let _lock = env_test_lock().lock().expect("env lock");
+    let restore = EnvRestore::capture(config_env_keys());
+    restore.clear();
+
+    std::env::set_var("TELEGRAM_BOT_TOKEN", "token-only");
+    std::env::set_var("SIEVE_LCM_ENABLED", "0");
+    let cfg = AppConfig::from_env_with_telegram(false).expect("config");
+    assert!(!cfg.telegram_enabled());
 }
 
 #[test]

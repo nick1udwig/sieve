@@ -111,6 +111,7 @@ pub(super) async fn generate_assistant_message(
             let allowed_tools_for_turn = super::planner_allowed_tools_for_turn(
                 &cfg.allowed_tools,
                 has_known_value_refs,
+                sieve_command_summaries::command_available("bash"),
                 runtime.has_automation_tool(),
                 runtime.has_codex_tool(),
             );

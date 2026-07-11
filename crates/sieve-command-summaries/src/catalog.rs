@@ -1,4 +1,6 @@
 use crate::st::PLANNER_CATALOG_DESCRIPTION;
+use std::env;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlannerCommandDescriptor {
@@ -71,4 +73,78 @@ const PLANNER_COMMAND_CATALOG: &[PlannerCommandDescriptor] = &[
 
 pub fn planner_command_catalog() -> &'static [PlannerCommandDescriptor] {
     PLANNER_COMMAND_CATALOG
+}
+
+pub fn planner_available_command_catalog() -> Vec<PlannerCommandDescriptor> {
+    planner_command_catalog()
+        .iter()
+        .copied()
+        .filter(|descriptor| command_available(descriptor.command))
+        .collect()
+}
+
+pub fn command_available(command: &str) -> bool {
+    resolve_command(command).is_some()
+}
+
+pub fn resolve_command(command: &str) -> Option<PathBuf> {
+    let candidate = Path::new(command);
+    if candidate.components().count() > 1 {
+        return executable_file(candidate).then(|| candidate.to_path_buf());
+    }
+    let path = env::var_os("PATH")?;
+    resolve_command_in_path(command, &path)
+}
+
+fn resolve_command_in_path(command: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    env::split_paths(path)
+        .map(|directory| directory.join(command))
+        .find(|candidate| executable_file(candidate))
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn command_resolution_requires_an_executable_file() {
+        let root =
+            std::env::temp_dir().join(format!("sieve-command-catalog-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("temp dir");
+        let command = root.join("example-tool");
+        fs::write(&command, "#!/bin/sh\n").expect("write tool");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&command, fs::Permissions::from_mode(0o755))
+                .expect("make executable");
+        }
+        let path = std::env::join_paths([root.as_path()]).expect("join path");
+        assert_eq!(
+            resolve_command_in_path("example-tool", &path),
+            Some(command.clone())
+        );
+        assert!(resolve_command_in_path("missing-tool", &path).is_none());
+        let _ = fs::remove_file(command);
+        let _ = fs::remove_dir(root);
+    }
 }

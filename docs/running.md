@@ -4,53 +4,75 @@
 
 ### Dependencies
 
-1. Copy `.env.example` to `.env`.
-2. Set the minimum env needed for your mode:
-   - always: either `OPENAI_API_KEY` for `openai` provider, or `SIEVE_*_PROVIDER=openai_codex` plus `cargo run -p sieve-app -- auth login openai-codex` (or `OPENAI_CODEX_ACCESS_TOKEN` + `OPENAI_CODEX_ACCOUNT_ID`)
-   - if `openai` is configured but no OpenAI API key is present, Sieve now auto-falls back to `openai_codex` when valid Codex auth is available
-   - usually: `SIEVE_PLANNER_MODEL`
-   - Telegram ingress: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-3. Add optional env as needed:
-   - `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` for Telegram sender allowlisting
-   - `SIEVE_POLICY_PATH` to override the default policy file (`docs/policy/baseline-policy.toml`)
-   - `SIEVE_HOME` to override the default state root (`~/.sieve`)
-   - `SIEVE_HEARTBEAT_EVERY` to enable periodic main-session heartbeat wakeups (for example `15m`, `1h`, `1d`)
-   - `SIEVE_HEARTBEAT_PROMPT` to override heartbeat instructions inline instead of reading `HEARTBEAT.md`
-   - `SIEVE_MAX_CONCURRENT_TURNS` to cap long-running mode concurrency (default `4`)
-   - `SIEVE_MAX_PLANNER_STEPS` to cap planner act/observe loops (default `3`)
-   - `SIEVE_MAX_SUMMARY_CALLS_PER_TURN` to cap compose/evidence/gate summary calls per turn (default `12`)
-   - `SIEVE_LCM_ENABLED`, `SIEVE_LCM_GLOBAL_SESSION_ID`, `SIEVE_LCM_TRUSTED_DB_PATH`, `SIEVE_LCM_UNTRUSTED_DB_PATH`, `SIEVE_LCM_CLI_BIN` for LCM memory
-   - `SIEVE_LLM_EXCHANGE_LOG_PATH` for exact OpenAI request/response JSONL logging
-   - `SIEVE_RESPONSE_MODEL`, `SIEVE_GUIDANCE_MODEL`, `SIEVE_QUARANTINE_MODEL` to split planner/response/guidance/quarantine models
-   - `BRAVE_API_KEY` and `SIEVE_BRAVE_API_BASE` for bash/CLI-based Brave search commands
-4. Install the repo-specific CLIs Sieve assumes when you use those paths:
-   - `trash` for safer file deletion via the desktop trash
+Install the standalone binary and run guided setup:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nick1udwig/sieve/master/install.sh | bash
+```
+
+The installer supports Linux and macOS x86-64 and ARM64 release assets, verifies `checksums.txt`, installs `sieve`, and runs `sieve setup`.
+Use `--version`, `--prefix`, `--skip-setup`, `--yes`, or `--dry-run` when downloading the script before execution.
+Sieve's core binary starts without Telegram, Git, Bash, Bubblewrap, Strace, Curl, Codex, or the project checkout.
+Useful agent turns require model authentication through either `OPENAI_API_KEY` or `sieve auth login openai-codex`.
+If `openai` is configured without an API key, Sieve auto-falls back to `openai_codex` when valid Codex auth is available.
+Run `sieve doctor` for human-readable capability status or `sieve doctor --json` for automation.
+Run `sieve setup` to inspect the host, optionally install supported system packages, and choose between an OpenAI API key and OpenAI Codex through a ChatGPT subscription.
+The API-key path supports keep or replace behavior with masked input.
+The Codex path supports reuse or reauthentication of existing OAuth credentials.
+Both paths persist the selected provider and planner model so a fresh binary has complete model configuration.
+
+Optional configuration includes:
+
+- `SIEVE_TELEGRAM_ALLOWED_SENDER_USER_IDS` for Telegram sender allowlisting
+- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` for Telegram ingress
+- `SIEVE_POLICY_PATH` to override the baseline policy embedded in the binary
+- `SIEVE_HOME` to override the default state root (`~/.sieve`)
+- `SIEVE_HEARTBEAT_EVERY` to enable periodic main-session heartbeat wakeups (for example `15m`, `1h`, `1d`)
+- `SIEVE_HEARTBEAT_PROMPT` to override heartbeat instructions inline instead of reading `HEARTBEAT.md`
+- `SIEVE_MAX_CONCURRENT_TURNS` to cap long-running mode concurrency (default `4`)
+- `SIEVE_MAX_PLANNER_STEPS` to cap planner act/observe loops (default `3`)
+- `SIEVE_MAX_SUMMARY_CALLS_PER_TURN` to cap compose/evidence/gate summary calls per turn (default `12`)
+- `SIEVE_LCM_ENABLED`, `SIEVE_LCM_GLOBAL_SESSION_ID`, `SIEVE_LCM_TRUSTED_DB_PATH`, `SIEVE_LCM_UNTRUSTED_DB_PATH`, `SIEVE_LCM_CLI_BIN` for LCM memory
+- `SIEVE_LLM_EXCHANGE_LOG_PATH` for exact OpenAI request/response JSONL logging
+- `SIEVE_RESPONSE_MODEL`, `SIEVE_GUIDANCE_MODEL`, `SIEVE_QUARANTINE_MODEL` to split planner/response/guidance/quarantine models
+- `BRAVE_API_KEY` and `SIEVE_BRAVE_API_BASE` for bash/CLI-based Brave search commands
+
+Optional integration CLIs are discovered from `PATH` and exposed only when available:
+
+- `trash` for safer file deletion via the desktop trash
      - repo: [`andreafrancia/trash-cli`](https://github.com/andreafrancia/trash-cli)
      - used for: `trash FILE...`
      - optional: yes
      - Linux install: `sudo apt install trash-cli` (Debian/Ubuntu), `sudo pacman -S trash-cli` (Arch), `sudo dnf install trash-cli` (Fedora), or `pipx install trash-cli`
-   - `bravesearch` for agent-friendly Brave web search flows
+- `bravesearch` for agent-friendly Brave web search flows
      - repo: [`nick1udwig/brave-search`](https://github.com/nick1udwig/brave-search)
      - used for: planner-discovery/search commands run through `bash`
      - optional: yes
-   - `st` for Telegram voice-note STT/TTS
+- `st` for Telegram voice-note STT/TTS
      - repo: [`nick1udwig/st`](https://github.com/nick1udwig/st)
      - used for: `st stt`, `st tts`
      - optional: yes
-   - `codex` for Codex app-server OCR and delegated coding sessions
+- `codex` for Codex app-server OCR and delegated coding sessions
      - repo: [`openai/codex`](https://github.com/openai/codex)
      - used for: `codex app-server` behind `codex_exec`, `codex_session`, and transient OCR turns
      - optional: yes
-   - `sieve-lcm-cli` for LCM memory query/expand/ingest flows
+- `sieve-lcm-cli` for LCM memory query/expand/ingest flows
      - repo: [`nick1udwig/sieve-lcm`](https://github.com/nick1udwig/sieve-lcm)
      - used for: `sieve-lcm-cli query`, `expand`, `ingest`
      - optional: yes, unless `SIEVE_LCM_ENABLED=1`
-5. Install system packages as needed:
-   - `ffmpeg` recommended for audio conversion and delivery paths
+Optional system packages include:
+
+- `bash` for known shell-command execution
+- `bubblewrap` and `strace` for Linux unknown-command quarantine
+- `git` for Sieve-home version history
+- `curl` for planner web-fetch commands
+- `ripgrep` for fast workspace search
+- `ffmpeg` recommended for audio conversion and delivery paths
 
 `.env.example` carries the fuller provider-level matrix (`SIEVE_*_PROVIDER`, `*_API_BASE`, scoped API keys, Codex auth-file overrides, runtime defaults, and Telegram polling config).
-`sieve-app` auto-loads `.env` from the current working directory when present.
-`SIEVE_HOME` is auto-initialized as a local git repo on startup when `.git/` is missing.
+`sieve` first auto-loads `.env` from the current working directory and then `$SIEVE_HOME/.env` without overriding variables already set.
+The setup wizard writes `$SIEVE_HOME/.env` atomically with owner-only permissions, and Sieve-home Git ignores and untracks that secrets file.
+`SIEVE_HOME` is auto-initialized as a local git repo when Git is available, or as ordinary state directories when Git is absent.
 The runtime seeds `$SIEVE_HOME/AGENTS.md` with a description of the home layout and git commit behavior.
 The runtime seeds `$SIEVE_HOME/.gitignore` with default local-only ignores, including `$SIEVE_HOME/state/auth.json`.
 Tracked files under `$SIEVE_HOME/state/` or `$SIEVE_HOME/lcm/` are removed from the git index during home initialization.
@@ -63,17 +85,19 @@ See [Codex App Server](./codex-app-server.md) for tool semantics, persistence, a
 
 ### Start The Integrated App
 
-Run one prompt end-to-end:
+Run one prompt end-to-end with an installed binary:
 
 ```bash
-cargo run -p sieve-app -- run --prompt "review workspace status"
+sieve run --prompt "review workspace status"
 ```
 
-Start long-running mode (stdin + Telegram ingress, no initial prompt):
+Start long-running mode with stdin ingress and optional Telegram ingress:
 
 ```bash
-cargo run -p sieve-app -- run
+sieve run
 ```
+
+For source development, replace `sieve` with `cargo run -p sieve-app --`.
 
 In Telegram, persistent Codex sessions now get one editable status card, and later session-related replies are sent as replies to that card.
 
@@ -158,6 +182,7 @@ The `prepare` job bumps the shared workspace patch version when needed, runs for
 The `build-image` job then runs natively on `ubuntu-24.04` for `amd64` and `ubuntu-24.04-arm` for `arm64`, restores a per-arch Rust cache, installs `sccache`, compiles the release bundle through `sccache` with a GitHub-backed per-arch cache namespace, runs `scripts/build-release-bundle.sh`, and pushes arch-specific tags with [`Dockerfile.release`](../Dockerfile.release).
 Each arch job prints `sccache --show-stats` so warm-cache hit rates are visible in CI logs.
 The `publish-manifest` job merges those arch tags into `nick1udwig/sieve:<version>` and `nick1udwig/sieve:latest`.
+The `build-binary` jobs publish static Linux and native macOS binaries for x86-64 and ARM64, and `publish-release` attaches them plus SHA-256 checksums to the GitHub release.
 The release workflow verifies pinned git dependency revisions and release-workflow invariants before the Cargo steps run.
 The workflow expects Docker Hub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 

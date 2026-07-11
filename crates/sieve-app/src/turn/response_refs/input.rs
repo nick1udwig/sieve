@@ -10,12 +10,14 @@ use std::path::PathBuf;
 pub(crate) fn planner_allowed_tools_for_turn(
     configured_tools: &[String],
     has_known_value_refs: bool,
+    bash_available: bool,
     automation_available: bool,
     codex_available: bool,
 ) -> Vec<String> {
     planner_exposed_tool_names(
         configured_tools,
         has_known_value_refs,
+        bash_available,
         automation_available,
         codex_available,
     )
