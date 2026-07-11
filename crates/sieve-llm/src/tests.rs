@@ -171,6 +171,22 @@ fn optional_model_config_uses_planner_only_when_role_model_is_absent() {
 }
 
 #[test]
+fn optional_model_config_treats_a_blank_role_model_as_absent() {
+    let planner = LlmModelConfig {
+        provider: LlmProvider::OpenAi,
+        model: "planner-model".to_string(),
+        api_base: None,
+    };
+    let env_map = BTreeMap::from([("SIEVE_RESPONSE_MODEL".to_string(), "  ".to_string())]);
+
+    let config =
+        load_optional_model_config_from_env("SIEVE_RESPONSE", &planner, &map_getter(&env_map))
+            .expect("blank role model should inherit planner");
+
+    assert_eq!(config, planner);
+}
+
+#[test]
 fn optional_model_config_rejects_an_invalid_explicit_role() {
     let planner = LlmModelConfig {
         provider: LlmProvider::OpenAi,

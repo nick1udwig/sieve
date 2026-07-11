@@ -27,7 +27,7 @@ pub(crate) fn load_optional_model_config_from_env(
     fallback: &LlmModelConfig,
     getter: &dyn Fn(&str) -> Option<String>,
 ) -> Result<LlmModelConfig, LlmError> {
-    if getter(&format!("{prefix}_MODEL")).is_none() {
+    if getter(&format!("{prefix}_MODEL")).is_none_or(|model| model.trim().is_empty()) {
         return Ok(fallback.clone());
     }
     load_model_config_from_env(prefix, getter)

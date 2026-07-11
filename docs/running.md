@@ -21,7 +21,7 @@ The API-key path supports keep or replace behavior with masked input.
 The Codex path supports reuse or reauthentication of existing OAuth credentials.
 Both paths persist the selected provider and planner model so a fresh binary has complete model configuration.
 The runtime assembles planner, guidance, response, and quarantine roles as one model set, so roles using the same Codex credential source share refresh state and concurrent refreshes collapse into one request.
-An omitted optional role model inherits the planner configuration, while a present but invalid role model configuration fails startup instead of silently falling back.
+An omitted or blank optional role model inherits the planner configuration, while a non-empty invalid role model configuration fails startup instead of silently falling back.
 
 Optional configuration includes:
 
